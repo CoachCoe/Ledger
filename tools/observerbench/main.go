@@ -76,6 +76,7 @@ func run(ledger, repo string, duration time.Duration) (passed bool, err error) {
 	if err != nil {
 		return false, err
 	}
+	defer os.RemoveAll(config)
 	socket := filepath.Join(repo, ".ledger", "runtime", "ledgerd.sock")
 	b := &bench{
 		ledger: ledger,
