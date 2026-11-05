@@ -131,6 +131,7 @@ func (s *Store) Do(ctx context.Context, op Op, build BuildFunc) (*Result, error)
 		return result, objects, nil, err
 	})
 }
+
 func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, error) {
 	unlock, err := lockFile(filepath.Join(s.Dir, "lock"))
 	if err != nil {
@@ -301,6 +302,7 @@ func (s *Store) finish(ctx context.Context, g index.Group, effects []Effect) err
 	}
 	return s.cleanup(ctx, g, effects)
 }
+
 func (s *Store) cleanup(ctx context.Context, g index.Group, effects []Effect) error {
 	if err := s.fault("effects_after"); err != nil {
 		return err

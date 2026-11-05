@@ -2,14 +2,16 @@ package workspace
 
 import (
 	"context"
-	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/gitx"
-	"golang.org/x/text/unicode/norm"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 type Snapshot struct {
@@ -111,6 +113,7 @@ func StableSnapshot(ctx context.Context, path, base, runtimeDir string) (Snapsho
 	}
 	return last, apierr.New("concurrent_edit", "files changed during proposal capture; retry when writes settle")
 }
+
 func IndexPath(runtimeDir, id string) string {
 	return filepath.Join(runtimeDir, "observe-"+id+".index")
 }

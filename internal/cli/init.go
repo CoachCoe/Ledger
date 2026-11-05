@@ -250,12 +250,12 @@ func resolvePath(p string) (string, error) {
 	}
 	var tail []string
 	for {
-		real, err := filepath.EvalSymlinks(p)
+		resolved, err := filepath.EvalSymlinks(p)
 		if err == nil {
 			for i := len(tail) - 1; i >= 0; i-- {
-				real = filepath.Join(real, tail[i])
+				resolved = filepath.Join(resolved, tail[i])
 			}
-			return real, nil
+			return resolved, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
 			return "", err

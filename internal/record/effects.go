@@ -2,6 +2,7 @@ package record
 
 import (
 	"context"
+
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/index"
@@ -19,6 +20,7 @@ type Effect struct {
 	New         string `json:"new,omitempty"`
 	After       bool   `json:"after"`
 }
+
 type EffectsFunc func(*index.Index) (any, []envelope.Object, []Effect, error)
 
 // DoEffects prepares signed records and frozen external effects under the

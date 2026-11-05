@@ -4,11 +4,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/CoachCoe/Ledger/internal/atomicfile"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 )

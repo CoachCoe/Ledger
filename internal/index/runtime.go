@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
@@ -26,6 +27,7 @@ func (x *Index) Objects(ctx context.Context, kind schema.Kind) (map[string][]byt
 	}
 	return out, rows.Err()
 }
+
 func (x *Index) SaveObservation(ctx context.Context, id, path, at string, status map[string]string) error {
 	tx, err := x.db.BeginTx(ctx, nil)
 	if err != nil {

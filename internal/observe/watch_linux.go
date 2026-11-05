@@ -4,11 +4,13 @@ package observe
 
 import (
 	"context"
-	"github.com/CoachCoe/Ledger/internal/gitx"
-	"github.com/fsnotify/fsnotify"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/fsnotify/fsnotify"
+
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 type watch struct {

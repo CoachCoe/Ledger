@@ -3,17 +3,18 @@ package cli
 import (
 	"context"
 	"flag"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/client"
 	"github.com/CoachCoe/Ledger/internal/daemon"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"io"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 )
 
 func cmdDaemon(args []string) (any, error) {
@@ -42,6 +43,7 @@ func cmdDaemon(args []string) (any, error) {
 	err = daemon.Run(ctx, repo, identity.LocalKeys{Dir: dir}, opts)
 	return map[string]bool{"stopped": true}, err
 }
+
 func liveCommand(group string) func([]string) (any, error) {
 	return func(args []string) (any, error) {
 		if len(args) == 0 {

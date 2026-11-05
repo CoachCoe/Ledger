@@ -4,14 +4,15 @@ package workspace
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/lock"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 type WorkspaceProvider interface {
@@ -19,11 +20,13 @@ type WorkspaceProvider interface {
 	Snapshot(context.Context, schema.Workspace, string, bool) (Snapshot, error)
 	Apply(context.Context, record.Effect) error
 }
+
 type GitProvider struct{ Repo *gitx.Repo }
 
 func (p GitProvider) defaultPath(id string) string {
 	return filepath.Join(p.Repo.MainDir, ".ledger", "runtime", "workspaces", id)
 }
+
 func (p GitProvider) Path(id string) string {
 	if raw, err := os.ReadFile(filepath.Join(p.Repo.CommonDir, "worktrees", id, "gitdir")); err == nil {
 		path := strings.TrimSuffix(string(raw), "\n")
@@ -33,6 +36,7 @@ func (p GitProvider) Path(id string) string {
 	}
 	return p.defaultPath(id)
 }
+
 func (p GitProvider) validate(ctx context.Context, id, path string) error {
 	repo, err := gitx.Open(ctx, path)
 	if err != nil || repo.CommonDir != p.Repo.CommonDir || repo.Dir != path {

@@ -5,9 +5,10 @@ package lock
 
 import (
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/apierr"
 	"os"
 	"syscall"
+
+	"github.com/CoachCoe/Ledger/internal/apierr"
 )
 
 func Acquire(path string, nonblocking bool) (func(), error) {

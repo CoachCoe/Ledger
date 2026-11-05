@@ -3,13 +3,14 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 func TestSnapshotKeepsFixedBaseAndUserIndex(t *testing.T) {
@@ -158,6 +159,7 @@ func TestSnapshotCoversRenameDeleteModeAndSymlink(t *testing.T) {
 		t.Fatal(tree)
 	}
 }
+
 func TestCommittedUnpopulatedSubmoduleChangeRejected(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

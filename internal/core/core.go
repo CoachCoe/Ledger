@@ -4,6 +4,13 @@ package core
 import (
 	"context"
 	"encoding/json/v2"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -13,12 +20,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/workspace"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
-	"sync"
-	"time"
 )
 
 type Service struct {
@@ -64,6 +65,7 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	}
 	return s, nil
 }
+
 func (s *Service) root() (identity.Signer, error) {
 	r, err := s.Keys.Root()
 	if err != nil {
@@ -74,6 +76,7 @@ func (s *Service) root() (identity.Signer, error) {
 	}
 	return r, nil
 }
+
 func (s *Service) reconcile(ctx context.Context) error {
 	subjects, err := s.Store.Index.Subjects(ctx)
 	if err != nil {
@@ -104,6 +107,7 @@ func (s *Service) reconcile(ctx context.Context) error {
 	s.recoveryPending = false
 	return nil
 }
+
 func (s *Service) event(sub index.Subject, to string, reason *string, signer identity.Signer) (envelope.Object, error) {
 	var prev *string
 	if sub.Head != "" {
@@ -112,6 +116,7 @@ func (s *Service) event(sub index.Subject, to string, reason *string, signer ide
 	}
 	return envelope.Seal(schema.KindLifecycleEvent, schema.LifecycleEvent{SubjectKind: sub.Kind, SubjectID: sub.ID, Creation: sub.Creation, Previous: prev, FromState: sub.State, ToState: to, Reason: reason, Actor: signer.ID(), At: schema.Timestamp(time.Now())}, signer)
 }
+
 func (s *Service) subject(ctx context.Context, id, kind string) (*index.Subject, error) {
 	sub, err := s.Store.Index.Subject(ctx, id)
 	if err != nil {
@@ -125,6 +130,7 @@ func (s *Service) subject(ctx context.Context, id, kind string) (*index.Subject,
 	}
 	return sub, nil
 }
+
 func creation[T any](ctx context.Context, idx *index.Index, id string, kind schema.Kind) (T, error) {
 	var p T
 	k, raw, err := idx.Creation(ctx, id)
@@ -136,6 +142,7 @@ func creation[T any](ctx context.Context, idx *index.Index, id string, kind sche
 	}
 	return p, json.Unmarshal(raw, &p)
 }
+
 func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	raw, err := canon.Marshal(r)
 	if err != nil {
@@ -207,6 +214,7 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	}
 	return result, opErr
 }
+
 func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 	var in struct {
 		IntentID    string `json:"intent_id"`
@@ -231,6 +239,7 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 	}
 	return nil, apierr.New("unknown_operation", "%s", r.Operation)
 }
+
 func (s *Service) sessionRecords(agent, model, kind, expiry string, root identity.Signer) (map[string]any, []envelope.Object, identity.Signer, error) {
 	sid, cid := schema.NewID(schema.PrefixSession), schema.NewID(schema.PrefixCapability)
 	key, err := identity.NewSession(sid)
@@ -248,7 +257,7 @@ func (s *Service) sessionRecords(agent, model, kind, expiry string, root identit
 	if err != nil || !end.After(now) {
 		return nil, nil, nil, apierr.New("invalid_expiry", "session capability must expire in the future")
 	}
-	cap, err := envelope.Seal(schema.KindCapability, schema.Capability{ID: cid, SessionID: sid, Issuer: schema.Issuer{Kind: "root", Fingerprint: root.ID()}, Allow: []string{"**"}, Deny: []string{}, MayAddDependencies: true, ExpiresAt: expiry, CreatedAt: schema.Timestamp(now)}, root)
+	capability, err := envelope.Seal(schema.KindCapability, schema.Capability{ID: cid, SessionID: sid, Issuer: schema.Issuer{Kind: "root", Fingerprint: root.ID()}, Allow: []string{"**"}, Deny: []string{}, MayAddDependencies: true, ExpiresAt: expiry, CreatedAt: schema.Timestamp(now)}, root)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -260,8 +269,9 @@ func (s *Service) sessionRecords(agent, model, kind, expiry string, root identit
 		modelPtr = &model
 	}
 	session, err := envelope.Seal(schema.KindSession, schema.Session{ID: sid, CapabilityID: cid, PublicKey: identity.EncodePublicKey(key.PublicKey()), ParticipantKind: kind, AgentName: agentPtr, Model: modelPtr, StartedAt: schema.Timestamp(now)}, root)
-	return map[string]any{"session_id": sid, "capability_id": cid, "session_hash": session.Hash, "capability_hash": cap.Hash}, []envelope.Object{cap, session}, key, err
+	return map[string]any{"session_id": sid, "capability_id": cid, "session_hash": session.Hash, "capability_hash": capability.Hash}, []envelope.Object{capability, session}, key, err
 }
+
 func (s *Service) mutate(ctx context.Context, r api.Request, signer identity.Signer) (any, []envelope.Object, []record.Effect, error) {
 	var in struct {
 		AgentName       string             `json:"agent_name"`
@@ -390,7 +400,7 @@ func (s *Service) mutate(ctx context.Context, r api.Request, signer identity.Sig
 		o, err := envelope.Seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: r.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: schema.Timestamp(time.Now())}, signer)
 		return map[string]string{"workspace_id": id, "path": path, "base_commit": base, "object_hash": o.Hash}, []envelope.Object{o}, []record.Effect{{Kind: "worktree_add", WorkspaceID: id, Path: path, Base: base}}, err
 	case "workspace.propose", "workspace.rework", "workspace.close":
-		sub, w, cap, err := s.boundWorkspace(ctx, in.WorkspaceID, r.SessionID)
+		sub, w, capability, err := s.boundWorkspace(ctx, in.WorkspaceID, r.SessionID)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -398,7 +408,7 @@ func (s *Service) mutate(ctx context.Context, r api.Request, signer identity.Sig
 			if sub.State != "open" {
 				return nil, nil, nil, apierr.New("invalid_state", "workspace must be open before proposing")
 			}
-			if err := s.authority(ctx, r.SessionID, cap); err != nil {
+			if err := s.authority(ctx, r.SessionID, capability); err != nil {
 				return nil, nil, nil, err
 			}
 			if err := s.leaf(ctx, w.IntentID); err != nil {
@@ -411,7 +421,7 @@ func (s *Service) mutate(ctx context.Context, r api.Request, signer identity.Sig
 			if in.ContextRefs == nil {
 				in.ContextRefs = []string{}
 			}
-			if err := s.authority(ctx, r.SessionID, cap); err != nil {
+			if err := s.authority(ctx, r.SessionID, capability); err != nil {
 				return nil, nil, nil, err
 			}
 			manifest, err := envelope.Seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: r.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: snap.Files, SymbolsRead: []schema.Symbol{}, SymbolsWritten: []schema.Symbol{}}, signer)
@@ -460,6 +470,7 @@ func (s *Service) mutate(ctx context.Context, r api.Request, signer identity.Sig
 	}
 	return nil, nil, nil, apierr.New("unknown_operation", "%s", r.Operation)
 }
+
 func (s *Service) authority(ctx context.Context, sid, cid string) error {
 	sub, err := s.subject(ctx, sid, "session")
 	if err != nil {
@@ -468,18 +479,18 @@ func (s *Service) authority(ctx context.Context, sid, cid string) error {
 	if sub.State != "active" {
 		return apierr.New("session_inactive", "session ended")
 	}
-	cap, err := creation[schema.Capability](ctx, s.Store.Index, cid, schema.KindCapability)
+	capability, err := creation[schema.Capability](ctx, s.Store.Index, cid, schema.KindCapability)
 	if err != nil {
 		return err
 	}
-	expires, err := schema.ParseTimestamp(cap.ExpiresAt)
+	expires, err := schema.ParseTimestamp(capability.ExpiresAt)
 	if err != nil {
 		return err
 	}
 	if !expires.After(time.Now()) {
 		return apierr.New("capability_expired", "capability expired")
 	}
-	if cap.SessionID != sid || cap.Issuer.Kind != "root" || !slices.Equal(cap.Allow, []string{"**"}) || len(cap.Deny) != 0 || !cap.MayAddDependencies {
+	if capability.SessionID != sid || capability.Issuer.Kind != "root" || !slices.Equal(capability.Allow, []string{"**"}) || len(capability.Deny) != 0 || !capability.MayAddDependencies {
 		return apierr.New("unsupported_capability", "M1 supports root-issued whole-repository capabilities only")
 	}
 	session, err := creation[schema.Session](ctx, s.Store.Index, sid, schema.KindSession)
@@ -491,6 +502,7 @@ func (s *Service) authority(ctx context.Context, sid, cid string) error {
 	}
 	return nil
 }
+
 func (s *Service) boundWorkspace(ctx context.Context, id, sid string) (*index.Subject, schema.Workspace, string, error) {
 	sub, err := s.subject(ctx, id, "workspace")
 	if err != nil {
@@ -500,15 +512,16 @@ func (s *Service) boundWorkspace(ctx context.Context, id, sid string) (*index.Su
 	if err != nil {
 		return nil, w, "", err
 	}
-	owner, cap, err := s.Store.Index.Binding(ctx, sub, w)
+	owner, capability, err := s.Store.Index.Binding(ctx, sub, w)
 	if err != nil {
 		return nil, w, "", err
 	}
 	if sid != "" && owner != sid {
 		return nil, w, "", apierr.New("unauthorized", "workspace belongs to another session")
 	}
-	return sub, w, cap, nil
+	return sub, w, capability, nil
 }
+
 func (s *Service) leaf(ctx context.Context, id string) error {
 	sub, err := s.subject(ctx, id, "intent")
 	if err != nil {
@@ -532,6 +545,7 @@ func (s *Service) leaf(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
 func (s *Service) unusedLeaf(ctx context.Context, id string) error {
 	objects, err := s.Store.Index.Objects(ctx, schema.KindChangeManifest)
 	if err != nil {
@@ -548,6 +562,7 @@ func (s *Service) unusedLeaf(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
 func (s *Service) pinChecks(criteria []schema.Criterion, signer identity.Signer) ([]schema.Criterion, []envelope.Object, error) {
 	var definitions []schema.CheckDefinition
 	needs := false

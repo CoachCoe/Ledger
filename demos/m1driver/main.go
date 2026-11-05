@@ -17,6 +17,7 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func run() error {
 	if len(os.Args) != 2 {
 		return fmt.Errorf("usage: m1driver <ledger-binary>")
@@ -141,7 +142,7 @@ func run() error {
 	fmt.Println("ok: detached workspace, exact fork retry, shell edit observed within two seconds")
 	var manifests []string
 	var commits []string
-	for revision := 0; revision < 3; revision++ {
+	for revision := range 3 {
 		if revision > 0 {
 			if _, err := ledger("workspace", "rework", "--session", sid, ws); err != nil {
 				return err

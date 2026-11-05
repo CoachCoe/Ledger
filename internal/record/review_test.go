@@ -3,10 +3,11 @@ package record
 import (
 	"encoding/json/v2"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/identity"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/CoachCoe/Ledger/internal/identity"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -158,6 +159,7 @@ func TestRootKeyRepublicationKeepsOneAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestIntentCannotParentOrSupersedeItself(t *testing.T) {
 	s := newStore(t)
 	id := schema.NewID(schema.PrefixIntent)

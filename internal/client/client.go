@@ -6,11 +6,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"github.com/CoachCoe/Ledger/internal/api"
-	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/canon"
-	"github.com/CoachCoe/Ledger/internal/daemon"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +13,12 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/CoachCoe/Ledger/internal/api"
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/canon"
+	"github.com/CoachCoe/Ledger/internal/daemon"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error) {
@@ -37,7 +38,7 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
 	once := func() (any, error, bool) {
-		req, err := http.NewRequestWithContext(ctx, "POST", "http://ledger/v1", bytes.NewReader(raw))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://ledger/v1", bytes.NewReader(raw))
 		if err != nil {
 			return nil, err, false
 		}
@@ -46,7 +47,7 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 			return nil, err, true
 		}
 		defer func() { _ = response.Body.Close() }()
-		if response.StatusCode != 200 {
+		if response.StatusCode != http.StatusOK {
 			return nil, apierr.New("transport_error", "daemon returned HTTP %d", response.StatusCode), false
 		}
 		var r struct {

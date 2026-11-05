@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/schema"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 	"maps"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 func (s *Service) proposalMessage(ctx context.Context, w schema.Workspace, manifest, sid string) (string, error) {
@@ -43,6 +44,7 @@ func (s *Service) refreshWorkspace(ctx context.Context, id string) (any, error) 
 	}
 	return map[string]any{"workspace_id": id, "state": sub.State, "path": path, "base_commit": w.BaseCommit, "write_set": snap.Files, "status": snap.Status, "observed_at": at, "tree": snap.Tree}, nil
 }
+
 func (s *Service) observeSession(ctx context.Context, sid string) error {
 	subjects, err := s.Store.Index.Subjects(ctx)
 	if err != nil {

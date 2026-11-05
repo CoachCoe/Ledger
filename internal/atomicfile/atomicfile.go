@@ -31,6 +31,7 @@ func Write(path string, data []byte, mode fs.FileMode) error {
 	}
 	return SyncDir(dir)
 }
+
 func SyncDir(path string) error {
 	f, err := os.Open(path)
 	if err != nil {

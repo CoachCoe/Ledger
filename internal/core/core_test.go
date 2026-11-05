@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -13,10 +18,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
 )
 
 func fixture(t *testing.T) *Service {
@@ -66,10 +67,12 @@ func fixture(t *testing.T) *Service {
 	}
 	return svc
 }
+
 func request(op, sid string, input any) api.Request {
 	raw, _ := canon.Marshal(input)
 	return api.Request{Version: 1, Operation: op, SessionID: sid, OperationID: schema.NewID(schema.PrefixOperation), Input: raw}
 }
+
 func call(t *testing.T, s *Service, r api.Request) map[string]any {
 	t.Helper()
 	result, err := s.Handle(context.Background(), r)
@@ -96,6 +99,7 @@ func call(t *testing.T, s *Service, r api.Request) map[string]any {
 	}
 	return value
 }
+
 func TestRevisionAndRestartRecovery(t *testing.T) {
 	s := fixture(t)
 	session := call(t, s, request("session.create", "", map[string]any{"agent_name": "test"}))

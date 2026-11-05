@@ -3,10 +3,11 @@ package record
 import (
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"testing"
 )
 
 func TestJournalReplaysFrozenEffects(t *testing.T) {

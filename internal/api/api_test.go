@@ -1,9 +1,10 @@
 package api
 
 import (
+	"testing"
+
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"testing"
 )
 
 func TestProtocolRejectsInvalidAndUnknownInput(t *testing.T) {

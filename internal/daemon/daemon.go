@@ -6,6 +6,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+	"time"
+
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/core"
@@ -14,13 +22,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/lock"
 	"github.com/CoachCoe/Ledger/internal/observe"
 	"github.com/CoachCoe/Ledger/internal/record"
-	"io"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
-	"sync/atomic"
-	"time"
 )
 
 type Options struct {
@@ -34,6 +35,7 @@ type Options struct {
 func Socket(repo *gitx.Repo) string {
 	return filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.sock")
 }
+
 func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, opts Options) error {
 	rootRepo, err := gitx.Open(ctx, repo.MainDir)
 	if err != nil {
@@ -117,7 +119,7 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		activity.Store(time.Now().UnixNano())
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method != "POST" || r.URL.Path != "/v1" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -137,7 +139,7 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 		}
 		b, e := json.Marshal(api.Reply(result, err))
 		if e != nil {
-			http.Error(w, "response encoding failed", 500)
+			http.Error(w, "response encoding failed", http.StatusInternalServerError)
 			return
 		}
 		_, _ = w.Write(append(b, '\n'))

@@ -7,9 +7,10 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/canon"
 	"slices"
 	"strings"
+
+	"github.com/CoachCoe/Ledger/internal/canon"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -423,7 +424,7 @@ func recompute(ctx context.Context, q querier, id string) error {
 	st := lifecycle.Derive(s.Kind, events)
 	s.State, s.Head, s.Resume = st.State, st.Head, st.Resume
 	s.Detail.Fork = st.Fork
-	s.Detail.Rejected = append(misattributed, st.Rejected...)
+	s.Detail.Rejected = slices.Concat(misattributed, st.Rejected)
 	slices.Sort(s.Detail.Rejected)
 	if len(st.Fork) > 0 {
 		s.Conflict = "lifecycle_fork"

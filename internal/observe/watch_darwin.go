@@ -4,8 +4,9 @@ package observe
 
 import (
 	"context"
-	"github.com/fsnotify/fsevents"
 	"time"
+
+	"github.com/fsnotify/fsevents"
 )
 
 type stream struct {
