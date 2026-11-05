@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ var ctx = context.Background()
 
 func main() {
 	if len(os.Args) < 2 {
-		fail(fmt.Errorf("usage: m0driver write|crash|move-ref|race-close|import-fork|hash"))
+		fail(errors.New("usage: m0driver write|crash|move-ref|race-close|import-fork|hash"))
 	}
 	if os.Args[1] == "hash" {
 		for _, f := range os.Args[2:] {
@@ -211,7 +212,7 @@ func now() string { return schema.Timestamp(time.Now()) }
 
 func arg(i int) string {
 	if len(os.Args) <= i {
-		fail(fmt.Errorf("missing argument"))
+		fail(errors.New("missing argument"))
 	}
 	return os.Args[i]
 }

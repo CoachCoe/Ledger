@@ -9,9 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/CoachCoe/Ledger/internal/atomicfile"
-
 	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/atomicfile"
 )
 
 const rootKeyFile = "root.key"
@@ -83,7 +82,7 @@ func (l LocalKeys) Ensure() (signer Signer, created bool, err error) {
 	} else if err != nil {
 		return nil, false, err
 	}
-	if err := syncDir(l.Dir); err != nil {
+	if err := atomicfile.SyncDir(l.Dir); err != nil {
 		return nil, false, err
 	}
 	return RootSigner(priv), true, nil
@@ -94,10 +93,9 @@ func (l LocalKeys) load() (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !dir.IsDir() || dir.Mode().Perm()&0077 != 0 {
+	if !dir.IsDir() || dir.Mode().Perm()&0o077 != 0 {
 		return nil, apierr.New("root_key_insecure", "%s must be a private directory", l.Dir)
 	}
-
 	path := filepath.Join(l.Dir, rootKeyFile)
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -116,5 +114,3 @@ func (l LocalKeys) load() (ed25519.PrivateKey, error) {
 	}
 	return ed25519.NewKeyFromSeed(seed), nil
 }
-
-func syncDir(path string) error { return atomicfile.SyncDir(path) }

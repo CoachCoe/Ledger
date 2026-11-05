@@ -87,7 +87,6 @@ func cmdInit(args []string) (result any, err error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// An initialized repository must never silently rotate identity if its
 	// key has disappeared or the caller changes XDG_CONFIG_HOME.
 	var prior config
@@ -110,7 +109,6 @@ func cmdInit(args []string) (result any, err error) {
 	} else {
 		root, created, err = keys.Ensure()
 	}
-
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +141,6 @@ func cmdInit(args []string) (result any, err error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return map[string]any{
 		"repository":       repo.MainDir,
 		"ledger_dir":       dir,

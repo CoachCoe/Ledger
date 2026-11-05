@@ -16,7 +16,10 @@ type stream struct {
 }
 
 func (s *stream) Close() error { s.cancel(); s.events.Stop(); <-s.done; return nil }
-func start(path string, notify func(), report func(error)) (WorkspaceObserver, error) {
+
+// start watches path with one recursive FSEvents stream. FSEvents reports
+// no asynchronous errors, so the error callback is unused.
+func start(path string, notify func(), _ func(error)) (WorkspaceObserver, error) {
 	filter, err := newFilter(path)
 	if err != nil {
 		return nil, err

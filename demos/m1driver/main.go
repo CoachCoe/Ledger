@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: m1driver <ledger-binary>")
+		return errors.New("usage: m1driver <ledger-binary>")
 	}
 	binary, err := filepath.Abs(os.Args[1])
 	if err != nil {
