@@ -148,7 +148,7 @@ func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, erro
 	if err := s.Index.Refresh(); err != nil {
 		return nil, err
 	}
-	if err := s.completeJournals(ctx); err != nil {
+	if err := s.completeJournals(ctx, false); err != nil {
 		return nil, err
 	}
 	if res, err := s.replay(ctx, op); res != nil || err != nil {
@@ -324,7 +324,10 @@ func (s *Store) cleanup(ctx context.Context, g index.Group, effects []Effect) er
 	return nil
 }
 
-func (s *Store) completeJournals(ctx context.Context) error {
+// completeJournals finishes every journaled group, after verifying it as
+// strictly as a new one. With deferUnavailable, groups whose signing keys
+// are not indexed yet are left for a later pass instead of failing.
+func (s *Store) completeJournals(ctx context.Context, deferUnavailable bool) error {
 	files, err := filepath.Glob(filepath.Join(s.Dir, "journal", "*.json"))
 	if err != nil {
 		return err
@@ -358,6 +361,9 @@ func (s *Store) completeJournals(ctx context.Context) error {
 			return apierr.New("journal_corrupt", "%s does not contain its receipt", f)
 		}
 		if err := s.Index.Verify(ctx, g); err != nil {
+			if deferUnavailable && apierr.HasCode(err, index.CodeUnavailable) {
+				continue
+			}
 			return apierr.New("journal_invalid", "%s: %v", f, err)
 		}
 		if err := s.finish(ctx, g, j.Effects); err != nil {

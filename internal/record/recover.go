@@ -73,7 +73,7 @@ func (s *Store) Recover(ctx context.Context) (*Report, error) {
 	return s.recoverLocked(ctx)
 }
 
-// Reindex deletes the index and rebuilds it from the record files. Runtime
+// Reindex clears the index in place and rebuilds it from the record files. Runtime
 // state (notifications, leases, observations) cannot be rebuilt and is
 // reported as discarded.
 func (s *Store) Reindex(ctx context.Context) (*Report, error) {
@@ -102,22 +102,12 @@ func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
 	if err := s.Index.Refresh(); err != nil {
 		return nil, err
 	}
-	if err := s.completeJournals(ctx); err != nil {
+	// After the index is rebuilt, a journal's signing keys may come only
+	// from groups not yet indexed; those journals finish after indexAll.
+	if err := s.completeJournals(ctx, true); err != nil {
 		return nil, err
 	}
 	r := &Report{}
-	journals, err := filepath.Glob(filepath.Join(s.Dir, "journal", "*.json"))
-	if err != nil {
-		return nil, err
-	}
-	for _, path := range journals {
-		hash := strings.TrimSuffix(filepath.Base(path), ".json")
-		if done, err := s.Index.HasReceipt(ctx, hash); err != nil {
-			return nil, err
-		} else if done {
-			r.CleanupPending = append(r.CleanupPending, hash)
-		}
-	}
 	hashes, err := s.listObjects()
 	if err != nil {
 		return nil, err
@@ -138,6 +128,21 @@ func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
 	r.Materialized, r.AddedToRef, r.InvalidInRef = len(sync.Materialized), sync.Added, sync.Invalid
 	if err := s.indexAll(ctx, r); err != nil {
 		return nil, err
+	}
+	if err := s.completeJournals(ctx, false); err != nil {
+		return nil, err
+	}
+	journals, err := filepath.Glob(filepath.Join(s.Dir, "journal", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range journals {
+		hash := strings.TrimSuffix(filepath.Base(path), ".json")
+		if done, err := s.Index.HasReceipt(ctx, hash); err != nil {
+			return nil, err
+		} else if done {
+			r.CleanupPending = append(r.CleanupPending, hash)
+		}
 	}
 	return r, s.conflicts(ctx, r)
 }
