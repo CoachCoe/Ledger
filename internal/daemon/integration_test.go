@@ -28,9 +28,6 @@ func TestPublicCLILifecycle(t *testing.T) {
 		t.Fatalf("build: %v %s", err, out)
 	}
 	repo := filepath.Join(work, "repo")
-	if err := os.Mkdir(repo, 0700); err != nil {
-		t.Fatal(err)
-	}
 	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
 	run := func(args ...string) (map[string]any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -73,9 +70,11 @@ func TestPublicCLILifecycle(t *testing.T) {
 		}
 
 	}
+	if err := os.CopyFS(repo, os.DirFS("../../testdata/fixtures/polyglot")); err != nil {
+		t.Fatal(err)
+	}
 	git("init", "-q")
-	os.WriteFile(filepath.Join(repo, "a.ts"), []byte("export const x=1;\n"), 0600)
-	git("add", "a.ts")
+	git("add", "-A")
 	git("commit", "-qm", "base")
 	must("init")
 	// Simultaneous first clients must converge on one daemon.
@@ -150,7 +149,7 @@ func TestPublicCLILifecycle(t *testing.T) {
 	ws, _ := json.Marshal(map[string]any{"workspace_id": wid})
 	must("workspace", "status", string(ws)) // establish a clean cached observation
 	// A plain disk edit must reach the runtime observer without a session API call.
-	edit := exec.Command("sh", "-c", "printf 'export const x=2;\n' > a.ts")
+	edit := exec.Command("sh", "-c", "printf 'export const RATE = 0.25;\n' >> src/billing/tax.js")
 	edit.Dir = path
 	if err := edit.Run(); err != nil {
 		t.Fatal(err)

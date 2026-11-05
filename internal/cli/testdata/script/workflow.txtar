@@ -1,0 +1,82 @@
+# The documented workflow through the public CLI, with an auto-started
+# daemon, on the JavaScript/TypeScript/Python fixture repository.
+fixture polyglot repo
+cd repo
+exec git init -q
+exec git add -A
+exec git commit -qm base
+exec ledger init
+stdout '"ok": true'
+
+exec ledger session create {"agent_name":"my-agent"}
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger intent create '{"description":"Implement refunds","criteria":[{"id":"review","statement":"Review the implementation","verification":{"kind":"judgment","reviewer":"human"}}]}'
+jsonvar INT result.result.intent_id
+exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+jsonvar BASE result.result.base_commit
+
+# A plain edit, a deletion and a new file are observed against the base when
+# the session next calls Ledger.
+cd $WPATH
+cp $WORK/repo/src/billing/tax.js src/billing/refund.ts
+rm tools/report.py
+cd $WORK/repo
+exec ledger workspace status --session $SID {"workspace_id":"$WSP"}
+stdout '"src/billing/refund.ts"'
+stdout '"tools/report.py"'
+! stdout '"src/billing/invoice.ts"'
+
+# A proposal is a sole-parent commit on the fixed base with the four trailers.
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
+jsonvar BRANCH result.result.branch
+jsonvar MANIFEST result.result.manifest
+jsonvar TREE result.result.tree
+jsonvar COMMIT result.result.commit
+stdout '"branch": "ledger/int_[0-9a-v]{8}/wsp_[0-9a-v]{8}"'
+exec git log -1 --format=%B $BRANCH
+stdout '^Ledger-Change: chg_'
+stdout '^Ledger-Intent: '$INT'$'
+stdout '^Ledger-Session: '$SID'$'
+stdout '^Ledger-Manifest: '$MANIFEST'$'
+exec git rev-parse $BRANCH^{tree}
+stdout $TREE
+exec git rev-list --parents -n 1 $BRANCH
+cmpenv stdout $WORK/parents
+exec git rev-parse refs/ledger/proposals/$MANIFEST
+stdout $COMMIT
+
+# After a restart the lost session cannot sign; root recovery rebinds the
+# workspace to a new session, which can rework and propose again.
+exec ledger daemon stop
+! exec ledger workspace rework --session $SID {"workspace_id":"$WSP"}
+stdout '"code": "session_key_unavailable"'
+exec ledger session recover {"workspace_id":"$WSP"}
+jsonvar SID2 result.result.session_id
+exec ledger workspace rework --session $SID2 {"workspace_id":"$WSP"}
+exec ledger workspace propose --session $SID2 '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
+stdout '"branch": "'$BRANCH'"'
+jsonvar COMMIT result.result.commit
+exec git log -1 --format=%B $BRANCH
+stdout '^Ledger-Session: '$SID2'$'
+exec git rev-list --parents -n 1 $BRANCH
+cmpenv stdout $WORK/parents
+
+# Closing keeps untracked work: the close commits, cleanup stays pending
+# until the files are dealt with and recovery is retried.
+! exec ledger workspace close --session $SID2 {"workspace_id":"$WSP","reason":"finished"}
+stdout '"code": "cleanup_pending"'
+exists $WPATH/src/billing/refund.ts
+exec ledger workspace status {"workspace_id":"$WSP"}
+stdout '"state": "closed"'
+rm $WPATH/src/billing/refund.ts
+exec git -C $WPATH checkout -- tools/report.py
+exec ledger daemon stop
+exec ledger recover
+! exists $WPATH
+exec git rev-parse --verify $BRANCH
+
+-- parents --
+${COMMIT} ${BASE}
