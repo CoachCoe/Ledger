@@ -29,7 +29,7 @@ func start(root string, notify func(), report func(error)) (WorkspaceObserver, e
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (WorkspaceObserver, error) { w.Close(); return nil, err }
+	fail := func(err error) (WorkspaceObserver, error) { _ = w.Close(); return nil, err }
 	out, err := gitx.Run(ctx, root, nil, nil, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if err != nil {
 		return fail(err)
