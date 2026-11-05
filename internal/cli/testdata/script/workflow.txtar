@@ -48,9 +48,14 @@ cmpenv stdout $WORK/parents
 exec git rev-parse refs/ledger/proposals/$MANIFEST
 stdout $COMMIT
 
-# After a restart the lost session cannot sign; root recovery rebinds the
+# An edit made while the daemon is stopped is observed when it restarts.
+# After the restart the lost session cannot sign; root recovery rebinds the
 # workspace to a new session, which can rework and propose again.
 exec ledger daemon stop
+cp $WORK/repo/tools/report.py $WPATH/tools/later.py
+exec ledger system status
+exec ledger workspace status {"workspace_id":"$WSP"}
+stdout '"tools/later.py"'
 ! exec ledger workspace rework --session $SID {"workspace_id":"$WSP"}
 stdout '"code": "session_key_unavailable"'
 exec ledger session recover {"workspace_id":"$WSP"}
@@ -71,7 +76,7 @@ stdout '"code": "cleanup_pending"'
 exists $WPATH/src/billing/refund.ts
 exec ledger workspace status {"workspace_id":"$WSP"}
 stdout '"state": "closed"'
-rm $WPATH/src/billing/refund.ts
+rm $WPATH/src/billing/refund.ts $WPATH/tools/later.py
 exec git -C $WPATH checkout -- tools/report.py
 exec ledger daemon stop
 exec ledger recover

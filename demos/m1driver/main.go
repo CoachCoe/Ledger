@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -208,6 +209,15 @@ func run() error {
 	if _, err := ledger("system", "status"); err != nil {
 		return err
 	}
+	// A root read returns the cached observation, so this checks the
+	// daemon re-observed on start rather than on this call.
+	status, err := ledger("workspace", "status", ws)
+	if err != nil {
+		return err
+	}
+	if paths, _ := status["write_set"].([]any); !slices.Contains(paths, any("later.py")) {
+		return fmt.Errorf("edit made while stopped not observed on restart: %v", paths)
+	}
 	if _, err := ledger("workspace", "rework", "--session", sid, ws); err == nil {
 		return fmt.Errorf("lost session still signs")
 	}
@@ -228,12 +238,12 @@ func run() error {
 	if _, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil {
 		return err
 	}
-	fmt.Println("ok: restart preserves edits, ends lost-key authority, and explicitly rebinds a replacement session")
+	fmt.Println("ok: restart observes and preserves edits, ends lost-key authority, and explicitly rebinds a replacement session")
 	// Closing preserves dirty user files and reports cleanup separately.
 	if _, err := ledger("workspace", "close", "--session", replacement, payload(map[string]any{"workspace_id": wid, "reason": "demo_complete"})); err == nil {
 		return fmt.Errorf("dirty cleanup should be pending")
 	}
-	status, err := ledger("workspace", "status", ws)
+	status, err = ledger("workspace", "status", ws)
 	if err != nil {
 		return err
 	}
