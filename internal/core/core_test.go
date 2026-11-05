@@ -318,6 +318,9 @@ func TestProposalPreservesExternallyAdvancedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if want := "ledger/" + intent["intent_id"].(string)[:12] + "/" + ws["workspace_id"].(string)[:12]; proposal["branch"] != want {
+		t.Fatalf("branch %v, want %s", proposal["branch"], want)
+	}
 	ref := "refs/heads/" + proposal["branch"].(string)
 	if err := s.Store.Repo.UpdateRefCAS(ctx, ref, external, proposal["commit"].(string)); err != nil {
 		t.Fatal(err)

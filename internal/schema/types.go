@@ -67,6 +67,16 @@ func NewID(prefix string) string {
 	return prefix + idEncoding.EncodeToString(b[:])
 }
 
+// ShortID abbreviates an entity id to its prefix and first 8 random
+// characters (40 bits) for display names such as proposal branches.
+func ShortID(id string) string {
+	_, random, ok := strings.Cut(id, "_")
+	if !ok || len(random) <= 8 {
+		return id
+	}
+	return id[:len(id)-len(random)+8]
+}
+
 // Timestamp formats t as a record timestamp: UTC, millisecond precision.
 func Timestamp(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z")

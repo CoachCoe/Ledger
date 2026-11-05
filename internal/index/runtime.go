@@ -109,33 +109,39 @@ func (x *Index) Observation(ctx context.Context, id string) (map[string]string, 
 	return status, at, rows.Err()
 }
 
-// ProposalCommit follows the accepted lifecycle chain to the latest proposal
+// Proposal is the commit and branch a workspace's latest proposal published.
+type Proposal struct {
+	Commit string `json:"commit"`
+	Branch string `json:"branch"`
+}
+
+// LastProposal follows the accepted lifecycle chain to the latest proposal
 // receipt. The branch's current tip is not authority to overwrite external work.
-func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
+func (x *Index) LastProposal(ctx context.Context, id string) (Proposal, error) {
 	sub, err := x.Subject(ctx, id)
 	if err != nil {
-		return "", err
+		return Proposal{}, err
 	}
 	if sub == nil {
-		return "", apierr.New("unknown_entity", "no workspace %s", id)
+		return Proposal{}, apierr.New("unknown_entity", "no workspace %s", id)
 	}
 	head := sub.Head
 	for head != "" {
 		var raw string
 		if err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
-			return "", err
+			return Proposal{}, err
 		}
 		var event schema.LifecycleEvent
 		if err := json.Unmarshal([]byte(raw), &event); err != nil {
-			return "", err
+			return Proposal{}, err
 		}
 		if event.ToState == "proposed" {
 			rows, err := x.conn().QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
 			if err != nil {
-				return "", err
+				return Proposal{}, err
 			}
 			var result struct {
-				Commit      string `json:"commit"`
+				Proposal    `json:",inline"`
 				WorkspaceID string `json:"workspace_id"`
 			}
 			count := 0
@@ -143,29 +149,29 @@ func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
 				var raw string
 				if err := rows.Scan(&raw); err != nil {
 					rows.Close()
-					return "", err
+					return Proposal{}, err
 				}
 				if err := json.Unmarshal([]byte(raw), &result); err != nil {
 					rows.Close()
-					return "", err
+					return Proposal{}, err
 				}
 				count++
 			}
 			rows.Close()
 			if err := rows.Err(); err != nil {
-				return "", err
+				return Proposal{}, err
 			}
 			if count != 1 || result.WorkspaceID != id || result.Commit == "" {
-				return "", apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
+				return Proposal{}, apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
 			}
-			return result.Commit, nil
+			return result.Proposal, nil
 		}
 		head = ""
 		if event.Previous != nil {
 			head = *event.Previous
 		}
 	}
-	return "", nil
+	return Proposal{}, nil
 }
 
 // ManifestCommit returns the unique previously receipted commit for an exact

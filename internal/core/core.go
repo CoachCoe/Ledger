@@ -562,11 +562,13 @@ func (s *Service) propose(ctx context.Context, c *invocation) (prepared, error) 
 	if err != nil {
 		return prepared{}, err
 	}
-	branch := "refs/heads/ledger/" + w.IntentID + "/" + w.ID
-	old, err := s.Store.Index.ProposalCommit(ctx, w.ID)
+	last, err := s.Store.Index.LastProposal(ctx, w.ID)
 	if err != nil {
 		return prepared{}, err
 	}
+	// A workspace keeps the branch its first proposal published.
+	branch := "refs/heads/" + cmp.Or(last.Branch, "ledger/"+schema.ShortID(w.IntentID)+"/"+schema.ShortID(w.ID))
+	old := last.Commit
 	current, err := s.Store.Repo.ResolveRef(ctx, branch)
 	if err != nil {
 		return prepared{}, err

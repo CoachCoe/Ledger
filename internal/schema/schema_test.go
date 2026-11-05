@@ -47,6 +47,9 @@ func TestNewID(t *testing.T) {
 	if IDPrefix(a) != PrefixIntent || IDPrefix("plain") != "" {
 		t.Fatal("IDPrefix")
 	}
+	if ShortID(a) != a[:12] || ShortID("plain") != "plain" {
+		t.Fatalf("ShortID(%q) = %q", a, ShortID(a))
+	}
 }
 
 func TestTimestamp(t *testing.T) {

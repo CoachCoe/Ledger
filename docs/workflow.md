@@ -33,7 +33,7 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 | `intent close` | root or owning session | Close as `completed`, `abandoned`, or `superseded` (with `replacement_id`). |
 | `workspace fork` | session | Create a detached worktree at `base_commit` (default `HEAD`) for a leaf intent. |
 | `workspace status` | anyone | Return the latest observed write set relative to the base. |
-| `workspace propose` | bound session | Capture the workspace, sign a manifest, and publish a commit on `ledger/<intent>/<workspace>`. |
+| `workspace propose` | bound session | Capture the workspace, sign a manifest, and publish a commit on `ledger/<intent-short-id>/<workspace-short-id>`. |
 | `workspace rework` | root or bound session | Reopen a proposed workspace for another revision. |
 | `workspace close` | root or bound session | Record the close, then remove the worktree if nothing would be lost. |
 | `system status` | anyone | List subjects, whether session recovery is pending, and the daemon's process id. |
@@ -59,7 +59,7 @@ After a restart the daemon re-observes current files, so edits made while it was
 
 ## Proposals
 
-A workspace has one fixed base and a stable change id. Each proposal is a replacement commit whose sole parent is the base, carrying the trailers `Ledger-Change`, `Ledger-Intent`, `Ledger-Session`, and `Ledger-Manifest`. The manifest names the tree, not the commit that embeds it. The branch advances by compare-and-swap against the last proposal Ledger recorded, so commits added to it outside Ledger are never overwritten. Every revision stays reachable at `refs/ledger/proposals/<manifest-hash>`, so later evidence remains resolvable after rework and garbage collection; share them with `git push origin 'refs/ledger/proposals/*'`. An identical manifest reuses its original commit.
+A workspace has one fixed base and a stable change id. Each proposal is a replacement commit whose sole parent is the base, carrying the trailers `Ledger-Change`, `Ledger-Intent`, `Ledger-Session`, and `Ledger-Manifest`. The manifest names the tree, not the commit that embeds it. The branch name uses each id's prefix and first eight characters, for example `ledger/int_5i7943qg/wsp_39jidong`. The branch advances by compare-and-swap against the last proposal Ledger recorded, so commits added to it outside Ledger are never overwritten. Every revision stays reachable at `refs/ledger/proposals/<manifest-hash>`, so later evidence remains resolvable after rework and garbage collection; share them with `git push origin 'refs/ledger/proposals/*'`. An identical manifest reuses its original commit.
 
 Capture uses two independent private indexes and retries when files change mid-capture; it does not claim an atomic filesystem snapshot. Submodule changes are rejected.
 
