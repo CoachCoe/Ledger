@@ -7,6 +7,7 @@ cd repo
 exec ledger init
 stdout '"ok": true'
 stdout '"root_key_created": true'
+stdout '"case_sensitive": (true|false)'
 exists .ledger/config.json
 exists $XDG_CONFIG_HOME/ledger/keys/root.key
 grep '^/\.ledger/$' .git/info/exclude
