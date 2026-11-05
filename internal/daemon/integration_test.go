@@ -3,9 +3,12 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +99,25 @@ func TestPublicCLILifecycle(t *testing.T) {
 	if _, err := run("daemon"); err == nil {
 		t.Fatal("second daemon accepted")
 	}
+	// Oversized and non-API requests are refused at the transport.
+	socket := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(repo, ".ledger/runtime/ledgerd.sock"))
+	}}}
+	response, err := socket.Post("http://ledger/v1", "application/json", strings.NewReader(`{"input":"`+strings.Repeat("x", 2<<20)+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reply struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&reply); err != nil || reply.Error.Code != "request_too_large" {
+		t.Fatalf("oversized request: %+v %v", reply, err)
+	}
+	response.Body.Close()
+	if response, err = socket.Get("http://ledger/v1"); err != nil || response.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET accepted: %v %v", response, err)
+	}
+	response.Body.Close()
 	session := must("session", "create", `{"agent_name":"fixture"}`)
 	sid := session["session_id"].(string)
 	intent := must("intent", "create", `{"description":"test a change","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"human"}}]}`)

@@ -24,6 +24,9 @@ import (
 	"github.com/CoachCoe/Ledger/internal/record"
 )
 
+const maxRequest = 1 << 20
+
+// Options configures the daemon. Zero durations select the defaults.
 type Options struct {
 	Idle            time.Duration
 	Poll            time.Duration
@@ -32,10 +35,14 @@ type Options struct {
 	Log             io.Writer
 }
 
+// Socket is the path of the repository's daemon socket.
 func Socket(repo *gitx.Repo) string {
 	return filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.sock")
 }
 
+// Run serves the API until ctx ends, a root-authorized daemon.stop
+// arrives, or the daemon has been idle with no open workspace for
+// opts.Idle. Only one daemon runs per repository.
 func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, opts Options) error {
 	rootRepo, err := gitx.Open(ctx, repo.MainDir)
 	if err != nil {
@@ -123,7 +130,10 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequest))
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			err = apierr.New("request_too_large", "requests are limited to %d bytes", maxRequest)
+		}
 		var result any
 		var req api.Request
 		if err == nil {
@@ -132,7 +142,8 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 				result, err = svc.Handle(r.Context(), req)
 			}
 		}
-		if err == nil {
+		// Only mutations can open or close workspaces.
+		if err == nil && !api.ReadOnly(req.Operation) {
 			if e := syncWatchers(); e != nil {
 				err = apierr.New("watcher_unavailable", "%v", e).With("committed_result", result)
 			}
