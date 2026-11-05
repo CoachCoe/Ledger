@@ -99,7 +99,7 @@ func (s *Store) Reindex(ctx context.Context) (*Report, error) {
 }
 
 func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
-	if err := s.Index.Refresh(); err != nil {
+	if _, err := s.Index.Refresh(); err != nil {
 		return nil, err
 	}
 	// After the index is rebuilt, a journal's signing keys may come only

@@ -145,10 +145,15 @@ func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, erro
 		return nil, err
 	}
 	defer unlock()
-	if err := s.Index.Refresh(); err != nil {
+	reconnected, err := s.Index.Refresh()
+	if err != nil {
 		return nil, err
 	}
-	if err := s.completeJournals(ctx, false); err != nil {
+	if reconnected {
+		if _, err := s.recoverLocked(ctx); err != nil {
+			return nil, err
+		}
+	} else if err := s.completeJournals(ctx, false); err != nil {
 		return nil, err
 	}
 	if res, err := s.replay(ctx, op); res != nil || err != nil {

@@ -199,7 +199,7 @@ func dumpTable(db *sql.DB, table string, w io.Writer) error {
 // Reset clears derived state in-place. Replacing the database inode would
 // strand other open processes on an obsolete copy despite the store lock.
 func (x *Index) Reset(ctx context.Context) error {
-	if err := x.Refresh(); err != nil {
+	if _, err := x.Refresh(); err != nil {
 		return err
 	}
 	tx, err := x.conn().BeginTx(ctx, nil)
@@ -215,20 +215,21 @@ func (x *Index) Reset(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// Refresh reconnects after an external deletion/replacement of index.db.
-// Call it under the RecordStore lock before writing or rebuilding.
-func (x *Index) Refresh() error {
+// Refresh reconnects after an external deletion/replacement of index.db and
+// reports whether it did, in which case the index must be rebuilt. Call it
+// under the RecordStore lock before writing or rebuilding.
+func (x *Index) Refresh() (reconnected bool, err error) {
 	fi, err := os.Stat(x.path)
 	if err == nil && os.SameFile(fi, x.file) {
-		return nil
+		return false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return false, err
 	}
 	db, file, err := connect(x.path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	x.file = file
-	return x.db.Swap(db).Close()
+	return true, x.db.Swap(db).Close()
 }
