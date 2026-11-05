@@ -19,7 +19,7 @@ import (
 // run under the RecordStore lock so that state cannot change before the
 // group is published.
 func (x *Index) Validate(ctx context.Context, g Group) error {
-	if err := verify(ctx, x.db, g); err != nil {
+	if err := verify(ctx, x.conn(), g); err != nil {
 		return err
 	}
 	var r schema.OperationReceipt
@@ -33,7 +33,7 @@ func (x *Index) Validate(ctx context.Context, g Group) error {
 	if len(ops) > 0 {
 		return apierr.New("operation_exists", "operation %s is already committed", r.OperationID)
 	}
-	v := &validator{ctx: ctx, q: x.db, local: map[string]envelope.Object{}, objects: map[string]envelope.Object{}, sims: map[string]*Subject{}, at: r.At}
+	v := &validator{ctx: ctx, q: x.conn(), local: map[string]envelope.Object{}, objects: map[string]envelope.Object{}, sims: map[string]*Subject{}, at: r.At}
 	for _, o := range g.Members {
 		v.objects[o.Hash] = o
 	}

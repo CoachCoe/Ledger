@@ -8,6 +8,13 @@ import (
 	"github.com/CoachCoe/Ledger/internal/index"
 )
 
+// Effect kinds.
+const (
+	EffectRef            = "ref"
+	EffectWorktreeAdd    = "worktree_add"
+	EffectWorktreeRemove = "worktree_remove"
+)
+
 // Effect is a frozen external side effect recorded before execution.
 // After effects are cleanup: committed state remains visible if cleanup fails.
 type Effect struct {
@@ -21,6 +28,7 @@ type Effect struct {
 	After       bool   `json:"after"`
 }
 
+// EffectsFunc is a BuildFunc that also returns the operation's effects.
 type EffectsFunc func(*index.Index) (any, []envelope.Object, []Effect, error)
 
 // DoEffects prepares signed records and frozen external effects under the

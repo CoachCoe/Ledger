@@ -23,6 +23,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
+	"github.com/CoachCoe/Ledger/internal/lock"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
@@ -35,11 +36,13 @@ const DirName = ".ledger"
 // Publication stages, in order. Options.Fault is called before each.
 const (
 	StageJournal = "journal"
+	StageEffects = "effects"
 	StageObjects = "objects"
 	StageReceipt = "receipt"
 	StageRef     = "ref"
 	StageRefCAS  = "ref_cas"
 	StageIndex   = "index"
+	StageCleanup = "cleanup"
 	StageDone    = "done"
 )
 
@@ -84,6 +87,10 @@ func Open(ctx context.Context, repo *gitx.Repo, opts Options) (*Store, error) {
 	}
 	return &Store{Dir: dir, Repo: repo, Index: idx, opts: opts}, nil
 }
+
+// lock takes the exclusive RecordStore lock, which the kernel releases if
+// the holder dies.
+func (s *Store) lock() (func(), error) { return lock.Acquire(filepath.Join(s.Dir, "lock"), false) }
 
 // Close closes the index.
 func (s *Store) Close() error { return s.Index.Close() }
@@ -133,7 +140,7 @@ func (s *Store) Do(ctx context.Context, op Op, build BuildFunc) (*Result, error)
 }
 
 func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, error) {
-	unlock, err := lockFile(filepath.Join(s.Dir, "lock"))
+	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +237,7 @@ func (s *Store) publish(ctx context.Context, g index.Group, effects []Effect) er
 	if err != nil {
 		return err
 	}
-	if err := writeAtomic(s.journalPath(g.Receipt.Hash), jb); err != nil {
+	if err := atomicfile.Write(s.journalPath(g.Receipt.Hash), jb, 0o600); err != nil {
 		return err
 	}
 	return s.finish(ctx, g, effects)
@@ -246,10 +253,8 @@ func (s *Store) finish(ctx context.Context, g index.Group, effects []Effect) err
 	}
 	// A durable receipt means its pre-publication effects already completed.
 	// Do not try to move the branch backwards if someone advanced it later.
-	_, receiptErr := s.Read(g.Receipt.Hash)
-	if receiptErr != nil {
-
-		if err := s.fault("effects_before"); err != nil {
+	if _, err := s.Read(g.Receipt.Hash); err != nil {
+		if err := s.fault(StageEffects); err != nil {
 			return err
 		}
 		if err := s.effects(ctx, effects, false); err != nil {
@@ -304,7 +309,7 @@ func (s *Store) finish(ctx context.Context, g index.Group, effects []Effect) err
 }
 
 func (s *Store) cleanup(ctx context.Context, g index.Group, effects []Effect) error {
-	if err := s.fault("effects_after"); err != nil {
+	if err := s.fault(StageCleanup); err != nil {
 		return err
 	}
 	if err := s.effects(ctx, effects, true); err != nil {
@@ -403,13 +408,8 @@ func (s *Store) writeObject(o envelope.Object) error {
 	if err := atomicfile.MakeDir(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return writeAtomic(path, o.Bytes)
+	return atomicfile.Write(path, o.Bytes, 0o600)
 }
-
-// writeAtomic writes data to path via a temporary file in the same
-// directory, syncing the file and the directory so the rename is durable.
-func writeAtomic(path string, data []byte) error { return atomicfile.Write(path, data, 0600) }
-func syncDir(path string) error                  { return atomicfile.SyncDir(path) }
 
 func isHash(s string) bool {
 	if len(s) != 64 {

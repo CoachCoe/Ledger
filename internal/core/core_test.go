@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/CoachCoe/Ledger/internal/api"
@@ -413,4 +415,110 @@ func TestInterruptedWorkspaceEffectsConverge(t *testing.T) {
 	if _, err := os.Stat(ws["path"].(string)); !os.IsNotExist(err) {
 		t.Fatal("clean worktree cleanup did not converge", err)
 	}
+}
+
+func judgment(description string) map[string]any {
+	return map[string]any{"description": description, "criteria": []any{map[string]any{"id": "review", "statement": "review", "verification": map[string]any{"kind": "judgment", "reviewer": "any"}}}}
+}
+
+func TestIntentTreeAndSessionLifecycle(t *testing.T) {
+	s := fixture(t)
+	ctx := context.Background()
+	parent := call(t, s, request("intent.create", "", judgment("parent")))["intent_id"].(string)
+	child := call(t, s, request("intent.create", "", map[string]any{"description": "child", "parent_id": parent, "criteria": judgment("")["criteria"]}))["intent_id"].(string)
+	a := call(t, s, request("session.create", "", map[string]any{"participant_kind": "human"}))
+	b := call(t, s, request("session.create", "", map[string]any{}))
+	sid := a["session_id"].(string)
+	fork := func(intent string) error {
+		_, err := s.Handle(ctx, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": a["capability_id"]}))
+		return err
+	}
+	if err := fork(parent); !apierr.HasCode(err, "intent_not_leaf") {
+		t.Fatalf("forked a parent intent: %v", err)
+	}
+	if _, err := s.Handle(ctx, request("workspace.fork", sid, map[string]any{"intent_id": child, "capability_id": b["capability_id"]})); !apierr.HasCode(err, "unsupported_capability") {
+		t.Fatalf("forked with another session's capability: %v", err)
+	}
+	if _, err := s.Handle(ctx, request("intent.close", "", map[string]any{"intent_id": child, "reason": "superseded"})); err == nil {
+		t.Fatal("superseded without a replacement")
+	}
+	call(t, s, request("intent.close", "", map[string]any{"intent_id": child, "reason": "superseded", "replacement_id": parent}))
+	if err := fork(child); !apierr.HasCode(err, "invalid_state") {
+		t.Fatalf("forked a closed intent: %v", err)
+	}
+	if _, err := s.Handle(ctx, request("session.end", b["session_id"].(string), map[string]any{"session_id": sid})); !apierr.HasCode(err, "unauthorized") {
+		t.Fatalf("one session ended another: %v", err)
+	}
+	call(t, s, request("session.end", sid, map[string]any{"session_id": sid}))
+	if err := fork(parent); !apierr.HasCode(err, "session_key_unavailable") {
+		t.Fatalf("ended session still signs: %v", err)
+	}
+	status := call(t, s, request("system.status", "", map[string]any{}))
+	for _, sub := range status["subjects"].([]any) {
+		if sub := sub.(map[string]any); sub["id"] == sid && sub["state"] != "ended" {
+			t.Fatalf("session not ended: %v", sub)
+		}
+	}
+	session, err := creation[schema.Session](ctx, s.Store.Index, sid, schema.KindSession)
+	if err != nil || session.ParticipantKind != "human" {
+		t.Fatalf("participant kind not recorded: %+v %v", session, err)
+	}
+}
+
+// Observation runs outside the mutation lock; this exercises it alongside
+// status reads, session-triggered refreshes and proposals under -race.
+func TestObservationRunsConcurrentlyWithRequests(t *testing.T) {
+	s := fixture(t)
+	ctx := context.Background()
+	session := call(t, s, request("session.create", "", map[string]any{}))
+	sid := session["session_id"].(string)
+	var workspaces []string
+	for range 3 {
+		intent := call(t, s, request("intent.create", "", judgment("concurrent")))
+		ws := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": session["capability_id"]}))
+		workspaces = append(workspaces, ws["workspace_id"].(string))
+		if err := os.WriteFile(filepath.Join(ws["path"].(string), "new.ts"), []byte("export const y=1;\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 64)
+	for range 4 {
+		wg.Go(func() {
+			if err := s.Observe(ctx); err != nil {
+				errs <- err
+			}
+		})
+	}
+	for _, id := range workspaces {
+		wg.Go(func() {
+			if _, err := s.Handle(ctx, request("workspace.status", "", map[string]any{"workspace_id": id})); err != nil {
+				errs <- err
+			}
+		})
+	}
+	wg.Go(func() {
+		if _, err := s.Handle(ctx, request("workspace.propose", sid, map[string]any{"workspace_id": workspaces[0]})); err != nil {
+			errs <- err
+		}
+	})
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	for _, id := range workspaces {
+		status := call(t, s, request("workspace.status", "", map[string]any{"workspace_id": id}))
+		if !slices.Equal(anyStrings(status["write_set"]), []string{"new.ts"}) {
+			t.Fatalf("write set %v", status["write_set"])
+		}
+	}
+}
+
+func anyStrings(v any) []string {
+	var out []string
+	for _, s := range v.([]any) {
+		out = append(out, s.(string))
+	}
+	return out
 }

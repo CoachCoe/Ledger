@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/index"
@@ -64,7 +65,7 @@ type Conflict struct {
 // complete group. It never deletes records or overwrites external ref
 // changes.
 func (s *Store) Recover(ctx context.Context) (*Report, error) {
-	unlock, err := lockFile(filepath.Join(s.Dir, "lock"))
+	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +77,7 @@ func (s *Store) Recover(ctx context.Context) (*Report, error) {
 // state (notifications, leases, observations) cannot be rebuilt and is
 // reported as discarded.
 func (s *Store) Reindex(ctx context.Context) (*Report, error) {
-	unlock, err := lockFile(filepath.Join(s.Dir, "lock"))
+	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +164,7 @@ func (s *Store) quarantine(path, hash string) error {
 			if err := os.Rename(path, dst); err != nil {
 				return err
 			}
-			return syncDir(dir)
+			return atomicfile.SyncDir(dir)
 		} else if err != nil {
 			return err
 		}

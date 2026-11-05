@@ -15,6 +15,13 @@
       "minLength": 1,
       "maxLength": 256
     },
+    "participant_kind": {
+      "enum": [
+        "human",
+        "agent",
+        "service"
+      ]
+    },
     "expires_at": {
       "$ref": "../common.json#/$defs/timestamp"
     }

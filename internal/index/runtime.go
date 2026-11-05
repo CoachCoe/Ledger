@@ -10,26 +10,49 @@ import (
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
-// Objects returns committed objects of kind in content-hash order.
-func (x *Index) Objects(ctx context.Context, kind schema.Kind) (map[string][]byte, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT hash,payload FROM objects WHERE kind=? ORDER BY hash`, kind)
+// ActiveWorkspaces returns the creation records of unconflicted open or
+// proposed workspaces, only those currently bound to owner if it is set.
+func (x *Index) ActiveWorkspaces(ctx context.Context, owner string) ([]schema.Workspace, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT c.payload FROM subjects s JOIN creations c ON c.hash=s.creation
+ WHERE s.kind='workspace' AND s.state IN ('open','proposed') AND s.conflict='' AND (?='' OR s.owner=?) ORDER BY s.id`, owner, owner)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string][]byte{}
+	var out []schema.Workspace
 	for rows.Next() {
-		var h, p string
-		if err := rows.Scan(&h, &p); err != nil {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		out[h] = []byte(p)
+		var w schema.Workspace
+		if err := json.Unmarshal(raw, &w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }
 
+// HasChildIntent reports whether any committed intent names id as its parent.
+func (x *Index) HasChildIntent(ctx context.Context, id string) (bool, error) {
+	return x.exists(ctx, `SELECT 1 FROM objects WHERE kind='intent' AND json_extract(payload,'$.parent_id')=?`, id)
+}
+
+// IntentHasChange reports whether any committed change manifest attaches to id.
+func (x *Index) IntentHasChange(ctx context.Context, id string) (bool, error) {
+	return x.exists(ctx, `SELECT 1 FROM objects WHERE kind='change_manifest' AND json_extract(payload,'$.intent_id')=?`, id)
+}
+
+func (x *Index) exists(ctx context.Context, query string, args ...any) (bool, error) {
+	var found bool
+	err := x.conn().QueryRowContext(ctx, `SELECT EXISTS(`+query+`)`, args...).Scan(&found)
+	return found, err
+}
+
+// SaveObservation replaces a workspace's runtime write set.
 func (x *Index) SaveObservation(ctx context.Context, id, path, at string, status map[string]string) error {
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.conn().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -54,7 +77,7 @@ func (x *Index) Binding(ctx context.Context, s *Subject, w schema.Workspace) (st
 		return w.SessionID, w.CapabilityID, nil
 	}
 	var raw string
-	if err := x.db.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, s.BindingHead).Scan(&raw); err != nil {
+	if err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, s.BindingHead).Scan(&raw); err != nil {
 		return "", "", err
 	}
 	var b schema.WorkspaceBinding
@@ -67,10 +90,10 @@ func (x *Index) Binding(ctx context.Context, s *Subject, w schema.Workspace) (st
 // Observation reads the last persisted runtime write set without touching files.
 func (x *Index) Observation(ctx context.Context, id string) (map[string]string, string, error) {
 	var at string
-	if err := x.db.QueryRowContext(ctx, `SELECT observed_at FROM workspace_paths WHERE workspace_id=?`, id).Scan(&at); err != nil {
+	if err := x.conn().QueryRowContext(ctx, `SELECT observed_at FROM workspace_paths WHERE workspace_id=?`, id).Scan(&at); err != nil {
 		return nil, "", err
 	}
-	rows, err := x.db.QueryContext(ctx, `SELECT path,status FROM write_sets WHERE workspace_id=? ORDER BY path`, id)
+	rows, err := x.conn().QueryContext(ctx, `SELECT path,status FROM write_sets WHERE workspace_id=? ORDER BY path`, id)
 	if err != nil {
 		return nil, "", err
 	}
@@ -99,7 +122,7 @@ func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
 	head := sub.Head
 	for head != "" {
 		var raw string
-		if err := x.db.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
+		if err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
 			return "", err
 		}
 		var event schema.LifecycleEvent
@@ -107,7 +130,7 @@ func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
 			return "", err
 		}
 		if event.ToState == "proposed" {
-			rows, err := x.db.QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
+			rows, err := x.conn().QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
 			if err != nil {
 				return "", err
 			}
@@ -148,7 +171,7 @@ func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
 // ManifestCommit returns the unique previously receipted commit for an exact
 // manifest. Re-proposing identical content must preserve its evidence binding.
 func (x *Index) ManifestCommit(ctx context.Context, manifest string) (string, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
+	rows, err := x.conn().QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
  WHERE m.hash=? AND op.operation='workspace.propose' AND json_extract(op.result,'$.manifest')=?`, manifest, manifest)
 	if err != nil {
 		return "", err
@@ -173,7 +196,7 @@ func (x *Index) ManifestCommit(ctx context.Context, manifest string) (string, er
 // allows init to reconstruct its local retry identity after config/index loss.
 func (x *Index) RootOperation(ctx context.Context, fingerprint string) (string, error) {
 	var id string
-	err := x.db.QueryRowContext(ctx, `SELECT op.operation_id FROM operations op JOIN members m ON m.receipt=op.receipt JOIN objects o ON o.hash=m.hash
+	err := x.conn().QueryRowContext(ctx, `SELECT op.operation_id FROM operations op JOIN members m ON m.receipt=op.receipt JOIN objects o ON o.hash=m.hash
  WHERE op.operation='ledger.init' AND o.kind='root_key' AND o.signer=? ORDER BY op.receipt LIMIT 1`, fingerprint).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
