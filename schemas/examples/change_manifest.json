@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "kind": "change_manifest",
+  "payload": {
+    "change_id": "chg_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "intent_id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workspace_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "author_session": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "context_refs": [
+      "docs/api.md"
+    ],
+    "plan": "Add GET /health",
+    "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "tree": "dddddddddddddddddddddddddddddddddddddddd",
+    "files": [
+      "src/app.ts",
+      "src/health.ts"
+    ],
+    "symbols_read": [
+      {
+        "path": "src/app.ts",
+        "language": "typescript",
+        "name": "AppService.getHello",
+        "kind": "method",
+        "disambiguator": null
+      }
+    ],
+    "symbols_written": [
+      {
+        "path": "src/health.ts",
+        "language": "typescript",
+        "name": "health",
+        "kind": "function",
+        "disambiguator": null
+      }
+    ]
+  },
+  "signer": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "signature": "atcrVDwlBA-by2kBqryznD0xinG2pIzIqIYlu5X5sF1KNgnZ1yssyxC9ibQZlCZ7Ump22BP7SmD7GINyxVdxBw"
+}

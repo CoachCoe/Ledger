@@ -1,0 +1,19 @@
+exec git init -q repo
+cd repo
+! exec ledger status
+stdout '"code": "not_initialized"'
+exec ledger init
+exec ledger status
+stdout '"index_digest": "([0-9a-f]{64})"'
+cp stdout ../status-before
+
+rm .ledger/index.db
+exec ledger reindex
+stdout '"indexed": 1'
+exec ledger status
+cmp stdout ../status-before
+
+! exec ledger reindex extra
+stdout '"code": "usage"'
+! exec ledger frobnicate
+stdout '"code": "unknown_command"'

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "kind": "check_definition",
+  "payload": {
+    "name": "unit",
+    "category": "mechanical",
+    "setup": "npm ci",
+    "command": "npm test",
+    "working_directory": ".",
+    "env_allowlist": [
+      "PATH",
+      "HOME"
+    ],
+    "timeout_seconds": 600,
+    "output_limit_bytes": 1048576
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "t4TGWJOzNVk-AqdvMqAcOSXI7A7C6JH1qYFe200HUReHRzr2OUzs6_VK5oWzfzEGKKcJGwdMVnT76VBmKsppBA"
+}

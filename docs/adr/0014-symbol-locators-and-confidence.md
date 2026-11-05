@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Overlap detection needs symbol identities that stay stable across edits, and confidence labels that never present missing information as safety.
 
 ## Decision
 
@@ -21,8 +21,6 @@ Both affected sessions receive notifications within five seconds of the second e
 
 Using content hashes as identity makes every body edit appear to be a new symbol. Treating unresolved calls or parser errors as safe creates false confidence. M4 is coordination, not semantic merge.
 
-## Consequences and validation
+## Validation
 
 M4.0–M4.8 and M6.2: signature/body/deletion/rename/move/ambiguity fixtures; same-name modules, unrelated functions, fallbacks, all-language signature/call overlap, 5-second delivery, queue/lease recovery.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

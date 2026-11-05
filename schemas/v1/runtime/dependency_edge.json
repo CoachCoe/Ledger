@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/dependency_edge.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "target",
+    "relation",
+    "confidence",
+    "observed_by"
+  ],
+  "properties": {
+    "source": {
+      "$ref": "../common.json#/$defs/symbol"
+    },
+    "target": {
+      "$ref": "../common.json#/$defs/symbol"
+    },
+    "relation": {
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "confidence": {
+      "enum": [
+        "direct",
+        "static_inferred",
+        "dynamic_observed",
+        "unresolved"
+      ]
+    },
+    "observed_by": {
+      "type": "string",
+      "maxLength": 256
+    }
+  },
+  "title": "Dependency edge"
+}

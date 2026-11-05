@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/session.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "capability_id",
+    "public_key",
+    "participant_kind",
+    "agent_name",
+    "model",
+    "started_at"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "common.json#/$defs/session_id"
+    },
+    "capability_id": {
+      "$ref": "common.json#/$defs/capability_id"
+    },
+    "public_key": {
+      "$ref": "common.json#/$defs/public_key"
+    },
+    "participant_kind": {
+      "enum": [
+        "human",
+        "agent",
+        "service"
+      ]
+    },
+    "agent_name": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Session creation"
+}

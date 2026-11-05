@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Evidence is only meaningful if it names exactly what was tested and how. Selection must not hide failures or be mistaken for acceptance.
 
 ## Decision
 
@@ -25,8 +25,6 @@ A signed selection names manifest/commit, the exact evidence set, recomputed cri
 
 Running in the mutable author workspace or resolving a change id after starting a check changes what was tested. Latest-pass-wins hides contrary evidence. Caller-provided reviewer kinds are unauthenticated.
 
-## Consequences and validation
+## Validation
 
 M1.3, M3.1–M3.5: changed definitions/revisions, author edits/evidence, three binding mismatches, process failures/cleanup, tracked mutation, explicit-set truth table, contrary evidence, reviewer kinds, and selection without merge.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

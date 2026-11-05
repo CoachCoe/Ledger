@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/workspace_binding.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workspace_id",
+    "previous",
+    "session_id",
+    "capability_id",
+    "actor",
+    "reason",
+    "at"
+  ],
+  "properties": {
+    "workspace_id": {
+      "$ref": "common.json#/$defs/workspace_id"
+    },
+    "previous": {
+      "$ref": "common.json#/$defs/hash"
+    },
+    "session_id": {
+      "$ref": "common.json#/$defs/session_id"
+    },
+    "capability_id": {
+      "$ref": "common.json#/$defs/capability_id"
+    },
+    "actor": {
+      "$ref": "common.json#/$defs/principal"
+    },
+    "reason": {
+      "$ref": "common.json#/$defs/text"
+    },
+    "at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Workspace binding"
+}

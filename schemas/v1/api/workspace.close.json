@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "workspace_id": {
+      "$ref": "../common.json#/$defs/workspace_id"
+    },
+    "reason": {
+      "$ref": "../common.json#/$defs/text"
+    }
+  },
+  "required": [
+    "workspace_id",
+    "reason"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/workspace.close.json"
+}

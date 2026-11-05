@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/lease.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "holder",
+    "paths",
+    "symbols",
+    "reason",
+    "expires_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^lse_[0-9a-z]{26}$"
+    },
+    "holder": {
+      "$ref": "../common.json#/$defs/session_id"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/path"
+      },
+      "uniqueItems": true
+    },
+    "symbols": {
+      "$ref": "../common.json#/$defs/symbols"
+    },
+    "reason": {
+      "$ref": "../common.json#/$defs/text"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Lease"
+}

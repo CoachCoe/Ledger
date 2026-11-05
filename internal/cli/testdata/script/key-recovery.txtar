@@ -1,0 +1,16 @@
+exec git init -q repo
+cd repo
+exec ledger init
+# A symlink alias must not place private keys inside the repository.
+mkdir config
+symlink $WORK/alias -> $WORK/repo/config
+env XDG_CONFIG_HOME=$WORK/alias
+! exec ledger init
+stdout '"code": "key_dir_in_repository"'
+! exists config/ledger/keys/root.key
+# A missing original key is an error, not a silent new root identity.
+env XDG_CONFIG_HOME=$WORK/config
+rm $WORK/config/ledger/keys/root.key
+! exec ledger init
+stdout '"code": "root_unavailable"'
+! exists $WORK/config/ledger/keys/root.key

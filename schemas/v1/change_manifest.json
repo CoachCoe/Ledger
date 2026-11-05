@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/change_manifest.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "change_id",
+    "intent_id",
+    "workspace_id",
+    "author_session",
+    "context_refs",
+    "plan",
+    "base_commit",
+    "tree",
+    "files",
+    "symbols_read",
+    "symbols_written"
+  ],
+  "properties": {
+    "change_id": {
+      "$ref": "common.json#/$defs/change_id"
+    },
+    "intent_id": {
+      "$ref": "common.json#/$defs/intent_id"
+    },
+    "workspace_id": {
+      "$ref": "common.json#/$defs/workspace_id"
+    },
+    "author_session": {
+      "$ref": "common.json#/$defs/session_id"
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/text"
+      }
+    },
+    "plan": {
+      "$ref": "common.json#/$defs/nullable_text"
+    },
+    "base_commit": {
+      "$ref": "common.json#/$defs/git_oid"
+    },
+    "tree": {
+      "$ref": "common.json#/$defs/git_oid"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/path"
+      },
+      "uniqueItems": true
+    },
+    "symbols_read": {
+      "$ref": "common.json#/$defs/symbols"
+    },
+    "symbols_written": {
+      "$ref": "common.json#/$defs/symbols"
+    }
+  },
+  "title": "Change manifest"
+}

@@ -54,11 +54,11 @@ Edit-to-detection latency, 10 workspaces, 500 ms debounce:
 | Linux, fsnotify (inotify) | 520 / 537 / 544 ms | 10 | 9 s |
 | Linux, 500 ms poll | 284 / 511 / 546 ms | 0 | 49 s |
 
+The spike's latency collector had an unsynchronized shared sample slice, which can drop samples; the measurements above should be repeated with the corrected collector as part of M1 acceptance.
+
 In every run, edits not yet detected when the run ended (at most 4 of about 280) were made inside the final debounce window.
 
 ## Consequences
-
-- D0 review found unsynchronized appends to the spike's shared latency sample slice. The spike now synchronizes sample collection/reporting, with a concurrent regression test under `-race`. The table above is the historical Stage 0 measurement, not a rerun of the corrected collector. Repeat the real-project 10-workspace benchmark with the corrected collector before using it as M1 acceptance evidence.
 
 - The latency floor is the debounce interval plus one write-set computation. The default 500 ms debounce leaves more than a second of headroom against the 2-second target on both platforms.
 - macOS observation costs about 8× more CPU than Linux. That cost comes from spawning Git processes and from filesystem metadata calls, and it scales with edit activity, not with repository size. If it matters at larger scale, the next step is to keep the Git index in-process instead of spawning two Git commands per observation.

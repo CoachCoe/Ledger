@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/system.status.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "creation": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "head": {
+                "type": "string"
+              },
+              "resume": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "binding_head": {
+                "type": "string"
+              },
+              "conflict": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "creation",
+              "state",
+              "head",
+              "resume",
+              "owner",
+              "binding_head",
+              "conflict",
+              "detail"
+            ]
+          }
+        },
+        "recovery_pending": {
+          "type": "boolean"
+        },
+        "process_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "subjects",
+        "recovery_pending",
+        "process_id"
+      ]
+    }
+  }
+}

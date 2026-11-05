@@ -1,0 +1,82 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "$ref": "../common.json#/$defs/text"
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "../common.json#/$defs/name"
+          },
+          "statement": {
+            "$ref": "../common.json#/$defs/text"
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "check"
+                  },
+                  "check": {
+                    "$ref": "../common.json#/$defs/name"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "check"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "judgment"
+                  },
+                  "reviewer": {
+                    "enum": [
+                      "human",
+                      "agent",
+                      "any"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "reviewer"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "verification"
+        ]
+      }
+    },
+    "parent_id": {
+      "$ref": "../common.json#/$defs/intent_id"
+    },
+    "source": {
+      "$ref": "../intent.json#/properties/source"
+    }
+  },
+  "required": [
+    "description",
+    "criteria"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/intent.create.json"
+}

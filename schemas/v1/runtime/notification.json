@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/notification.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "recipient",
+    "kind",
+    "subject",
+    "counterpart",
+    "confidence",
+    "created_at",
+    "acknowledged_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^ntf_[0-9a-z]{26}$"
+    },
+    "recipient": {
+      "$ref": "../common.json#/$defs/session_id"
+    },
+    "kind": {
+      "enum": [
+        "overlap",
+        "lease_conflict",
+        "scope_violation",
+        "expiry"
+      ]
+    },
+    "subject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "../common.json#/$defs/path"
+            }
+          },
+          "title": "Path subject"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "symbol"
+          ],
+          "properties": {
+            "symbol": {
+              "$ref": "../common.json#/$defs/symbol"
+            }
+          },
+          "title": "Symbol subject"
+        }
+      ]
+    },
+    "counterpart": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspace_id",
+            "session_id",
+            "intent_id"
+          ],
+          "properties": {
+            "workspace_id": {
+              "$ref": "../common.json#/$defs/workspace_id"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/session_id"
+            },
+            "intent_id": {
+              "$ref": "../common.json#/$defs/intent_id"
+            }
+          },
+          "title": "Counterpart"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confidence": {
+      "enum": [
+        "direct",
+        "static_inferred",
+        "dynamic_observed",
+        "unresolved",
+        "file_level"
+      ]
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/timestamp"
+    },
+    "acknowledged_at": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "title": "Notification"
+}

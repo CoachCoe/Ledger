@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intent_id": {
+      "$ref": "../common.json#/$defs/intent_id"
+    },
+    "capability_id": {
+      "$ref": "../common.json#/$defs/capability_id"
+    },
+    "base_commit": {
+      "$ref": "../common.json#/$defs/git_oid"
+    }
+  },
+  "required": [
+    "intent_id",
+    "capability_id"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/workspace.fork.json"
+}

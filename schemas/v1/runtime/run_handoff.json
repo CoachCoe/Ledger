@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/run_handoff.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "attempts"
+  ],
+  "properties": {
+    "run_id": {
+      "$ref": "../common.json#/$defs/run_id"
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace_id",
+          "session_id",
+          "capability_id",
+          "strategy",
+          "path"
+        ],
+        "properties": {
+          "workspace_id": {
+            "$ref": "../common.json#/$defs/workspace_id"
+          },
+          "session_id": {
+            "$ref": "../common.json#/$defs/session_id"
+          },
+          "capability_id": {
+            "$ref": "../common.json#/$defs/capability_id"
+          },
+          "strategy": {
+            "$ref": "../common.json#/$defs/name"
+          },
+          "path": {
+            "$ref": "../common.json#/$defs/path"
+          }
+        },
+        "title": "Attempt handoff"
+      },
+      "minItems": 1
+    }
+  },
+  "title": "Speculation run handoff"
+}

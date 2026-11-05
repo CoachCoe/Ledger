@@ -1,0 +1,31 @@
+version: "2"
+linters:
+  enable:
+    - errorlint
+    - gosec
+    - misspell
+    - unconvert
+    - unparam
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - os.Remove
+        - os.RemoveAll
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gosec:
+      excludes:
+        # Ledger reads and writes files under paths it derives from the
+        # repository and its own state directory by design.
+        - G304
+        - G703
+        # Unchecked errors are errcheck's job, configured above.
+        - G104
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck]

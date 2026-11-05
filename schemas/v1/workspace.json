@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/workspace.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "intent_id",
+    "session_id",
+    "capability_id",
+    "change_id",
+    "base_commit",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "common.json#/$defs/workspace_id"
+    },
+    "intent_id": {
+      "$ref": "common.json#/$defs/intent_id"
+    },
+    "session_id": {
+      "$ref": "common.json#/$defs/session_id"
+    },
+    "capability_id": {
+      "$ref": "common.json#/$defs/capability_id"
+    },
+    "change_id": {
+      "$ref": "common.json#/$defs/change_id"
+    },
+    "base_commit": {
+      "$ref": "common.json#/$defs/git_oid"
+    },
+    "created_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Workspace creation"
+}

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/run_status.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "state",
+    "deadline",
+    "attempts",
+    "selection"
+  ],
+  "properties": {
+    "run_id": {
+      "$ref": "../common.json#/$defs/run_id"
+    },
+    "state": {
+      "enum": [
+        "created",
+        "collecting",
+        "evaluating",
+        "resolved",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "deadline": {
+      "$ref": "../common.json#/$defs/timestamp"
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace_id",
+          "manifest",
+          "submitted"
+        ],
+        "properties": {
+          "workspace_id": {
+            "$ref": "../common.json#/$defs/workspace_id"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "submitted": {
+            "type": "boolean"
+          }
+        },
+        "title": "Attempt status"
+      }
+    },
+    "selection": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "title": "Speculation run status"
+}

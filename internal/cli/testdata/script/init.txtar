@@ -1,0 +1,37 @@
+# Outside a repository, init fails with a structured error.
+! exec ledger init
+stdout '"code": "not_a_git_repo"'
+
+exec git init -q repo
+cd repo
+exec ledger init
+stdout '"ok": true'
+stdout '"root_key_created": true'
+exists .ledger/config.json
+exists $XDG_CONFIG_HOME/ledger/keys/root.key
+grep '^/\.ledger/$' .git/info/exclude
+
+# Ledger state is invisible to Git and the root key is outside the repo.
+exec git status --porcelain
+! stdout .
+exec git for-each-ref refs/ledger/
+stdout 'refs/ledger/records'
+
+# A second init changes nothing.
+exec find .ledger/objects -type f
+cp stdout ../objects-before
+exec git rev-parse refs/ledger/records
+cp stdout ../ref-before
+exec ledger init
+stdout '"root_key_created": false'
+exec find .ledger/objects -type f
+cmp stdout ../objects-before
+exec git rev-parse refs/ledger/records
+cmp stdout ../ref-before
+exec grep -c ledger .git/info/exclude
+stdout '^1$'
+
+# A key directory inside the repository is refused.
+env XDG_CONFIG_HOME=$WORK/repo/config
+! exec ledger init
+stdout '"code": "key_dir_in_repository"'

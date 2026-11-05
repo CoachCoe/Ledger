@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Intents, sessions, workspaces, and speculation runs change state over time, but records are immutable. Session keys live only in daemon memory, so a restart loses them while workspaces and user edits remain.
 
 ## Decision
 
@@ -25,8 +25,6 @@ Worktree creation/removal uses a repository-wide serialized lock in a documented
 
 Mutating creation records breaks signatures. Silent key rotation falsifies authorship. Selecting a lifecycle fork by time makes reindex/import nondeterministic.
 
-## Consequences and validation
+## Validation
 
 M0.9/M0.10, M1.2a/M1.4/M1.7, M2.4: stale predecessor, fork conflicts, lost keys/root unavailable, concurrent binding, historical authorship, terminal denial, preserved files/queues and reindex gaps.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

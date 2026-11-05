@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Speculation runs several attempts against one intent and chooses among them. Ledger does not run agents, so runs are asynchronous, and their inputs must not move while they are scored.
 
 ## Decision
 
@@ -31,8 +31,6 @@ One idempotent receipt group publishes winner selection, terminal run state, win
 
 Blocking until agents finish prevents usable CLI/MCP orchestration. Scoring a moving branch retargets evidence. Publishing winner and loser state independently admits partial outcomes.
 
-## Consequences and validation
+## Validation
 
 M5.1–M5.5: immediate handoff, judgment-only rejection, frozen rework denial, all scorer error cases/ties, timeout/cancel/all-fail, restart each stage, atomic terminal group and cleanup; M6 exposes the same APIs.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

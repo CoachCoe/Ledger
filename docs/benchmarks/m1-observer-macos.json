@@ -1,0 +1,14 @@
+{
+  "platform": "darwin",
+  "cpu_count": 10,
+  "source_commit": "6e83cc83c99cbac0108384392902e7230ed94843",
+  "workspaces": 10,
+  "duration_seconds": 60,
+  "samples": 299,
+  "p50_ms": 749.58,
+  "p95_ms": 1249.15,
+  "max_ms": 1680.72,
+  "undetected": 0,
+  "errors": [],
+  "passed": true
+}

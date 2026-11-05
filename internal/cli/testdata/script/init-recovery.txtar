@@ -1,0 +1,23 @@
+# Separate repositories sharing one root have distinct operation identities.
+exec git init -q first
+cd first
+exec ledger init
+exec grep -o 'op_[0-9a-v]*' .ledger/config.json
+cp stdout $WORK/first-operation
+exec git rev-parse refs/ledger/records
+cp stdout $WORK/original-ref
+# Losing the derived index/config must not publish a second initialization.
+rm .ledger/index.db .ledger/config.json
+exec ledger init
+exec git rev-parse refs/ledger/records
+cmp stdout $WORK/original-ref
+exec grep -o 'op_[0-9a-v]*' .ledger/config.json
+cmp stdout $WORK/first-operation
+cd $WORK
+exec git init -q second
+cd second
+exec ledger init
+stdout '"root_key_created": false'
+exec grep -o 'op_[0-9a-v]*' .ledger/config.json
+cp stdout $WORK/second-operation
+! exec cmp $WORK/first-operation $WORK/second-operation

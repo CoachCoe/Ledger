@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/lifecycle_event.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "subject_kind",
+    "subject_id",
+    "creation",
+    "previous",
+    "from_state",
+    "to_state",
+    "reason",
+    "replacement_id",
+    "actor",
+    "at"
+  ],
+  "properties": {
+    "subject_kind": {
+      "enum": [
+        "intent",
+        "session",
+        "workspace",
+        "speculation_run"
+      ]
+    },
+    "subject_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/intent_id"
+        },
+        {
+          "$ref": "common.json#/$defs/session_id"
+        },
+        {
+          "$ref": "common.json#/$defs/workspace_id"
+        },
+        {
+          "$ref": "common.json#/$defs/run_id"
+        }
+      ]
+    },
+    "creation": {
+      "$ref": "common.json#/$defs/hash"
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "from_state": {
+      "enum": [
+        "open",
+        "closed",
+        "active",
+        "ended",
+        "proposed",
+        "selected",
+        "created",
+        "collecting",
+        "evaluating",
+        "resolved",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "to_state": {
+      "enum": [
+        "open",
+        "closed",
+        "active",
+        "ended",
+        "proposed",
+        "selected",
+        "created",
+        "collecting",
+        "evaluating",
+        "resolved",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "reason": {
+      "$ref": "common.json#/$defs/nullable_text"
+    },
+    "replacement_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/intent_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actor": {
+      "$ref": "common.json#/$defs/principal"
+    },
+    "at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Lifecycle event"
+}

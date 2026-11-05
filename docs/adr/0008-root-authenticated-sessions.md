@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Agents act through short-lived sessions, but a session key alone proves nothing: something must bind each session's key, participant kind, and capability to the human root.
 
 ## Decision
 
@@ -23,8 +23,6 @@ Session keys remain only in daemon memory from M1 onward and disappear at end/re
 
 Self-signed session creation permits key substitution. Persisting session keys or silently replacing them defeats the recovery/authorship contract. Bundled public keys are evidence, not trust grants.
 
-## Consequences and validation
+## Validation
 
 M0.4/M0.10, M1.2a, M2.3/M2.6: substitute session key, wrong holder/actor, unauthenticated reviewer kind, expired ancestor, widening, root unavailable, and historical verification after expiry.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

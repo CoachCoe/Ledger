@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "speculation_run",
+  "payload": {
+    "id": "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "intent_id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "strategies": [
+      {
+        "name": "inline",
+        "spec": "Implement inline"
+      },
+      {
+        "name": "module",
+        "spec": "Use a module"
+      }
+    ],
+    "scorer": "9999999999999999999999999999999999999999999999999999999999999999",
+    "deadline": "2026-11-05T13:00:00.000Z",
+    "created_at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "a07feBKDFGh1lN2cNRgbf4ZX3sNgmTZ77IWIb2JG4fHdM8Yi7McnKhehxLAzVQ_QQCpnclp5e-BhCPVFpfk6Dw"
+}

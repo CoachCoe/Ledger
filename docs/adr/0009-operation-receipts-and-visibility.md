@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Many operations publish several records at once, and individual files are written atomically but not as a group. Retries, crashes, and records fetched from elsewhere must not produce partial or duplicated state.
 
 ## Decision
 
@@ -27,8 +27,6 @@ Write object/receipt files with same-directory temporary files, fsync, rename, a
 
 Per-file atomic rename does not make multiple records atomic. SQLite transactions alone cannot make portable state authoritative. Ref union solves storage reconciliation, not semantic conflict resolution.
 
-## Consequences and validation
+## Validation
 
 M0.6–M0.10: multi-process writers, exact retries/mismatch, pending groups, missing members, moved ref/union parents, divergent lifecycle/creation/receipt conflicts, shuffled replay, and fault boundaries in docs/contracts/recovery.md.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

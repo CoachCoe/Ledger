@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/operation_receipt.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation_id",
+    "operation",
+    "request_digest",
+    "result",
+    "members",
+    "at"
+  ],
+  "properties": {
+    "operation_id": {
+      "$ref": "common.json#/$defs/operation_id"
+    },
+    "operation": {
+      "type": "string",
+      "pattern": "^[a-z][a-z_]*(\\.[a-z][a-z_]*)*$",
+      "maxLength": 64
+    },
+    "request_digest": {
+      "$ref": "common.json#/$defs/hash"
+    },
+    "result": {
+      "type": "object"
+    },
+    "members": {
+      "$ref": "common.json#/$defs/hashes"
+    },
+    "at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Operation receipt"
+}

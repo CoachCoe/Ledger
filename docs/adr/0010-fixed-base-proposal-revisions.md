@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+A proposal must bind signed provenance to exactly the code that was authorized, even as agents keep editing and rework replaces earlier revisions.
 
 ## Decision
 
@@ -23,8 +23,6 @@ Evidence and selection name an exact manifest/commit pair. Replacing a proposal 
 
 Parenting reworks to prior proposals changes the diff/authority basis. Checked-out proposal branches leave stale indexes. Hashing the embedding commit in the manifest creates a cycle.
 
-## Consequences and validation
+## Validation
 
 M1.4–M1.7, M2.5, M3.6: two reworks, all trailers/bindings, independent user index, concurrent edits, stale authorization, unsupported submodule, CAS conflict, GC, and offline bundle retention.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/common.json",
+  "title": "Shared definitions for Ledger v1 records",
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_oid": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"},
+    "public_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"},
+    "intent_id": {"type": "string", "pattern": "^int_[0-9a-v]{26}$"},
+    "session_id": {"type": "string", "pattern": "^ses_[0-9a-v]{26}$"},
+    "capability_id": {"type": "string", "pattern": "^cap_[0-9a-v]{26}$"},
+    "workspace_id": {"type": "string", "pattern": "^wsp_[0-9a-v]{26}$"},
+    "change_id": {"type": "string", "pattern": "^chg_[0-9a-v]{26}$"},
+    "run_id": {"type": "string", "pattern": "^run_[0-9a-v]{26}$"},
+    "operation_id": {"type": "string", "pattern": "^op_[0-9a-v]{26}$"},
+    "principal": {
+      "description": "A root key fingerprint or a session id.",
+      "anyOf": [{"$ref": "#/$defs/hash"}, {"$ref": "#/$defs/session_id"}]
+    },
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 20000},
+    "nullable_text": {"anyOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]},
+    "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "count": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "hashes": {"type": "array", "items": {"$ref": "#/$defs/hash"}, "uniqueItems": true},
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "language", "name", "kind", "disambiguator"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "language": {"enum": ["javascript", "typescript", "tsx", "python"]},
+        "name": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "kind": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+        "disambiguator": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "symbols": {"type": "array", "items": {"$ref": "#/$defs/symbol"}}
+  }
+}

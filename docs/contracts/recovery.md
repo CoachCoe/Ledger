@@ -1,10 +1,10 @@
 # Publication and recovery contract
 
-This is the single failure/recovery table required by D0. ADRs 0009–0013 and 0015 govern it. Each row is a future fault-injection test, not a current implementation claim. Recovery never invents signatures, deletes user edits, or overwrites externally advanced refs.
+Every external side effect Ledger performs, with the recovery it requires after interruption. ADRs 0009–0013 and 0015 govern it. Each row names the fault-injection test that covers it. Recovery never invents signatures, deletes user edits, or overwrites externally advanced refs.
 
 An operation progresses through durable journal → fully prepared signed bytes → external effects/member objects → published receipt → records ref → SQLite. An operation-specific order may create retention refs before the proposal branch. The receipt is the accepted-state boundary; external effects may exist earlier and must be reported as pending. Publication must not declare success before its required effects exist. Completing cleanup is not required for a durable close to remain closed.
 
-| Boundary / side effect | Interruption or conflict | Required recovery / retry | Owner / test |
+| Boundary / side effect | Interruption or conflict | Required recovery / retry | Step / test |
 |---|---|---|---|
 | Root key creation outside repo | Crash during temp write/rename; another init wins | Private directory/file modes; atomic no-clobber creation; preserve existing key; never create a replacement identity silently | M0.4/M0.11 `RootKeyCreationRecovery` |
 | `.git/info/exclude` and init metadata | Repeated/partial init; linked worktree | Idempotently ensure Ledger exclusion in the host repo; preserve other entries/config; case policy and root public identity stay consistent | M0.11 `InitInterrupted` |

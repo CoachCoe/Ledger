@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "intent",
+  "payload": {
+    "id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "parent_id": null,
+    "description": "Add a health endpoint",
+    "criteria": [
+      {
+        "id": "tests",
+        "statement": "Unit tests pass",
+        "verification": {
+          "kind": "check",
+          "check": "unit",
+          "definition_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      {
+        "id": "review",
+        "statement": "A human approves the API shape",
+        "verification": {
+          "kind": "judgment",
+          "reviewer": "human"
+        }
+      }
+    ],
+    "source": {
+      "kind": "ticket",
+      "reference": "OPS-42"
+    },
+    "owner": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+    "created_at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "SBiiZ3hGMs_oUsuU6KOC670cIiXZvYgG2PTsTuabP-80G6i1SwsBydPOTJLtIDSvMwzGoOksOn9JVUGodmBSBg"
+}

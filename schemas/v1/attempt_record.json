@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/attempt_record.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "intent_id",
+    "workspace_id",
+    "manifest",
+    "approach",
+    "evidence",
+    "outcome",
+    "failed_criteria",
+    "score",
+    "target_symbols"
+  ],
+  "properties": {
+    "run_id": {
+      "$ref": "common.json#/$defs/run_id"
+    },
+    "intent_id": {
+      "$ref": "common.json#/$defs/intent_id"
+    },
+    "workspace_id": {
+      "$ref": "common.json#/$defs/workspace_id"
+    },
+    "manifest": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "approach": {
+      "$ref": "common.json#/$defs/nullable_text"
+    },
+    "evidence": {
+      "$ref": "common.json#/$defs/hashes"
+    },
+    "outcome": {
+      "enum": [
+        "failed_criteria",
+        "lost_tiebreaker",
+        "timeout",
+        "cancelled",
+        "interrupted",
+        "not_proposed"
+      ]
+    },
+    "failed_criteria": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/name"
+      },
+      "uniqueItems": true
+    },
+    "score": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "target_symbols": {
+      "$ref": "common.json#/$defs/symbols"
+    }
+  },
+  "title": "Attempt record"
+}

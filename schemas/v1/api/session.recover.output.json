@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/session.recover.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "$ref": "response.json#/$defs/mutation_result",
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "session_id": {
+              "$ref": "../common.json#/$defs/session_id"
+            },
+            "capability_id": {
+              "$ref": "../common.json#/$defs/capability_id"
+            },
+            "session_hash": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "capability_hash": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "workspace_id": {
+              "$ref": "../common.json#/$defs/workspace_id"
+            }
+          },
+          "required": [
+            "session_id",
+            "capability_id",
+            "session_hash",
+            "capability_hash",
+            "workspace_id"
+          ]
+        }
+      }
+    }
+  }
+}

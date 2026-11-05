@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/intent.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "parent_id",
+    "description",
+    "criteria",
+    "source",
+    "owner",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "common.json#/$defs/intent_id"
+    },
+    "parent_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/intent_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "description": {
+      "$ref": "common.json#/$defs/text"
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "statement",
+          "verification"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.json#/$defs/name"
+          },
+          "statement": {
+            "$ref": "common.json#/$defs/text"
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "check",
+                  "definition_hash"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "check"
+                  },
+                  "check": {
+                    "$ref": "common.json#/$defs/name"
+                  },
+                  "definition_hash": {
+                    "$ref": "common.json#/$defs/hash"
+                  }
+                },
+                "title": "Check criterion"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "reviewer"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "judgment"
+                  },
+                  "reviewer": {
+                    "enum": [
+                      "human",
+                      "agent",
+                      "any"
+                    ]
+                  }
+                },
+                "title": "Judgment criterion"
+              }
+            ]
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "ticket",
+            "intent"
+          ]
+        },
+        "reference": {
+          "$ref": "common.json#/$defs/nullable_text"
+        }
+      },
+      "title": "Intent source"
+    },
+    "owner": {
+      "$ref": "common.json#/$defs/principal"
+    },
+    "created_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Intent creation"
+}

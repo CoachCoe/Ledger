@@ -5,7 +5,7 @@
 
 ## Context
 
-D0 records the revised Phase 1 build prompt's execution contracts before M0. Git remains canonical for code; signed records govern provenance. This decision specifies the existing local Phase 1 scope.
+Provenance must verify on another machine without the source repository, daemon, or index, and importing it must never let a bundle grant itself trust or escape its staging area.
 
 ## Decision
 
@@ -23,8 +23,6 @@ Duplicate import is idempotent. Semantic forks/incompatible creations/receipts a
 
 Records plus public keys alone cannot verify a commit/tree binding. Importing trust or runtime sessions would cross local authority boundaries. Blind archive extraction permits path traversal.
 
-## Consequences and validation
+## Validation
 
 M3.6: offline source-inaccessible verify/import twice, missing records/commits, traversal/oversize/unsupported schema, tamper, conflicting histories, trust separation, no branch/config/key/runtime overwrite.
-
-These are acceptance obligations, not claims that product code already implements them. The untracked milestone plans assign each case to its implementation step.

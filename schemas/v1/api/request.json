@@ -1,0 +1,75 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "operation": {
+      "enum": [
+        "daemon.stop",
+        "session.create",
+        "session.end",
+        "session.recover",
+        "intent.create",
+        "intent.close",
+        "intent.status",
+        "workspace.fork",
+        "workspace.status",
+        "workspace.propose",
+        "workspace.rework",
+        "workspace.close",
+        "system.status"
+      ]
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/session_id"
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "input": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "api_version",
+    "operation",
+    "operation_id",
+    "session_id",
+    "input"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "not": {
+              "enum": [
+                "intent.status",
+                "system.status",
+                "workspace.status"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "operation_id": {
+            "$ref": "../common.json#/$defs/operation_id"
+          }
+        }
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/request.json"
+}

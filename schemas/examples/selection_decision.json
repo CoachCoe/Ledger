@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "kind": "selection_decision",
+  "payload": {
+    "intent_id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "competitors": [],
+    "evidence": [
+      "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "criteria": [
+      {
+        "criterion_id": "tests",
+        "status": "satisfied",
+        "deciding": [
+          "8888888888888888888888888888888888888888888888888888888888888888"
+        ],
+        "conflicting": []
+      },
+      {
+        "criterion_id": "review",
+        "status": "outstanding",
+        "deciding": [],
+        "conflicting": []
+      }
+    ],
+    "contrary_evidence": [],
+    "selector": {
+      "kind": "root",
+      "id": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e"
+    },
+    "scoring": null,
+    "at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "dvedoYS8bYGBHkyhPUGAxv0NXuA6LvNDUqubaCGlavoQSp2RPNTOnhUeC2bHAwxM4ZyLSDRoZxDUXQZSeXsJAg"
+}

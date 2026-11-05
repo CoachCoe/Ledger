@@ -2,9 +2,7 @@
 
 Ledger is a local, provider-neutral control plane over Git. Git stores code; immutable signed Ledger records store intent, authority, revisions, evidence, selection and lifecycle history. SQLite and live observations are rebuildable local state. Selection never means acceptance or merge authorization.
 
-D0 is documented in ADRs [0007](../adr/0007-record-envelope-and-identifiers.md) through [0015](../adr/0015-speculation-frozen-inputs.md), building on the six Stage 0 ADRs. The [recovery table](recovery.md) assigns every external side effect a failure/retry obligation. The [worked reference graph](reference-graph.json) shows the hash dependency order and stable-id resolutions without a self-hash or receipt cycle. Run `python3 tools/check_contract_graph.py` to check that example's dependencies, unique ids, lifecycle predecessor and complete-group visibility.
-
-The graph is a symbolic contract example: aliases stand for eventual object hashes, and envelope signatures are not generated. It does not claim schema or cryptographic conformance. M0 must add closed schemas and independently generated real signature/hash fixtures before product record handling is accepted. The working milestone plans and complete acceptance matrix live under the intentionally ignored `Untracked Docs/plans/` as required by the build prompt; no product milestone is complete yet.
+The execution contracts are specified in ADRs [0007](../adr/0007-record-envelope-and-identifiers.md) through [0015](../adr/0015-speculation-frozen-inputs.md), building on the platform ADRs 0001–0006. The [recovery table](recovery.md) lists every external side effect and the recovery it requires. Record shapes are in [`schemas/v1/`](../../schemas/v1/) with signed examples in [`schemas/examples/`](../../schemas/examples/) (ADR 0016); independently generated signature and canonicalization fixtures are under `internal/envelope/testdata/` and `internal/canon/testdata/`.
 
 An independent verifier performs these steps without SQLite:
 
@@ -14,5 +12,3 @@ An independent verifier performs these steps without SQLite:
 4. Follow authenticated creation and lifecycle/binding predecessor hashes. Check actors and authority at claimed operation times. Preserve semantic forks as conflicts and block ambiguous subjects; do not choose by timestamp.
 5. Verify manifest trailer, exact Git tree, and sole fixed-base parent separately. Evidence binds that manifest/commit and pinned check definition; selection recomputes explicit-set criterion status and reports known contrary evidence.
 6. Report integrity, trust, unavailable dependencies and conflicts distinctly. Public keys in the bundle do not grant trust. A complete export supplies all provenance groups and reachable Git objects without the source repository, daemon, runtime journals or network.
-
-D0 does not implement a daemon, record store, schemas, import, or evidence execution. Those remain M0–M6 acceptance work. M1 starts with real root-authenticated sessions and whole-repository capabilities; M2 enables scoped/delegated authority after enforcement tests pass. The owner-led post-M3 customer checkpoint and commercial validation benchmark remain separate gates.

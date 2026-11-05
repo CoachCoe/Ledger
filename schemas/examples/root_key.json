@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "root_key",
+  "payload": {
+    "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "created_at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "vNqBUFBBgqnOtJfezmGH2tCfk3axBYn-EfOVvZtbxAPIymsQKkme6dqSSV2WYNAJBbqiQ5rM3Yv0OaY9DTOUDQ"
+}

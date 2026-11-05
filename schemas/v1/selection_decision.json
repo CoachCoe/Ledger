@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/selection_decision.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "intent_id",
+    "manifest",
+    "commit",
+    "competitors",
+    "evidence",
+    "criteria",
+    "contrary_evidence",
+    "selector",
+    "scoring",
+    "at"
+  ],
+  "properties": {
+    "intent_id": {
+      "$ref": "common.json#/$defs/intent_id"
+    },
+    "manifest": {
+      "$ref": "common.json#/$defs/hash"
+    },
+    "commit": {
+      "$ref": "common.json#/$defs/git_oid"
+    },
+    "competitors": {
+      "$ref": "common.json#/$defs/hashes"
+    },
+    "evidence": {
+      "$ref": "common.json#/$defs/hashes"
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "criterion_id",
+          "status",
+          "deciding",
+          "conflicting"
+        ],
+        "properties": {
+          "criterion_id": {
+            "$ref": "common.json#/$defs/name"
+          },
+          "status": {
+            "enum": [
+              "satisfied",
+              "failed",
+              "outstanding"
+            ]
+          },
+          "deciding": {
+            "$ref": "common.json#/$defs/hashes"
+          },
+          "conflicting": {
+            "$ref": "common.json#/$defs/hashes"
+          }
+        },
+        "title": "Criterion status"
+      },
+      "minItems": 1
+    },
+    "contrary_evidence": {
+      "$ref": "common.json#/$defs/hashes"
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "root",
+            "session",
+            "speculation_run"
+          ]
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/hash"
+            },
+            {
+              "$ref": "common.json#/$defs/session_id"
+            },
+            {
+              "$ref": "common.json#/$defs/run_id"
+            }
+          ]
+        }
+      },
+      "title": "Selecting identity"
+    },
+    "scoring": {
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "at": {
+      "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Selection decision"
+}
