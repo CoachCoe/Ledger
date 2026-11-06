@@ -27,6 +27,7 @@ func commands() map[string]command {
 		"capability":   {"issue or delegate scoped authority", liveCommand("capability")},
 		"coordination": {"poll or acknowledge notifications", liveCommand("coordination")},
 		"session":      {"create, end or recover a signing session", liveCommand("session")},
+		"evidence":     {"resolve a frozen manifest, commit and check-definition binding", liveCommand("evidence")},
 		"intent":       {"create, inspect or close an intent", liveCommand("intent")},
 		"workspace":    {"fork, inspect, propose, rework or close a workspace", liveCommand("workspace")},
 		"system":       {"inspect daemon status", liveCommand("system")},

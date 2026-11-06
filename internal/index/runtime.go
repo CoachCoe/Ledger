@@ -111,8 +111,9 @@ func (x *Index) Observation(ctx context.Context, id string) (map[string]string, 
 
 // Proposal is the commit and branch a workspace's latest proposal published.
 type Proposal struct {
-	Commit string `json:"commit"`
-	Branch string `json:"branch"`
+	Manifest string `json:"manifest"`
+	Commit   string `json:"commit"`
+	Branch   string `json:"branch"`
 }
 
 // LastProposal follows the accepted lifecycle chain to the latest proposal
@@ -208,4 +209,57 @@ func (x *Index) RootOperation(ctx context.Context, fingerprint string) (string, 
 		return "", nil
 	}
 	return id, err
+}
+
+// ChangeWorkspace returns the unique committed workspace carrying a change id.
+func (x *Index) ChangeWorkspace(ctx context.Context, changeID string) (string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT json_extract(payload,'$.id') FROM objects WHERE kind='workspace' AND json_extract(payload,'$.change_id')=?`, changeID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var id string
+	for rows.Next() {
+		if id != "" {
+			return "", apierr.New("conflicting_creation", "change %s belongs to more than one workspace", changeID)
+		}
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", apierr.New("unknown_entity", "no change %s", changeID)
+	}
+	return id, nil
+}
+
+// Manifest returns a committed change manifest by hash.
+func (x *Index) Manifest(ctx context.Context, hash string) (schema.ChangeManifest, error) {
+	var m schema.ChangeManifest
+	var raw string
+	err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='change_manifest'`, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return m, apierr.New("unknown_manifest", "no committed change manifest %s", hash)
+	}
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal([]byte(raw), &m)
+}
+
+// CheckDefinition returns a committed check definition record by hash.
+func (x *Index) CheckDefinition(ctx context.Context, hash string) (schema.CheckDefinition, error) {
+	var d schema.CheckDefinition
+	var raw string
+	err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='check_definition'`, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return d, apierr.New("unknown_check_definition", "no committed check definition %s", hash)
+	}
+	if err != nil {
+		return d, err
+	}
+	return d, json.Unmarshal([]byte(raw), &d)
 }

@@ -33,6 +33,7 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 | `intent close` | root or owning session | Close as `completed`, `abandoned`, or `superseded` (with `replacement_id`). |
 | `workspace fork` | session | Create a detached worktree at `base_commit` (default `HEAD`) for a leaf intent. |
 | `workspace status` | anyone | Return the latest observed write set relative to the base. |
+| `evidence resolve` | anyone | Return the frozen binding (manifest, bound commit, tree, pinned check definitions) for `{change_id}` or `{manifest, commit?}`. A change id resolves once; use the returned manifest and commit afterwards. |
 | `workspace propose` | bound session | Capture the workspace, sign a manifest, and publish a commit on `ledger/<intent-short-id>/<workspace-short-id>`. |
 | `workspace rework` | root or bound session | Reopen a proposed workspace for another revision. |
 | `workspace close` | root or bound session | Record the close, then remove the worktree if nothing would be lost. |

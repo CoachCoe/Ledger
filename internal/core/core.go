@@ -19,6 +19,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/capability"
 	"github.com/CoachCoe/Ledger/internal/envelope"
+	"github.com/CoachCoe/Ledger/internal/evidence"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
@@ -238,6 +239,16 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 		}
 		p, err := creation[schema.Intent](ctx, s.Store.Index, in.IntentID, schema.KindIntent)
 		return map[string]any{"subject": sub, "intent": p}, err
+	case "evidence.resolve":
+		in, err := decode[struct {
+			ChangeID string `json:"change_id"`
+			Manifest string `json:"manifest"`
+			Commit   string `json:"commit"`
+		}](r.Input)
+		if err != nil {
+			return nil, err
+		}
+		return evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{ChangeID: in.ChangeID, Manifest: in.Manifest, Commit: in.Commit})
 	case "workspace.status":
 		in, err := decode[workspaceInput](r.Input)
 		if err != nil {
@@ -803,6 +814,9 @@ func (s *Service) pinChecks(criteria []schema.Criterion, signer identity.Signer)
 			def, ok := byName[name]
 			if !ok {
 				return nil, nil, apierr.New("unknown_check", "no check %s", name)
+			}
+			if err := evidence.ValidateDefinition(def); err != nil {
+				return nil, nil, apierr.New("invalid_checks", "check %s: %v", name, err)
 			}
 			o, err := envelope.Seal(schema.KindCheckDefinition, def, signer)
 			if err != nil {

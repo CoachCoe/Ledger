@@ -59,6 +59,13 @@ cmpenv stdout $WORK/parents
 exec git rev-parse refs/ledger/proposals/$MANIFEST
 stdout $COMMIT
 
+# evidence resolve freezes the manifest and commit binding; a commit from
+# elsewhere is rejected.
+exec ledger evidence resolve '{"manifest":"'$MANIFEST'","commit":"'$COMMIT'"}'
+stdout '"frozen": true'
+stdout '"commit": "'$COMMIT'"'
+! exec ledger evidence resolve '{"manifest":"'$MANIFEST'","commit":"'$BASE'"}'
+stdout '"code": "binding_mismatch"'
 # An edit made while the daemon is stopped is observed when it restarts.
 exec ledger daemon stop
 cp $WORK/repo/tools/report.py $WPATH/tools/later.py

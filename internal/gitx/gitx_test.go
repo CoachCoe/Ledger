@@ -170,3 +170,32 @@ func TestReplacementObjectsDoNotRetargetStoredContent(t *testing.T) {
 		t.Fatalf("replacement object changed signed content: %s %v", raw, err)
 	}
 }
+
+func TestReadCommit(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	head, err := repo.ResolveRef(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := repo.ReadCommit(ctx, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := trim(repo.git(ctx, nil, nil, "rev-parse", head+"^{tree}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SHA != head || c.Tree != tree || len(c.Parents) != 0 || c.Message == "" {
+		t.Fatalf("unexpected commit %+v", c)
+	}
+	if _, err := repo.ReadCommit(ctx, "0123456789012345678901234567890123456789"); !apierr.HasCode(err, "dependency_unavailable") {
+		t.Fatalf("missing commit: %v", err)
+	}
+	if _, err := repo.ReadCommit(ctx, "--help"); !apierr.HasCode(err, "invalid_commit") {
+		t.Fatalf("option-like id: %v", err)
+	}
+	if _, err := repo.ReadCommit(ctx, tree); !apierr.HasCode(err, "dependency_unavailable") {
+		t.Fatalf("tree as commit: %v", err)
+	}
+}

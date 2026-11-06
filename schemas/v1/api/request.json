@@ -14,6 +14,7 @@
         "intent.create",
         "intent.close",
         "intent.status",
+        "evidence.resolve",
         "workspace.fork",
         "workspace.status",
         "workspace.propose",
@@ -57,6 +58,7 @@
           "operation": {
             "not": {
               "enum": [
+                "evidence.resolve",
                 "intent.status",
                 "system.status",
                 "workspace.status",

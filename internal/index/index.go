@@ -36,6 +36,8 @@ CREATE INDEX IF NOT EXISTS objects_intent_parent ON objects (json_extract(payloa
 	WHERE kind = 'intent';
 CREATE INDEX IF NOT EXISTS objects_manifest_intent ON objects (json_extract(payload, '$.intent_id'))
 	WHERE kind = 'change_manifest';
+CREATE INDEX IF NOT EXISTS objects_workspace_change ON objects (json_extract(payload, '$.change_id'))
+	WHERE kind = 'workspace';
 CREATE TABLE IF NOT EXISTS members (
 	receipt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (receipt, hash));
 CREATE INDEX IF NOT EXISTS members_hash ON members (hash);

@@ -309,3 +309,49 @@ func (r *Repo) UpdateRefCAS(ctx context.Context, ref, newID, old string) error {
 	}
 	return err
 }
+
+// Commit is the parsed content of a commit object.
+type Commit struct {
+	SHA     string
+	Tree    string
+	Parents []string
+	Message string
+}
+
+var objectID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// ReadCommit parses a commit object. A missing object fails with
+// "dependency_unavailable"; an object that is not a commit fails with
+// "invalid_commit".
+func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
+	if !objectID.MatchString(sha) {
+		return Commit{}, apierr.New("invalid_commit", "%q is not a full object id", sha)
+	}
+	if _, err := r.git(ctx, nil, nil, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		var ge *Error
+		if errors.As(err, &ge) {
+			return Commit{}, apierr.New("dependency_unavailable", "commit %s is not available", sha)
+		}
+		return Commit{}, err
+	}
+	out, err := r.git(ctx, nil, nil, "cat-file", "commit", sha)
+	if err != nil {
+		return Commit{}, err
+	}
+	headers, message, _ := strings.Cut(string(out), "\n\n")
+	c := Commit{SHA: sha, Message: message}
+	for line := range strings.SplitSeq(headers, "\n") {
+		// Continuation lines (for example a signature) begin with a space.
+		key, value, _ := strings.Cut(line, " ")
+		switch key {
+		case "tree":
+			c.Tree = value
+		case "parent":
+			c.Parents = append(c.Parents, value)
+		}
+	}
+	if c.Tree == "" {
+		return Commit{}, apierr.New("invalid_commit", "commit %s has no tree", sha)
+	}
+	return c, nil
+}
