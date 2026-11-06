@@ -75,6 +75,9 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	if _, err := store.Recover(ctx); err != nil {
 		return nil, err
 	}
+	if _, err := evidence.Reconcile(ctx, store.Repo, s.runtimeDir()); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.reconcile(ctx); err != nil {
@@ -225,7 +228,15 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 		s.mu.Lock()
 		pending := s.recoveryPending
 		s.mu.Unlock()
-		return map[string]any{"subjects": subjects, "recovery_pending": pending, "process_id": os.Getpid()}, nil
+		runs, err := evidence.Interrupted(s.runtimeDir())
+		if err != nil {
+			return nil, err
+		}
+		interrupted := []map[string]any{}
+		for _, j := range runs {
+			interrupted = append(interrupted, map[string]any{"run_id": j.RunID, "manifest": j.Manifest, "commit": j.Commit, "reason": j.Reason})
+		}
+		return map[string]any{"subjects": subjects, "recovery_pending": pending, "process_id": os.Getpid(), "interrupted_runs": interrupted}, nil
 	case "intent.status":
 		in, err := decode[struct {
 			IntentID string `json:"intent_id"`

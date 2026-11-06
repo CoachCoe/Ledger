@@ -355,3 +355,52 @@ func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
 	}
 	return c, nil
 }
+
+// WorktreeInfo is one entry of `git worktree list`.
+type WorktreeInfo struct {
+	Path     string
+	Head     string
+	Detached bool
+}
+
+// WorktreeAddDetached creates a linked worktree at path with a detached HEAD
+// at commit. The path must not exist.
+func (r *Repo) WorktreeAddDetached(ctx context.Context, path, commit string) error {
+	_, err := Run(ctx, r.MainDir, nil, nil, "worktree", "add", "--detach", "--quiet", path, commit)
+	return err
+}
+
+// WorktreeRemove force-removes the linked worktree at path and prunes its
+// administrative entry.
+func (r *Repo) WorktreeRemove(ctx context.Context, path string) error {
+	if _, err := Run(ctx, r.MainDir, nil, nil, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+	_, err := Run(ctx, r.MainDir, nil, nil, "worktree", "prune")
+	return err
+}
+
+// Worktrees lists every worktree of the repository.
+func (r *Repo) Worktrees(ctx context.Context) ([]WorktreeInfo, error) {
+	out, err := Run(ctx, r.MainDir, nil, nil, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var list []WorktreeInfo
+	for line := range strings.SplitSeq(string(out), "\n") {
+		key, value, _ := strings.Cut(line, " ")
+		switch key {
+		case "worktree":
+			list = append(list, WorktreeInfo{Path: value})
+		case "HEAD":
+			if len(list) > 0 {
+				list[len(list)-1].Head = value
+			}
+		case "detached":
+			if len(list) > 0 {
+				list[len(list)-1].Detached = true
+			}
+		}
+	}
+	return list, nil
+}

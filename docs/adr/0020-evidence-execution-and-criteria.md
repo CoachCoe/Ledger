@@ -15,6 +15,13 @@ Deviations and ambiguities:
 - `evidence.Resolve` takes no `*gitx.Repo`. Resolution reads only the index; the commit object is first read by the verification worktree (M3.2), where an absent object is `dependency_unavailable`.
 - `index.Proposal` gains the proposal receipt's `manifest`, so a change id resolves without a second lookup.
 
+## M3.2 verification worktrees
+
+- `evidence.Prepare` creates a detached worktree at `.ledger/runtime/verify/<run-id>/`, after reading the bound commit and checking trailer, tree and parent (`verify.CheckBinding`). Nothing is created if any condition fails. After checkout it compares `HEAD^{tree}` and a tracked-files tree (temporary index, `read-tree` + `add -u` + `write-tree`) with the manifest tree. Untracked and ignored files are allowed; modified, deleted and mode/type-changed tracked files are not.
+- Deviation from the plan text: a binding failure is `binding_mismatch` except when only the tree condition fails, which is `tree_mismatch` (AC-091 names tree mismatch as its own abort). All three conditions are always in the error details. Dirty tracked files are `dirty_checkout`.
+- Run journals (`.ledger/runtime/evidence/<run-id>.json`, runtime schema `evidence_run`) move `preparing -> ready`, or `aborted` with the error code. `Reconcile` (called from `core.New`) marks non-terminal journals `interrupted` and removes the worktree only if its journalled path is exactly the run's verify path and git lists it as a detached worktree; other paths are never touched. `system.status` reports `interrupted_runs`. A fault hook error simulates a crash and skips cleanup.
+- Worktree removal on abort uses `context.WithoutCancel`, so a cancelled request still cleans up.
+
 ## Decisions for M3.3-M3.5 (recorded now so later steps cannot drift)
 
 1. Verifier sessions are provisioned per run by the daemon: an ephemeral root-signed `service` session with no path authority, ended after the run, so the signer is never the author.

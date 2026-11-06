@@ -4,10 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
+	"github.com/CoachCoe/Ledger/internal/evidence"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
@@ -153,5 +156,44 @@ func TestAC110_ResolveFreezesBinding(t *testing.T) {
 		if _, err := s.Handle(ctx, request("evidence.resolve", "", in)); !apierr.HasCode(err, "schema_invalid") {
 			t.Fatalf("input %v: %v", in, err)
 		}
+	}
+}
+
+func TestVerificationSetupRecoveryReportedByStatus(t *testing.T) {
+	// A crash that leaves a verification worktree and a non-terminal run
+	// journal is reconciled by core.New and reported by system.status.
+	s := fixture(t)
+	ctx := context.Background()
+	head, err := s.Store.Repo.ResolveRef(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, nil, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := schema.NewID(schema.PrefixRun)
+	path := evidence.VerifyPath(filepath.Join(s.Store.Dir, "runtime"), id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Store.Repo.WorktreeAddDetached(ctx, path, head); err != nil {
+		t.Fatal(err)
+	}
+	j := evidence.Journal{RunID: id, State: evidence.StateReady, Manifest: strings.Repeat("a", 64), Commit: head, Tree: strings.TrimSpace(string(tree)), WorktreePath: path}
+	if err := evidence.WriteJournal(filepath.Join(s.Store.Dir, "runtime"), j); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(ctx, s.Store, s.Keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("leftover verification worktree: %v", err)
+	}
+	status := call(t, restarted, request("system.status", "", map[string]any{}))
+	runs, _ := status["interrupted_runs"].([]any)
+	if len(runs) != 1 || runs[0].(map[string]any)["run_id"] != id {
+		t.Fatalf("interrupted_runs %v", status["interrupted_runs"])
 	}
 }

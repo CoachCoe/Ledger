@@ -23,6 +23,8 @@ func TestRuntimeSchemas(t *testing.T) {
 			"capability_id":"cap_` + strings.Repeat("a", 26) + `","strategy":"inline","path":"/tmp/w"}]}`,
 		"run_status": `{"run_id":"` + run + `","state":"collecting","deadline":"2026-11-05T12:00:00Z",
 			"attempts":[{"workspace_id":"` + wsp + `","manifest":null,"submitted":false}],"selection":null}`,
+		"evidence_run": `{"run_id":"` + run + `","state":"ready","manifest":"` + strings.Repeat("a", 64) + `",
+			"commit":"` + strings.Repeat("b", 40) + `","tree":"` + strings.Repeat("c", 40) + `","worktree_path":"/tmp/v"}`,
 	}
 	for name, doc := range valid {
 		if err := ValidateRuntime(name, []byte(doc)); err != nil {
