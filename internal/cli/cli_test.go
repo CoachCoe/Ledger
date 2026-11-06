@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,14 @@ func jsonvar(ts *testscript.TestScript, neg bool, args []string) {
 	var v any
 	ts.Check(json.Unmarshal([]byte(ts.ReadFile("stdout")), &v))
 	for _, key := range strings.Split(args[1], ".") {
+		if array, ok := v.([]any); ok {
+			i, err := strconv.Atoi(key)
+			if err != nil || i < 0 || i >= len(array) {
+				ts.Fatalf("invalid array index %q", key)
+			}
+			v = array[i]
+			continue
+		}
 		object, ok := v.(map[string]any)
 		if !ok {
 			ts.Fatalf("%s: no object at %q", args[1], key)

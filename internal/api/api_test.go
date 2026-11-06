@@ -17,7 +17,7 @@ func TestProtocolRejectsInvalidAndUnknownInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*Request){
-		"version": func(r *Request) { r.Version = 2 }, "operation": func(r *Request) { r.Operation = "unknown" }, "id": func(r *Request) { r.OperationID = "" }, "extra": func(r *Request) { r.Input = []byte(`{"allow":["src/**"]}`) }, "malformed": func(r *Request) { r.Input = []byte(`{"model":1}`) },
+		"version": func(r *Request) { r.Version = 2 }, "operation": func(r *Request) { r.Operation = "unknown" }, "id": func(r *Request) { r.OperationID = "" }, "extra": func(r *Request) { r.Input = []byte(`{"unknown":true}`) }, "malformed": func(r *Request) { r.Input = []byte(`{"model":1}`) },
 	} {
 		r := good
 		mutate(&r)

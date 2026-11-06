@@ -439,7 +439,7 @@ func TestIntentTreeAndSessionLifecycle(t *testing.T) {
 	if err := fork(parent); !apierr.HasCode(err, "intent_not_leaf") {
 		t.Fatalf("forked a parent intent: %v", err)
 	}
-	if _, err := s.Handle(ctx, request("workspace.fork", sid, map[string]any{"intent_id": child, "capability_id": b["capability_id"]})); !apierr.HasCode(err, "unsupported_capability") {
+	if _, err := s.Handle(ctx, request("workspace.fork", sid, map[string]any{"intent_id": child, "capability_id": b["capability_id"]})); !apierr.HasCode(err, "unauthorized") {
 		t.Fatalf("forked with another session's capability: %v", err)
 	}
 	if _, err := s.Handle(ctx, request("intent.close", "", map[string]any{"intent_id": child, "reason": "superseded"})); err == nil {

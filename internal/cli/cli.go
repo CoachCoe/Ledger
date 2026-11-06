@@ -23,16 +23,18 @@ type command struct {
 
 func commands() map[string]command {
 	return map[string]command{
-		"daemon":    {"serve the core API over the repository socket", cmdDaemon},
-		"session":   {"create, end or recover a signing session", liveCommand("session")},
-		"intent":    {"create, inspect or close an intent", liveCommand("intent")},
-		"workspace": {"fork, inspect, propose, rework or close a workspace", liveCommand("workspace")},
-		"system":    {"inspect daemon status", liveCommand("system")},
-		"init":      {"initialize Ledger in the current Git repository", cmdInit},
-		"recover":   {"reconcile record files, the records ref, and the index", cmdRecover},
-		"reindex":   {"rebuild the index from the record files", cmdReindex},
-		"status":    {"list subjects and their derived state", cmdStatus},
-		"version":   {"print version information", cmdVersion},
+		"daemon":       {"serve the core API over the repository socket", cmdDaemon},
+		"capability":   {"issue or delegate scoped authority", liveCommand("capability")},
+		"coordination": {"poll or acknowledge notifications", liveCommand("coordination")},
+		"session":      {"create, end or recover a signing session", liveCommand("session")},
+		"intent":       {"create, inspect or close an intent", liveCommand("intent")},
+		"workspace":    {"fork, inspect, propose, rework or close a workspace", liveCommand("workspace")},
+		"system":       {"inspect daemon status", liveCommand("system")},
+		"init":         {"initialize Ledger in the current Git repository", cmdInit},
+		"recover":      {"reconcile record files, the records ref, and the index", cmdRecover},
+		"reindex":      {"rebuild the index from the record files", cmdReindex},
+		"status":       {"list subjects and their derived state", cmdStatus},
+		"version":      {"print version information", cmdVersion},
 	}
 }
 

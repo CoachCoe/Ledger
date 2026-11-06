@@ -40,6 +40,9 @@ func (s *Service) observe(ctx context.Context, w schema.Workspace) (workspace.Sn
 	if err != nil {
 		return snap, "", err
 	}
+	if err := s.warnScope(ctx, w, snap); err != nil {
+		return snap, "", err
+	}
 	at := now()
 	return snap, at, s.Store.Index.SaveObservation(ctx, w.ID, s.Provider.Path(w.ID), at, snap.Status)
 }

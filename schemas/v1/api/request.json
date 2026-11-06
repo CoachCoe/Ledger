@@ -19,7 +19,11 @@
         "workspace.propose",
         "workspace.rework",
         "workspace.close",
-        "system.status"
+        "system.status",
+        "capability.issue",
+        "capability.delegate",
+        "coordination.notifications",
+        "coordination.ack"
       ]
     },
     "operation_id": {
@@ -55,7 +59,9 @@
               "enum": [
                 "intent.status",
                 "system.status",
-                "workspace.status"
+                "workspace.status",
+                "coordination.notifications",
+                "coordination.ack"
               ]
             }
           }

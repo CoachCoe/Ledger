@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/capability"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/lifecycle"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -19,7 +20,7 @@ import (
 // run under the RecordStore lock so that state cannot change before the
 // group is published.
 func (x *Index) Validate(ctx context.Context, g Group) error {
-	if err := verify(ctx, x.conn(), g); err != nil {
+	if err := verify(ctx, x.conn(), g, x.caseSensitive()); err != nil {
 		return err
 	}
 	var r schema.OperationReceipt
@@ -33,7 +34,7 @@ func (x *Index) Validate(ctx context.Context, g Group) error {
 	if len(ops) > 0 {
 		return apierr.New("operation_exists", "operation %s is already committed", r.OperationID)
 	}
-	v := &validator{ctx: ctx, q: x.conn(), local: map[string]envelope.Object{}, objects: map[string]envelope.Object{}, sims: map[string]*Subject{}, at: r.At}
+	v := &validator{ctx: ctx, q: x.conn(), local: map[string]envelope.Object{}, objects: map[string]envelope.Object{}, sims: map[string]*Subject{}, at: r.At, sensitive: x.caseSensitive()}
 	for _, o := range g.Members {
 		v.objects[o.Hash] = o
 	}
@@ -49,12 +50,13 @@ func (x *Index) Validate(ctx context.Context, g Group) error {
 }
 
 type validator struct {
-	at      string
-	ctx     context.Context
-	q       querier
-	local   map[string]envelope.Object // creations in this group, by entity id
-	objects map[string]envelope.Object // members of this group, by hash
-	sims    map[string]*Subject        // subjects as changed by this group
+	sensitive bool
+	at        string
+	ctx       context.Context
+	q         querier
+	local     map[string]envelope.Object // creations in this group, by entity id
+	objects   map[string]envelope.Object // members of this group, by hash
+	sims      map[string]*Subject        // subjects as changed by this group
 }
 
 func (v *validator) check(o envelope.Object) error {
@@ -187,23 +189,26 @@ func (v *validator) signerActive(signer string) error {
 	if err != nil {
 		return err
 	}
-	expires, err := time.Parse(time.RFC3339Nano, c.ExpiresAt)
-	if err != nil {
-		return err
-	}
 	at, err := time.Parse(time.RFC3339Nano, v.at)
 	if err != nil {
 		return err
 	}
-	started, err := time.Parse(time.RFC3339Nano, session.StartedAt)
+	started, err := schema.ParseTimestamp(session.StartedAt)
 	if err != nil {
 		return err
 	}
 	if at.Before(started) {
 		return apierr.New("session_inactive", "operation precedes session start")
 	}
-	if !at.Before(expires) {
-		return apierr.New("capability_expired", "session %s capability expired", signer)
+	_, err = capability.Chain(c.ID, func(id string) (schema.Capability, error) {
+		p, e := v.capability(id)
+		if e != nil {
+			return schema.Capability{}, e
+		}
+		return *p, nil
+	}, v.sensitive, at)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -235,6 +240,9 @@ func (v *validator) capability(id string) (*schema.Capability, error) {
 	k, payload, err := creation(v.ctx, v.q, id)
 	if err != nil {
 		return nil, err
+	}
+	if k == "" {
+		return nil, apierr.New(CodeUnavailable, "missing capability %s", id)
 	}
 	if k != schema.KindCapability {
 		return nil, apierr.New("unknown_entity", "no capability %s", id)
@@ -353,6 +361,9 @@ func (v *validator) object(hash string, kind schema.Kind, out any) error {
 }
 
 func (v *validator) checkCapability(p *schema.Capability, signer string) error {
+	if err := capability.Validate(*p, v.sensitive); err != nil {
+		return err
+	}
 	if p.Issuer.Kind == "root" {
 		if p.Issuer.Fingerprint != signer {
 			return unauthorized("root capability %s must be signed by its issuer", p.ID)
@@ -361,6 +372,9 @@ func (v *validator) checkCapability(p *schema.Capability, signer string) error {
 	}
 	parent, err := v.capability(p.Issuer.CapabilityID)
 	if err != nil {
+		return err
+	}
+	if err := capability.Narrow(*parent, *p, v.sensitive); err != nil {
 		return err
 	}
 	if parent.SessionID != signer {

@@ -23,6 +23,8 @@ Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":fa
 |---|---|
 | `ledger init` | Create `.ledger/` in the current repository, exclude it from Git, create the root key in `~/.config/ledger/keys/` if needed, and record its public key. Safe to repeat. |
 | `ledger session …` | Create, end, or recover a signing session. |
+| `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
+| `ledger coordination …` | Poll or acknowledge a session notification queue. |
 | `ledger intent …` | Create, inspect, or close an intent. |
 | `ledger workspace …` | Fork, inspect, propose, rework, or close a workspace. |
 | `ledger system status` | Report the daemon's view of every subject and any pending session recovery. |
@@ -49,6 +51,8 @@ Share records with `git push origin refs/ledger/records` and fetch them with `gi
 `demos/m1.sh` drives the public CLI through signed sessions, workspace observation, three fixed-base revisions, retained refs and garbage collection, restart and rebinding, and safe close.
 
 `tools/observerbench` measures the daemon's observation latency on ten workspaces of a real project; see [`docs/benchmarks/`](docs/benchmarks/).
+
+`demos/m2.sh` exercises scoped authority, delegation, unsafe symlinks, dependency-file denial, historical signature chains, queue recovery, and the public CLI. See [`docs/security-model.md`](docs/security-model.md) for the cooperative enforcement boundary.
 
 ## Design
 

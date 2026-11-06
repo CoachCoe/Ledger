@@ -78,9 +78,11 @@ CREATE TABLE IF NOT EXISTS dependency_edges (
 // Index is an open index database. It is safe for concurrent use; Refresh
 // swaps the connection atomically so readers never observe a torn Index.
 type Index struct {
-	db   atomic.Pointer[sql.DB]
-	path string
-	file os.FileInfo
+	// NotificationFault is a test-only crash boundary hook; set before concurrent use.
+	NotificationFault func(string) error
+	db                atomic.Pointer[sql.DB]
+	path              string
+	file              os.FileInfo
 }
 
 func (x *Index) conn() *sql.DB { return x.db.Load() }

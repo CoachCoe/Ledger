@@ -44,10 +44,10 @@ const (
 // with CodeUnavailable, anything else with CodeInvalid or
 // "signature_invalid".
 func (x *Index) Verify(ctx context.Context, g Group) error {
-	return verify(ctx, x.conn(), g)
+	return verify(ctx, x.conn(), g, x.caseSensitive())
 }
 
-func verify(ctx context.Context, q querier, g Group) error {
+func verify(ctx context.Context, q querier, g Group, sensitive bool) error {
 	for _, o := range append(slices.Clone(g.Members), g.Receipt) {
 		if _, err := envelope.ParseStored(o.Bytes, o.Hash); err != nil {
 			return err
@@ -196,7 +196,7 @@ func verify(ctx context.Context, q querier, g Group) error {
 			return unauthorized("session %s does not match its root-issued capability", p.ID)
 		}
 	}
-	return nil
+	return verifyAuthority(ctx, q, g, r, sensitive)
 }
 
 func isSession(principal string) bool { return strings.HasPrefix(principal, schema.PrefixSession) }
@@ -251,7 +251,7 @@ func (x *Index) Apply(ctx context.Context, g Group) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := verify(ctx, tx, g); err != nil {
+	if err := verify(ctx, tx, g, x.caseSensitive()); err != nil {
 		return err
 	}
 	var r schema.OperationReceipt
@@ -473,6 +473,16 @@ func loadEvents(ctx context.Context, q querier, subject, creation string) (event
 		if e.Actor != signer {
 			misattributed = append(misattributed, e.Hash)
 			continue
+		}
+		if isSession(signer) {
+			owner, err := eventOwner(ctx, q, e.LifecycleEvent)
+			if err != nil {
+				return nil, nil, err
+			}
+			if owner != signer {
+				misattributed = append(misattributed, e.Hash)
+				continue
+			}
 		}
 		events = append(events, e)
 	}

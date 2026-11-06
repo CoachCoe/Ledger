@@ -78,8 +78,8 @@ func Capture(ctx context.Context, path, base, indexFile string) (Snapshot, error
 		if !utf8.ValidString(name) {
 			return Snapshot{}, apierr.New("invalid_path", "file path is not UTF-8")
 		}
-		result.Files = append(result.Files, norm.NFC.String(name))
-		result.Status[norm.NFC.String(name)] = meta[4]
+		result.Files = append(result.Files, name)
+		result.Status[name] = meta[4]
 	}
 	slices.Sort(result.Files)
 	return result, nil
@@ -114,4 +114,21 @@ func StableSnapshot(ctx context.Context, path, base, dir string) (Snapshot, erro
 // IndexPath is the persistent private observation index of workspace id.
 func IndexPath(runtimeDir, id string) string {
 	return filepath.Join(runtimeDir, "observe-"+id+".index")
+}
+
+// RecordFiles returns NFC paths for immutable manifests while the snapshot
+// retains exact Git names for tree/blob lookup. Ambiguous aliases fail closed.
+func (s Snapshot) RecordFiles() ([]string, error) {
+	out := make([]string, 0, len(s.Files))
+	seen := map[string]bool{}
+	for _, p := range s.Files {
+		n := norm.NFC.String(p)
+		if seen[n] {
+			return nil, apierr.New("path_alias", "multiple Git paths normalize to %q", n)
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	slices.Sort(out)
+	return out, nil
 }

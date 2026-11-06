@@ -82,3 +82,7 @@ Requests are limited to 1 MiB. Input and output schemas for every operation are 
 ## Current limits
 
 Capabilities are root-issued and cover the whole repository; path scopes, delegation and enforcement at proposal are not yet available. Enforcement is cooperative: direct disk writes are observed, not prevented, and a session signature records that Ledger acted under that session's authority, not that a particular agent process held the key. Evidence execution, selection, and portable bundle verification are not yet implemented.
+
+## Scoped capabilities and warnings
+
+Session creation and recovery now accept path scopes. Capability issuance, delegation, polling and acknowledgment are available through the CLI and versioned socket API. See [security-model.md](security-model.md) for inputs, matching rules, dependency filenames, recovery semantics and limitations.
