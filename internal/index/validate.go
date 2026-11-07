@@ -543,6 +543,11 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 		}
 	}
 	if p.Category == "judgment" {
+		// A judgment runs nothing: no phases, one criterion, and the
+		// definition record it references is the judgment definition.
+		if p.Setup != nil || p.Check != nil || len(p.Criteria) != 1 || d.Name != "judgment" {
+			return apierr.New("invalid_attestation", "a judgment names exactly one criterion, records no process phases and references its judgment definition")
+		}
 		return nil
 	}
 	if (p.Result == "pass") != (p.Reason == nil) {

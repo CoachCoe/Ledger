@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/evidence.isIndependent.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "$ref": "../common.json#/$defs/hash"
+        },
+        "commit": {
+          "$ref": "../common.json#/$defs/git_oid"
+        },
+        "attestations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "hash": {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              "signer": {
+                "$ref": "../common.json#/$defs/session_id"
+              },
+              "signer_kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "human",
+                      "agent",
+                      "service"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "independent": {
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "signer_is_author",
+                      "signer_held_workspace",
+                      "signer_unknown",
+                      "signer_not_root_authenticated",
+                      "signer_is_not_verifier_session"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "result": {
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "category": {
+                "enum": [
+                  "mechanical",
+                  "behavioral",
+                  "judgment"
+                ]
+              },
+              "criteria": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/name"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "hash",
+              "signer",
+              "signer_kind",
+              "independent",
+              "reason",
+              "result",
+              "category",
+              "criteria"
+            ]
+          }
+        },
+        "independent_passing": {
+          "$ref": "../common.json#/$defs/hashes"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "manifest",
+        "commit",
+        "attestations",
+        "independent_passing",
+        "note"
+      ]
+    }
+  }
+}

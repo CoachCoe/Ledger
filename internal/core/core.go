@@ -213,6 +213,9 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	if r.Operation == "evidence.run" {
 		return s.evidenceRun(ctx, r)
 	}
+	if r.Operation == "evidence.judge" {
+		return s.evidenceJudge(ctx, r)
+	}
 	return s.mutate(ctx, r)
 }
 
@@ -279,6 +282,10 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 			return nil, err
 		}
 		return evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{ChangeID: in.ChangeID, Manifest: in.Manifest, Commit: in.Commit})
+	case "evidence.isIndependent":
+		return s.evidenceIsIndependent(ctx, r)
+	case "intent.criteriaStatus":
+		return s.criteriaStatus(ctx, r)
 	case "workspace.status":
 		in, err := decode[workspaceInput](r.Input)
 		if err != nil {

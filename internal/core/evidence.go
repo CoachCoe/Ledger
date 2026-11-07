@@ -150,9 +150,16 @@ func (s *Service) beginRun(ctx context.Context, r api.Request, in runInput, dige
 func (s *Service) provisionVerifier(ctx context.Context, r api.Request, root identity.Signer, runID string, def schema.CheckDefinition) (string, error) {
 	budget := time.Duration(2*def.TimeoutSeconds)*time.Second + verifierGrace
 	in := sessionInput{AgentName: "evidence-verifier", ParticipantKind: "service", ExpiresAt: schema.Timestamp(time.Now().Add(budget)), Allow: []string{"**"}, Deny: []string{"**"}}
+	return s.provisionSession(ctx, r, root, runID, in)
+}
+
+// provisionSession creates an ephemeral root-signed session as its own
+// operation group and holds its key. tag keeps the operation digest unique.
+// Callers hold mu.
+func (s *Service) provisionSession(ctx context.Context, r api.Request, root identity.Signer, tag string, in sessionInput) (string, error) {
 	c := &invocation{Request: r, signer: root}
 	var created map[string]string
-	op := record.Op{ID: schema.NewID(schema.PrefixOperation), Name: "evidence.verifier", Digest: canon.Hash([]byte("evidence.verifier:" + runID)), Signer: root}
+	op := record.Op{ID: schema.NewID(schema.PrefixOperation), Name: "evidence.verifier", Digest: canon.Hash([]byte("evidence.verifier:" + tag)), Signer: root}
 	_, err := s.Store.Do(ctx, op, func(*index.Index) (any, []envelope.Object, error) {
 		result, records, err := s.newSession(c, in)
 		created = result

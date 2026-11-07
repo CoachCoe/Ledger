@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/intent.criteriaStatus.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "intent_id": {
+          "$ref": "../common.json#/$defs/intent_id"
+        },
+        "manifest": {
+          "$ref": "../common.json#/$defs/hash"
+        },
+        "commit": {
+          "$ref": "../common.json#/$defs/git_oid"
+        },
+        "evidence_set": {
+          "$ref": "../common.json#/$defs/hashes"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "criterion_id": {
+                "$ref": "../common.json#/$defs/name"
+              },
+              "status": {
+                "enum": [
+                  "satisfied",
+                  "failed",
+                  "outstanding"
+                ]
+              },
+              "deciding": {
+                "$ref": "../common.json#/$defs/hashes"
+              },
+              "conflicting": {
+                "$ref": "../common.json#/$defs/hashes"
+              }
+            },
+            "required": [
+              "criterion_id",
+              "status",
+              "deciding",
+              "conflicting"
+            ]
+          }
+        },
+        "contrary_evidence": {
+          "$ref": "../common.json#/$defs/hashes"
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "hash": {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              "criterion_id": {
+                "$ref": "../common.json#/$defs/name"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "hash",
+              "criterion_id",
+              "reason"
+            ]
+          }
+        }
+      },
+      "required": [
+        "intent_id",
+        "manifest",
+        "commit",
+        "evidence_set",
+        "criteria",
+        "contrary_evidence",
+        "rejected"
+      ]
+    }
+  }
+}

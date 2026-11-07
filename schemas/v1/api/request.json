@@ -16,6 +16,9 @@
         "intent.status",
         "evidence.resolve",
         "evidence.run",
+        "evidence.judge",
+        "evidence.isIndependent",
+        "intent.criteriaStatus",
         "workspace.fork",
         "workspace.status",
         "workspace.propose",
@@ -60,6 +63,8 @@
             "not": {
               "enum": [
                 "evidence.resolve",
+                "evidence.isIndependent",
+                "intent.criteriaStatus",
                 "intent.status",
                 "system.status",
                 "workspace.status",

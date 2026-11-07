@@ -47,6 +47,27 @@ stdout '"code": "check_not_pinned"'
 # The author cannot request verification of its own change.
 ! exec ledger evidence run --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
 stdout '"code": "unauthorized"'
+# Independence and criteria status: the check passed, the review is open.
+exec ledger evidence isIndependent {"manifest":"$MANIFEST","commit":"$COMMIT"}
+stdout '"independent": true'
+stdout '"signer_kind": "service"'
+stdout 'does not establish'
+exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT"}
+stdout '"criterion_id": "tests"'
+stdout '"status": "satisfied"'
+stdout '"status": "outstanding"'
+# A human judgment through a root-authenticated verifier session. The
+# reviewer kind is not an input.
+! exec ledger evidence judge {"manifest":"$MANIFEST","commit":"$COMMIT","criterion_id":"review","result":"pass","reviewer":"human"}
+stdout '"code": "schema_invalid"'
+! exec ledger evidence judge --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","criterion_id":"review","result":"pass"}
+stdout '"code": "unauthorized"'
+exec ledger evidence judge --operation-id op_000000000000000000000judge {"manifest":"$MANIFEST","commit":"$COMMIT","criterion_id":"review","result":"pass","reason":"reviewed"}
+stdout '"reviewer_kind": "human"'
+exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT"}
+! stdout '"status": "outstanding"'
+! exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["0000000000000000000000000000000000000000000000000000000000000000"]}
+stdout '"code": "unknown_evidence"'
 exec ledger system status
 stdout '"interrupted_runs": \[\]'
 -- checks.json --
