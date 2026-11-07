@@ -533,6 +533,21 @@ func TestAC115_ImportStagingRejects(t *testing.T) {
 			return writeTar(t, []tarEntry{invEntry, {Name: oneRecord.Name, Data: []byte("{}"), Size: 100}})
 		}},
 		{"truncated", "bundle_corrupt", truncated},
+		{"truncated inside padding", "bundle_corrupt", func() string {
+			// Cut just after the inventory's data, inside its block padding:
+			// archive/tar alone reports a clean end there.
+			raw := writeTar(t, []tarEntry{invEntry, oneRecord})
+			b, _ := os.ReadFile(raw)
+			cut := 512 + len(inv)
+			if len(inv)%512 == 0 {
+				t.Skip("inventory fills its blocks exactly")
+			}
+			p := filepath.Join(t.TempDir(), "pad.ledger")
+			if err := os.WriteFile(p, b[:cut+1], 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}},
 		{"not a tar", "bundle_corrupt", garbage},
 		{"hash differs from name", "bundle_invalid", mismatched},
 		{"unsupported schema", "unsupported_schema_version", badSchema},

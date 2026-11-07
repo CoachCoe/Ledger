@@ -35,6 +35,10 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 | `workspace status` | anyone | Return the latest observed write set relative to the base. |
 | `evidence resolve` | anyone | Return the frozen binding (manifest, bound commit, tree, pinned check definitions) for `{change_id}` or `{manifest, commit?}`. A change id resolves once; use the returned manifest and commit afterwards. |
 | `evidence run` | root or an unrelated session | Run one pinned check against `{manifest, commit, check_definition, keep_worktree?}` in a fresh verification worktree and publish a signed attestation. See Evidence runs. |
+| `evidence judge` | root or an unrelated session | Record a signed judgment `{manifest, commit, criterion_id, result, reason?}` for a judgment criterion. The reviewer kind comes from the signing session, never the input. |
+| `evidence isIndependent` | anyone | Report whether the evidence for `{manifest, commit}` was signed by a session other than the author, and its signer kind. |
+| `intent criteriaStatus` | anyone | Report each criterion as `satisfied`, `failed` or `outstanding` for `{manifest, commit, evidence?}`, with the deciding attestations and known contrary evidence. |
+| `selection record` | root or an unrelated session | Sign a selection decision over `{manifest, commit, evidence, competitors?, scoring?}` with recomputed statuses. It is not acceptance. |
 | `workspace propose` | bound session | Capture the workspace, sign a manifest, and publish a commit on `ledger/<intent-short-id>/<workspace-short-id>`. |
 | `workspace rework` | root or bound session | Reopen a proposed workspace for another revision. |
 | `workspace close` | root or bound session | Record the close, then remove the worktree if nothing would be lost. |
@@ -89,8 +93,12 @@ Requests are limited to 1 MiB. Input and output schemas for every operation are 
 
 ## Current limits
 
-Capabilities are root-issued and cover the whole repository; path scopes, delegation and enforcement at proposal are not yet available. Enforcement is cooperative: direct disk writes are observed, not prevented, and a session signature records that Ledger acted under that session's authority, not that a particular agent process held the key. Evidence is not isolated (see [security-model.md](security-model.md)).
+Enforcement is cooperative: direct disk writes are observed, not prevented, and a session signature records that Ledger acted under that session's authority, not that a particular agent process held the key. Evidence is not isolated (see [security-model.md](security-model.md)).
 
+## Criteria, judgment and selection
+After evidence runs, `ledger intent criteriaStatus '{"manifest":"…","commit":"…"}'` evaluates every criterion against the evidence for that exact manifest, commit and tree. A check criterion is satisfied only by an independent attestation of its pinned definition; a judgment criterion only by an independent judgment of the stated reviewer kind (`ledger evidence judge`, signed by a root-provisioned `human` session when root calls it). All-pass is `satisfied`, any fail is `failed` (mixed results list the `conflicting` attestations), and nothing applicable is `outstanding`. Failing evidence is never hidden: it is listed under `contrary_evidence` even when an explicit `evidence` set leaves it out. Evidence for another revision is rejected with `cross_revision_evidence`.
+`ledger selection record '{"manifest":"…","commit":"…","evidence":["…"]}'` signs a decision recording the evidence set, recomputed per-criterion statuses, outstanding criteria and contrary evidence. The input has no status members, so a caller cannot claim a criterion is satisfied, and the index re-derives every decision when it is published.
+Selection is not acceptance. A decision is one signed record: it moves no branch, tag, proposal ref or `HEAD`, creates no commit, merges nothing, and leaves the intent and workspace states unchanged (`selected` lifecycle transitions arrive with speculation in M5). Merging remains an ordinary Git action taken by a person or another tool.
 ## Scoped capabilities and warnings
 
 Session creation and recovery now accept path scopes. Capability issuance, delegation, polling and acknowledgment are available through the CLI and versioned socket API. See [security-model.md](security-model.md) for inputs, matching rules, dependency filenames, recovery semantics and limitations.
@@ -111,3 +119,4 @@ git push origin 'refs/ledger/proposals/*:refs/ledger/proposals/*' 'refs/ledger/r
 ```
 
 Run `ledger recover` after fetching the records ref so fetched groups are indexed. Fetching the records ref is equivalent to importing a bundle, so apply the same trust judgement.
+`export` reports its size honestly (`bundle_bytes`, `record_bytes`, `git_bytes`, record and commit counts). The Git part carries the full reachable history of each base commit, so a bundle of a large repository is large; Phase 1 does not trim it. A file ending in `.partial` is an interrupted export and is never verified or imported. `demos/m3.sh` verifies a bundle in a fresh directory with the network disabled and the source repository unreadable, then imports it into a fresh repository.

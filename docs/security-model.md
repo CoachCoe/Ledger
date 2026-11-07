@@ -67,8 +67,9 @@ revalidate the complete base-relative snapshot under the replacement capability.
 The `internal/verify` M2 interface verifies manifest signatures, authenticated
 sessions, delegation, historical workspace bindings, and claimed file scope from
 immutable records without an index. It reports `integrity` and `trust` separately.
-It does not yet verify exported bundles or Git tree/object completeness; M3 owns
-those checks. A trusted key cannot make a tampered record valid.
+M3 extends it to evidence, selections, exported bundles and the bound Git
+commits (trailer, tree and fixed-base parent are reported separately). A trusted
+key cannot make a tampered record valid.
 
 A hosted service would need sandboxed execution, filesystem and network controls,
 secret isolation, per-agent key custody and authenticated API callers to enforce
@@ -123,6 +124,37 @@ this tree on this machine", signed by a session that is not the author. It is no
 that the check was tamper-proof, or that the code under test could not influence the
 machine that ran it.
 
+## Bundles, trust and import
+A bundle is untrusted input. Its integrity (`verified`, `invalid`, `unavailable`)
+is computed from its bytes alone; its trust (`trusted`, `untrusted`, `unknown`)
+comes only from the verifier's local trust list or `--trust` fingerprints. Root
+and session public keys inside a bundle are needed to check signatures but never
+add trust, and the local repository's own root is not trusted implicitly. A
+record that is missing, or a Git commit absent from the bundle, makes the result
+`unavailable`, never `verified`. `verify` exits 0 with the report unless
+`--strict` is given.
+Import treats the archive as hostile:
+- Staging is a private `0700` directory under `.ledger/runtime/import/`. Only
+  `bundle.json`, `records/<aa>/<hash>.json` and `git/objects.bundle` are accepted
+  as regular files; absolute, `..`, backslash, duplicate and case-folded alias
+  names, links, extended headers, a missing end-of-archive marker, and sizes or
+  counts over the limits are rejected before anything is written to the
+  repository.
+- Git objects are fetched into an inert bare repository with global and system
+  config disabled, hooks pointed at `/dev/null` and `transfer.fsckObjects`. No
+  check, hook or configuration from the bundle runs or is read.
+- Publication creates only `refs/ledger/proposals/<manifest>` (create-only; an
+  existing ref at a different commit is reported as `ref_conflict`, never
+  overwritten) and appends records through the RecordStore. Code branches, Git
+  config, hooks, keys, the trust list, sessions and runtime state are never
+  imported. Imported sessions are history: they cannot sign.
+- Divergent histories (lifecycle forks, duplicate creations, operation-id
+  conflicts) are kept and reported as conflicts; the affected subjects cannot
+  mutate, and arrival order or timestamps choose nothing.
+What this does not give you: a bundle signed by a root you trust still only says
+what that root's sessions recorded; it does not make evidence isolated or prove
+which process wrote the code. Fetching `refs/ledger/records` from a remote is
+equivalent to importing a bundle and deserves the same trust judgement.
 ## Notifications
 
 Use `coordination notifications --session ID '{"session_id":"ID"}'` to poll and

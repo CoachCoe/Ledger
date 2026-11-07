@@ -356,7 +356,7 @@ func TestAC004_056_ChangeRecordCarriesEvidence(t *testing.T) {
 	}
 }
 
-func TestAC209_CleanCheckoutIndependentVerifier(t *testing.T) {
+func TestAC209_231_CleanCheckoutIndependentVerifier(t *testing.T) {
 	s := fixture(t)
 	f := newRunFix(t, s, "pwd -P; git rev-parse HEAD; git status --porcelain --untracked-files=no", nil)
 	out := call(t, s, request("evidence.run", "", f.input(map[string]any{"keep_worktree": "always"})))

@@ -92,6 +92,11 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 	for n := 0; ; n++ {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			// archive/tar reports a clean EOF when a file is cut inside an
+			// entry's padding, so require the end-of-archive marker.
+			if err := endMarker(f); err != nil {
+				return nil, err
+			}
 			break
 		}
 		if err != nil {
@@ -179,6 +184,29 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 		st.unpackGit(ctx)
 	}
 	return st, nil
+}
+
+// endMarker requires the archive to end with the two zero blocks tar writers
+// emit, so a file truncated inside an entry's padding is corrupt, not short.
+func endMarker(f *os.File) error {
+	st, err := f.Stat()
+	if err != nil {
+		return apierr.New("bundle_unreadable", "%v", err)
+	}
+	const marker = 2 * 512
+	if st.Size() < marker || st.Size()%512 != 0 {
+		return apierr.New("bundle_corrupt", "the archive is truncated")
+	}
+	tail := make([]byte, marker)
+	if _, err := f.ReadAt(tail, st.Size()-marker); err != nil {
+		return apierr.New("bundle_corrupt", "reading archive end: %v", err)
+	}
+	for _, b := range tail {
+		if b != 0 {
+			return apierr.New("bundle_corrupt", "the archive has no end-of-archive marker")
+		}
+	}
+	return nil
 }
 
 func copyGit(r io.Reader, dst string, size int64) (string, error) {

@@ -27,6 +27,12 @@ Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":fa
 | `ledger coordination …` | Poll or acknowledge a session notification queue. |
 | `ledger intent …` | Create, inspect, or close an intent. |
 | `ledger workspace …` | Fork, inspect, propose, rework, or close a workspace. |
+| `ledger evidence …` | Resolve a proposal's frozen binding, run a pinned check in a fresh verification worktree, record a judgment, or ask whether evidence is independent. |
+| `ledger intent criteriaStatus` | Report each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |
+| `ledger selection record` | Sign a selection decision with recomputed criterion statuses. Selection is not acceptance and never merges. |
+| `ledger export --out FILE` | Write a portable bundle of records and the Git objects they bind, without the daemon or SQLite. |
+| `ledger verify [--bundle FILE]` | Report integrity and trust separately for a bundle or this repository's records; `--trust`, `--trust-file`, `--strict`. |
+| `ledger import FILE` | Stage, verify, and import a bundle. Trusts nothing and touches no code branch. |
 | `ledger system status` | Report the daemon's view of every subject and any pending session recovery. |
 | `ledger daemon` | Run the per-repository daemon in the foreground; `ledger daemon stop` stops it. |
 | `ledger status` | List lifecycle subjects with their derived state and any conflict, read directly from the index. |
@@ -34,7 +40,7 @@ Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":fa
 | `ledger reindex` | Rebuild the index from the record files in one database transaction. |
 | `ledger version` | Print the version. |
 
-The session, intent, workspace, system, and daemon-stop commands go through the daemon, which the CLI starts on demand. [`docs/workflow.md`](docs/workflow.md) walks through a complete session and describes every operation, observation, proposals, recovery, and the socket protocol.
+The session, capability, coordination, intent, workspace, evidence, selection, system, and daemon-stop commands go through the daemon, which the CLI starts on demand. [`docs/workflow.md`](docs/workflow.md) walks through a complete session and describes every operation, observation, proposals, recovery, and the socket protocol.
 
 ## Storage
 
@@ -42,7 +48,7 @@ The session, intent, workspace, system, and daemon-stop commands go through the 
 - `.ledger/index.db`: a SQLite index of committed records plus local runtime state. It can always be rebuilt with `ledger reindex`.
 - `.ledger/journal/`, `.ledger/quarantine/`, `.ledger/runtime/`: in-flight operations, damaged files kept for inspection, and the daemon's socket, log, workspaces, and caches.
 
-Share records with `git push origin refs/ledger/records` and fetch them with `git fetch origin refs/ledger/records:refs/ledger/records`; `ledger recover` then imports what arrived. Proposal revisions are kept at `refs/ledger/proposals/*` and shared the same way.
+Records, together with the Git commits they bind, are portable: `ledger export` writes a single bundle that `ledger verify` checks in any directory, offline and without the source repository, and `ledger import` brings into another repository. Integrity is computed from the bundle; trust comes only from your local trusted-roots list. Share records with `git push origin refs/ledger/records` and fetch them with `git fetch origin refs/ledger/records:refs/ledger/records`; `ledger recover` then imports what arrived. Proposal revisions are kept at `refs/ledger/proposals/*` and shared the same way.
 
 ## Demos
 
@@ -53,6 +59,8 @@ Share records with `git push origin refs/ledger/records` and fetch them with `gi
 `tools/observerbench` measures the daemon's observation latency on ten workspaces of a real project; see [`docs/benchmarks/`](docs/benchmarks/).
 
 `demos/m2.sh` exercises scoped authority, delegation, unsafe symlinks, dependency-file denial, historical signature chains, queue recovery, and the public CLI. See [`docs/security-model.md`](docs/security-model.md) for the cooperative enforcement boundary.
+`demos/m3.sh` runs every M3 acceptance and recovery test, then, with the real binary, exports a bundle, makes the source unreadable, verifies it in a fresh directory with the network disabled (integrity verified, trust untrusted, then trusted with `--trust`), detects tampering, and imports it twice into a fresh repository.
+`demos/governance.sh` tells the M0–M3 story on a fixture repository: a root-scoped session, a denied out-of-scope proposal, independent evidence for the exact revision including a failing run and its contrary evidence, a human judgment, a selection that is not acceptance, and offline verification and import. The demos need `git`, `jq` and `python3`.
 
 ## Design
 

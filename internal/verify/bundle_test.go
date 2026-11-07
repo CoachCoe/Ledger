@@ -387,7 +387,7 @@ func run(t *testing.T, args ...string) map[string]any {
 	return v
 }
 
-func TestAC033_235_VerifyWithoutSQLite(t *testing.T) {
+func TestAC033_178_235_VerifyWithoutSQLite(t *testing.T) {
 	c := newChain(t, "true")
 	c.store.Close()
 	for _, f := range []string{"index.db", "index.db-wal", "index.db-shm"} {

@@ -1,6 +1,6 @@
 # 0020 — Evidence execution, exact binding and criteria status
 
-Status: accepted for M3.1; sections for M3.3-M3.5 are appended as those steps land. Builds on ADR 0012 (pinned evidence and selection) and ADR 0008 (root-authenticated sessions).
+Status: accepted (M3.1-M3.5; final at M3.7). Builds on ADR 0012 (pinned evidence and selection) and ADR 0008 (root-authenticated sessions).
 
 ## M3.1: definitions and exact binding
 

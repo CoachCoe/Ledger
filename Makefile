@@ -15,6 +15,8 @@ demo:
 	bash demos/m0.sh
 	bash demos/m1.sh
 	bash demos/m2.sh
+	bash demos/m3.sh
+	bash demos/governance.sh
 
 security:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
