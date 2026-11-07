@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/bundle.verify.output.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "bundle_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source": {
+      "type": "string"
+    },
+    "integrity": {
+      "enum": [
+        "verified",
+        "invalid",
+        "unavailable"
+      ]
+    },
+    "trust": {
+      "enum": [
+        "trusted",
+        "untrusted",
+        "unknown"
+      ]
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "$ref": "../common.json#/$defs/hash"
+          },
+          "trusted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "trusted"
+        ]
+      }
+    },
+    "manifests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hash": {
+            "$ref": "../common.json#/$defs/hash"
+          },
+          "change_id": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string"
+          },
+          "author_session": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "integrity": {
+            "enum": [
+              "verified",
+              "invalid",
+              "unavailable"
+            ]
+          },
+          "trust": {
+            "enum": [
+              "trusted",
+              "untrusted",
+              "unknown"
+            ]
+          },
+          "binding": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "trailer": {
+                "enum": [
+                  "ok",
+                  "mismatch",
+                  "unavailable"
+                ]
+              },
+              "tree": {
+                "enum": [
+                  "ok",
+                  "mismatch",
+                  "unavailable"
+                ]
+              },
+              "parent": {
+                "enum": [
+                  "ok",
+                  "mismatch",
+                  "unavailable"
+                ]
+              },
+              "detail": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "trailer",
+              "tree",
+              "parent"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "$ref": "../common.json#/$defs/hash"
+                },
+                "integrity": {
+                  "enum": [
+                    "verified",
+                    "invalid",
+                    "unavailable"
+                  ]
+                },
+                "result": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "independent": {
+                  "type": "boolean"
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "hash",
+                "integrity",
+                "result",
+                "category",
+                "criteria",
+                "independent"
+              ]
+            }
+          },
+          "selections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "$ref": "../common.json#/$defs/hash"
+                },
+                "integrity": {
+                  "enum": [
+                    "verified",
+                    "invalid",
+                    "unavailable"
+                  ]
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "hash",
+                "integrity"
+              ]
+            }
+          },
+          "components": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "verified",
+                "invalid",
+                "unavailable"
+              ]
+            }
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash",
+          "change_id",
+          "intent_id",
+          "author_session",
+          "commit",
+          "integrity",
+          "trust",
+          "binding",
+          "evidence",
+          "selections",
+          "components"
+        ]
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ]
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "invalid": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash",
+          "code",
+          "error"
+        ]
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/hash"
+      }
+    },
+    "unattached": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/hash"
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundle_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "record_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "git_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commits": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "bundle_bytes",
+        "record_bytes",
+        "git_bytes",
+        "records",
+        "commits"
+      ]
+    }
+  },
+  "required": [
+    "bundle_version",
+    "source",
+    "integrity",
+    "trust",
+    "complete",
+    "roots",
+    "manifests",
+    "conflicts",
+    "missing",
+    "invalid",
+    "pending",
+    "unattached",
+    "size"
+  ],
+  "$defs": {}
+}

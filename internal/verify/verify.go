@@ -38,28 +38,39 @@ type graph struct {
 // independent of whether the caller trusts the root identity. Git tree contents
 // and receipt completeness must additionally be checked by the M3 verifier.
 func Manifest(records []envelope.Object, hash string, trusted []string, sensitive bool) Result {
-	g := &graph{objects: map[string]envelope.Object{}, entities: map[string][]envelope.Object{}, visiting: map[string]bool{}, sensitive: sensitive, roots: map[string]bool{}}
-	fail := func(err error) Result {
-		state := "invalid"
-		if apierr.HasCode(err, "dependency_unavailable") {
-			state = "unavailable"
-		}
-		return Result{Integrity: state, Trust: "unknown", Error: apierr.As(err)}
+	g, err := newGraph(records, sensitive)
+	if err != nil {
+		return failResult(err)
 	}
+	return g.manifest(hash, trusted)
+}
+
+func failResult(err error) Result {
+	state := "invalid"
+	if apierr.HasCode(err, "dependency_unavailable") {
+		state = "unavailable"
+	}
+	return Result{Integrity: state, Trust: "unknown", Error: apierr.As(err)}
+}
+
+// newGraph indexes records by hash and by stable entity id, checking that
+// each is canonical and hashes to its own name.
+func newGraph(records []envelope.Object, sensitive bool) (*graph, error) {
+	g := &graph{objects: map[string]envelope.Object{}, entities: map[string][]envelope.Object{}, visiting: map[string]bool{}, sensitive: sensitive, roots: map[string]bool{}}
 	for _, o := range records {
 		if _, ok := g.objects[o.Hash]; ok {
 			continue
 		}
 		parsed, err := envelope.ParseStored(o.Bytes, o.Hash)
 		if err != nil {
-			return fail(err)
+			return nil, err
 		}
 		raw, err := canon.Marshal(o.Envelope)
 		if err != nil {
-			return fail(err)
+			return nil, err
 		}
 		if string(raw) != string(o.Bytes) {
-			return fail(apierr.New("record_invalid", "envelope differs from bytes"))
+			return nil, apierr.New("record_invalid", "envelope differs from bytes")
 		}
 		o = parsed
 		g.objects[o.Hash] = o
@@ -67,12 +78,12 @@ func Manifest(records []envelope.Object, hash string, trusted []string, sensitiv
 		switch o.Envelope.Kind {
 		case schema.KindRootKey:
 			id = o.Envelope.Signer
-		case schema.KindSession, schema.KindCapability, schema.KindWorkspace:
+		case schema.KindSession, schema.KindCapability, schema.KindWorkspace, schema.KindIntent:
 			var p struct {
 				ID string `json:"id"`
 			}
 			if err := json.Unmarshal(o.Envelope.Payload, &p); err != nil {
-				return fail(err)
+				return nil, err
 			}
 			id = p.ID
 		}
@@ -80,6 +91,15 @@ func Manifest(records []envelope.Object, hash string, trusted []string, sensitiv
 			g.entities[id] = append(g.entities[id], o)
 		}
 	}
+	return g, nil
+}
+
+// manifest verifies one manifest in g. It may be called repeatedly; each
+// call starts with no contributing roots.
+func (g *graph) manifest(hash string, trusted []string) Result {
+	g.roots = map[string]bool{}
+	g.at = time.Time{}
+	fail := failResult
 	mobj, ok := g.objects[hash]
 	if !ok || mobj.Envelope.Kind != schema.KindChangeManifest {
 		return fail(apierr.New("dependency_unavailable", "missing manifest"))
@@ -133,7 +153,7 @@ func Manifest(records []envelope.Object, hash string, trusted []string, sensitiv
 		return fail(apierr.New("unauthorized", "manifest workspace differs"))
 	}
 	owner, cid, head := w.SessionID, w.CapabilityID, wobj.Hash
-	for range len(records) + 1 {
+	for range len(g.objects) + 1 {
 		var next *envelope.Object
 		for _, o := range g.objects {
 			if o.Envelope.Kind != schema.KindWorkspaceBinding {
@@ -181,7 +201,7 @@ func Manifest(records []envelope.Object, hash string, trusted []string, sensitiv
 		return fail(apierr.New("unauthorized", "wrong capability holder"))
 	}
 	for _, p := range m.Files {
-		if err := capability.Authorize(chain, p, sensitive, g.at); err != nil {
+		if err := capability.Authorize(chain, p, g.sensitive, g.at); err != nil {
 			return fail(err)
 		}
 	}

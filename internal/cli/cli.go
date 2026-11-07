@@ -35,6 +35,9 @@ func commands() map[string]command {
 		"init":         {"initialize Ledger in the current Git repository", cmdInit},
 		"recover":      {"reconcile record files, the records ref, and the index", cmdRecover},
 		"reindex":      {"rebuild the index from the record files", cmdReindex},
+		"export":       {"write a portable provenance bundle (no daemon needed)", cmdExport},
+		"verify":       {"verify this repository or a bundle: integrity and trust reported separately", cmdVerify},
+		"import":       {"stage, verify and import a bundle; grants no trust and imports no keys", cmdImport},
 		"status":       {"list subjects and their derived state", cmdStatus},
 		"version":      {"print version information", cmdVersion},
 	}

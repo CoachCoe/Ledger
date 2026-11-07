@@ -6,6 +6,7 @@ exec git init -q
 exec git add -A
 exec git commit -qm base
 exec ledger init
+jsonvar FP result.root_fingerprint
 cp $WORK/checks.json .ledger/checks.json
 exec ledger session create '{"agent_name":"author"}'
 jsonvar SID result.result.session_id
@@ -84,5 +85,26 @@ exec git rev-list --merges --all
 ! stdout .
 exec ledger system status
 stdout '"interrupted_runs": \[\]'
+# Export, verify and reindex run directly, without the daemon or SQLite.
+exec ledger daemon stop
+exec ledger export --out $WORK/m3.ledger
+stdout '"complete": true'
+exec ledger verify --bundle $WORK/m3.ledger --strict
+stdout '"integrity": "verified"'
+stdout '"trust": "untrusted"'
+exec ledger verify --bundle $WORK/m3.ledger --trust $FP
+stdout '"trust": "trusted"'
+! exec ledger export --out $WORK/m3.ledger
+stdout '"code": "export_exists"'
+! exec ledger verify --bundle $WORK/missing.ledger
+stdout '"code": "bundle_unreadable"'
+! exec ledger verify --trust nothex
+stdout '"code": "schema_invalid"'
+rm .ledger/index.db
+exec ledger verify --strict
+stdout '"integrity": "verified"'
+! exists .ledger/index.db
+exec ledger reindex
+stdout '"report"'
 -- checks.json --
 [{"name":"unit","category":"mechanical","setup":null,"command":"test -f package.json","working_directory":".","env_allowlist":[],"timeout_seconds":30,"output_limit_bytes":1024}]

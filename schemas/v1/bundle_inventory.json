@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/bundle_inventory.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bundle_version", "generator", "created_at", "case_sensitive", "complete", "ids", "objects", "keys", "roots", "git"],
+  "properties": {
+    "bundle_version": { "const": 1 },
+    "generator": { "type": "string", "maxLength": 128 },
+    "created_at": { "$ref": "common.json#/$defs/timestamp" },
+    "case_sensitive": { "type": "boolean" },
+    "complete": { "type": "boolean" },
+    "ids": {
+      "type": "object",
+      "propertyNames": { "pattern": "^(int|ses|cap|wsp)_[0-9a-v]{26}$" },
+      "additionalProperties": { "$ref": "common.json#/$defs/hash" }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["hash", "kind", "size"],
+        "properties": {
+          "hash": { "$ref": "common.json#/$defs/hash" },
+          "kind": { "type": "string", "maxLength": 64 },
+          "size": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fingerprint", "public_key", "role"],
+        "properties": {
+          "fingerprint": { "$ref": "common.json#/$defs/hash" },
+          "public_key": { "$ref": "common.json#/$defs/public_key" },
+          "role": { "enum": ["root", "session"] },
+          "session_id": { "type": "string" }
+        }
+      }
+    },
+    "roots": { "$ref": "common.json#/$defs/hashes" },
+    "missing": { "type": "array", "items": { "type": "string" } },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "size", "refs", "commits"],
+      "properties": {
+        "file": { "enum": ["", "git/objects.bundle"] },
+        "sha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
+        "size": { "type": "integer", "minimum": 0 },
+        "refs": { "type": "array", "items": { "type": "string", "pattern": "^refs/ledger/(proposals/[0-9a-f]{64}|records)$" } },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["manifest", "commit", "tree", "base"],
+            "properties": {
+              "manifest": { "$ref": "common.json#/$defs/hash" },
+              "commit": { "$ref": "common.json#/$defs/git_oid" },
+              "tree": { "$ref": "common.json#/$defs/git_oid" },
+              "base": { "$ref": "common.json#/$defs/git_oid" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

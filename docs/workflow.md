@@ -89,8 +89,25 @@ Requests are limited to 1 MiB. Input and output schemas for every operation are 
 
 ## Current limits
 
-Capabilities are root-issued and cover the whole repository; path scopes, delegation and enforcement at proposal are not yet available. Enforcement is cooperative: direct disk writes are observed, not prevented, and a session signature records that Ledger acted under that session's authority, not that a particular agent process held the key. Evidence execution, selection, and portable bundle verification are not yet implemented.
+Capabilities are root-issued and cover the whole repository; path scopes, delegation and enforcement at proposal are not yet available. Enforcement is cooperative: direct disk writes are observed, not prevented, and a session signature records that Ledger acted under that session's authority, not that a particular agent process held the key. Evidence is not isolated (see [security-model.md](security-model.md)).
 
 ## Scoped capabilities and warnings
 
 Session creation and recovery now accept path scopes. Capability issuance, delegation, polling and acknowledgment are available through the CLI and versioned socket API. See [security-model.md](security-model.md) for inputs, matching rules, dependency filenames, recovery semantics and limitations.
+
+## Export, import and verify
+
+`ledger export --out FILE [--manifest HASH]... [--intent ID]... [--allow-partial]` writes a versioned bundle (an uncompressed tar: `bundle.json` inventory, `records/<aa>/<hash>.json`, and a self-contained `git/objects.bundle` with no prerequisites). The default exports every committed group; `--manifest` and `--intent` export a closure (author and verifier sessions with their capability chains, root and session public keys, workspace, bindings and lifecycle events, intent, check definitions, receipts, evidence and selections). A missing dependency fails with `export_incomplete`; `--allow-partial` writes a bundle whose inventory says `complete: false`. Private keys, trust lists, journals, runtime state, SQLite and uncommitted records are never exported.
+
+`ledger verify [--bundle FILE] [--trust FINGERPRINT]... [--trust-file PATH] [--strict]` reports integrity (`verified`, `invalid`, `unavailable`) separately from trust (`trusted`, `untrusted`, `unknown`). Without `--bundle` it verifies this repository's `refs/ledger/records`. Trust comes only from the local list (default `$XDG_CONFIG_HOME/ledger/trusted-roots.json`, else `~/.config/ledger/trusted-roots.json`, format `{"version":1,"roots":[{"fingerprint":"<hex>","label":"..."}]}`) and `--trust`; keys inside a bundle never add trust. `export`, `verify` and `reindex` need neither the daemon nor SQLite. `--strict` returns `verification_failed` unless integrity is `verified`.
+
+`ledger import FILE` stages the bundle in an inert private directory, verifies it, retains the proposal commits under `refs/ledger/proposals/<manifest>` (create-only, never overwriting a different commit) and publishes the records through the RecordStore. Importing again changes nothing; divergent histories are kept and reported as conflicts. Nothing is trusted and no key, config, hook or code branch is imported.
+
+Proposal revisions live in refs that ordinary `git fetch` and `git push` do not move. To share them (and the records ref) between clones use explicit refspecs:
+
+```sh
+git fetch origin 'refs/ledger/proposals/*:refs/ledger/proposals/*' 'refs/ledger/records:refs/ledger/records'
+git push origin 'refs/ledger/proposals/*:refs/ledger/proposals/*' 'refs/ledger/records:refs/ledger/records'
+```
+
+Run `ledger recover` after fetching the records ref so fetched groups are indexed. Fetching the records ref is equivalent to importing a bundle, so apply the same trust judgement.

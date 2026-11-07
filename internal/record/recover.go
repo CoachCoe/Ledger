@@ -31,6 +31,8 @@ type Report struct {
 	AddedToRef int `json:"added_to_ref"`
 	// InvalidInRef lists ref entries that failed verification.
 	InvalidInRef []string `json:"invalid_in_ref"`
+	// Imported counts object files an import newly wrote.
+	Imported int `json:"imported,omitempty"`
 	// Indexed counts groups newly indexed.
 	Indexed int `json:"indexed"`
 	// Unverifiable lists records that are intact but cannot be accepted:
