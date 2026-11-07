@@ -15,6 +15,7 @@
         "intent.close",
         "intent.status",
         "evidence.resolve",
+        "evidence.run",
         "workspace.fork",
         "workspace.status",
         "workspace.propose",

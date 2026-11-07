@@ -65,7 +65,14 @@ func liveCommand(group string) func([]string) (any, error) {
 			*opid = schema.NewID(schema.PrefixOperation)
 		}
 		request := api.Request{Version: 1, Operation: operation, OperationID: *opid, SessionID: *sid, Input: input}
+		// A check may legitimately run for hours (its own timeout bounds it), so
+		// evidence.run has no client deadline; Ctrl-C disconnects, which
+		// cancels the run on the daemon and records a failed attestation.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if operation == "evidence.run" {
+			cancel()
+			ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		}
 		defer cancel()
 		repo, err := openRepo(ctx)
 		if err != nil {

@@ -1,0 +1,53 @@
+# M3 evidence through the shipped binary: resolve a frozen binding, run a
+# pinned check in a verification worktree, and read the signed attestation.
+fixture polyglot repo
+cd repo
+exec git init -q
+exec git add -A
+exec git commit -qm base
+exec ledger init
+cp $WORK/checks.json .ledger/checks.json
+exec ledger session create '{"agent_name":"author"}'
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger intent create '{"description":"M3 evidence","criteria":[{"id":"tests","statement":"package exists","verification":{"kind":"check","check":"unit"}},{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"human"}}]}'
+jsonvar INT result.result.intent_id
+exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+cp tools/report.py $WPATH/tools/extra.py
+exec ledger workspace propose --session $SID {"workspace_id":"$WSP"}
+jsonvar CHANGE result.result.change_id
+jsonvar MANIFEST result.result.manifest
+jsonvar COMMIT result.result.commit
+jsonvar TREE result.result.tree
+exec ledger evidence resolve {"change_id":"$CHANGE"}
+jsonvar DEF result.checks.0.definition_hash
+# Run: a signed attestation by a verifier session that is not the author.
+exec ledger evidence run --operation-id op_0000000000000000000000run1 {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
+stdout '"result": "pass"'
+stdout '"replayed": false'
+! stdout $SID
+jsonvar ATT result.result.attestation
+jsonvar RUN result.result.run_id
+jsonvar VERIFIER result.result.verifier_session
+# A retry returns the frozen result.
+exec ledger evidence run --operation-id op_0000000000000000000000run1 {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
+stdout '"replayed": true'
+stdout '"attestation": "'$ATT'"'
+# The verification worktree is gone; the proposal branch is untouched.
+! exists .ledger/runtime/verify/$RUN
+exec git rev-parse refs/ledger/proposals/$MANIFEST
+stdout $COMMIT
+# The run input is closed and must name a pinned definition.
+! exec ledger evidence run {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF","isolation":"container"}
+stdout '"code": "schema_invalid"'
+! exec ledger evidence run {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"0000000000000000000000000000000000000000000000000000000000000000"}
+stdout '"code": "check_not_pinned"'
+# The author cannot request verification of its own change.
+! exec ledger evidence run --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
+stdout '"code": "unauthorized"'
+exec ledger system status
+stdout '"interrupted_runs": \[\]'
+-- checks.json --
+[{"name":"unit","category":"mechanical","setup":null,"command":"test -f package.json","working_directory":".","env_allowlist":[],"timeout_seconds":30,"output_limit_bytes":1024}]

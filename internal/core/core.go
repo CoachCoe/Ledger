@@ -42,6 +42,9 @@ type Service struct {
 	caseSensitive   bool
 
 	observing sync.Map // workspace id -> *sync.Mutex
+
+	// evidenceHooks are test seams for evidence runs; nil in production.
+	evidenceHooks *evidence.Hooks
 }
 
 // New opens the service over store, completing interrupted operations and
@@ -76,6 +79,9 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 		return nil, err
 	}
 	if _, err := evidence.Reconcile(ctx, store.Repo, s.runtimeDir()); err != nil {
+		return nil, err
+	}
+	if err := s.settleRuns(ctx); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -204,6 +210,9 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	if api.ReadOnly(r.Operation) {
 		return s.read(ctx, r)
 	}
+	if r.Operation == "evidence.run" {
+		return s.evidenceRun(ctx, r)
+	}
 	return s.mutate(ctx, r)
 }
 
@@ -234,6 +243,16 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 		}
 		interrupted := []map[string]any{}
 		for _, j := range runs {
+			if j.OperationID != "" {
+				// Recovery may have committed the attestation after the crash.
+				ops, err := s.Store.Index.Operations(ctx, j.OperationID)
+				if err != nil {
+					return nil, err
+				}
+				if len(ops) > 0 {
+					continue
+				}
+			}
 			interrupted = append(interrupted, map[string]any{"run_id": j.RunID, "manifest": j.Manifest, "commit": j.Commit, "reason": j.Reason})
 		}
 		return map[string]any{"subjects": subjects, "recovery_pending": pending, "process_id": os.Getpid(), "interrupted_runs": interrupted}, nil
@@ -320,7 +339,7 @@ func (s *Service) mutate(ctx context.Context, r api.Request) (any, error) {
 	} else if c.signer = s.signers[r.SessionID]; c.signer == nil {
 		keyErr = apierr.New("session_key_unavailable", "session key was lost or ended; use explicit recovery")
 	}
-	result, err := s.Store.DoEffects(ctx, record.Op{ID: r.OperationID, Name: r.Operation, Digest: digest, Signer: c.signer}, func(idx *index.Index) (any, []envelope.Object, []record.Effect, error) {
+	result, err := s.publish(ctx, record.Op{ID: r.OperationID, Name: r.Operation, Digest: digest, Signer: c.signer}, func(idx *index.Index) (any, []envelope.Object, []record.Effect, error) {
 		// A replayed operation returns before this runs, so a retry
 		// succeeds even after its signing key is gone.
 		if keyErr != nil {
@@ -347,6 +366,13 @@ func (s *Service) mutate(ctx context.Context, r api.Request) (any, error) {
 			s.recoveryPending = true
 		}
 	}
+	return result, err
+}
+
+// publish commits one operation group under the RecordStore lock and then
+// drops the keys of sessions it ended. Callers hold mu.
+func (s *Service) publish(ctx context.Context, op record.Op, build record.EffectsFunc) (*record.Result, error) {
+	result, err := s.Store.DoEffects(ctx, op, build)
 	for id := range s.signers {
 		if sub, e := s.Store.Index.Subject(ctx, id); e == nil && sub != nil && sub.State == "ended" {
 			delete(s.signers, id)

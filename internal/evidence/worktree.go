@@ -19,13 +19,30 @@ const (
 	StageReady             = "ready"
 )
 
+// Fault stages inside Execute and the service's run publication.
+const (
+	StagePrepared   = "prepared"
+	StageAfterSetup = "after_setup"
+	StageAfterCheck = "after_check"
+	StageExecuted   = "executed"
+	StageBeforeSign = "before_sign"
+	StageAfterSign  = "after_sign"
+)
+
 // Hooks are test seams. A nil Hooks or nil member is a no-op. A Fault error
 // simulates a crash: Prepare returns it without cleanup.
 type Hooks struct {
 	// AfterCheckout runs once the worktree exists, before it is verified.
 	AfterCheckout func(path string)
-	Fault         func(stage string) error
+	// AfterSetup and AfterCheck run after the setup and check phases,
+	// before the tracked-content comparison.
+	AfterSetup func(path string)
+	AfterCheck func(path string)
+	Fault      func(stage string) error
 }
+
+// Stage fires the fault hook for stage; a nil Hooks never faults.
+func (h *Hooks) Stage(stage string) error { return h.fault(stage) }
 
 func (h *Hooks) fault(stage string) error {
 	if h == nil || h.Fault == nil {
@@ -50,8 +67,15 @@ type Worktree struct {
 // that no tracked file differs. On any failure no worktree remains and the
 // journal is "aborted" with a structured error.
 func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding, runID string, hooks *Hooks) (*Worktree, error) {
+	return prepare(ctx, repo, runtimeDir, b, Journal{RunID: runID}, hooks)
+}
+
+// prepare is Prepare with a journal template carrying the run's operation,
+// check definition and verifier, which the journal keeps for recovery.
+func prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding, j Journal, hooks *Hooks) (*Worktree, error) {
+	runID := j.RunID
 	path := VerifyPath(runtimeDir, runID)
-	j := Journal{RunID: runID, State: StatePreparing, Manifest: b.Manifest, Commit: b.Commit, Tree: b.Tree, WorktreePath: path}
+	j.State, j.Manifest, j.Commit, j.Tree, j.WorktreePath = StatePreparing, b.Manifest, b.Commit, b.Tree, path
 	if _, err := ReadJournal(runtimeDir, runID); err == nil {
 		return nil, apierr.New("run_exists", "evidence run %s already has a journal", runID)
 	} else if !apierr.HasCode(err, "unknown_run") {

@@ -34,6 +34,7 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 | `workspace fork` | session | Create a detached worktree at `base_commit` (default `HEAD`) for a leaf intent. |
 | `workspace status` | anyone | Return the latest observed write set relative to the base. |
 | `evidence resolve` | anyone | Return the frozen binding (manifest, bound commit, tree, pinned check definitions) for `{change_id}` or `{manifest, commit?}`. A change id resolves once; use the returned manifest and commit afterwards. |
+| `evidence run` | root or an unrelated session | Run one pinned check against `{manifest, commit, check_definition, keep_worktree?}` in a fresh verification worktree and publish a signed attestation. See Evidence runs. |
 | `workspace propose` | bound session | Capture the workspace, sign a manifest, and publish a commit on `ledger/<intent-short-id>/<workspace-short-id>`. |
 | `workspace rework` | root or bound session | Reopen a proposed workspace for another revision. |
 | `workspace close` | root or bound session | Record the close, then remove the worktree if nothing would be lost. |
@@ -50,6 +51,12 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 
 A criterion `{"kind":"check","check":"unit"}` pins the definition when the intent is created: the definition is stored as a signed record and its hash is written into the criterion, so later edits to the file cannot retarget the intent or a retried request. Requirements change through a superseding intent. A change attaches to exactly one leaf intent, and an intent used by a change cannot acquire children.
 
+## Evidence runs
+`ledger evidence run '{"manifest":"…","commit":"…","check_definition":"…"}'` runs the pinned definition's optional setup command, then its command, with `/bin/sh -c` in a fresh detached worktree of the bound commit under `.ledger/runtime/verify/<run-id>/`, never in the author's workspace. Each phase gets the definition's timeout; the child environment holds only allowlisted variables; output is captured up to `output_limit_bytes`. Tracked files are compared with the manifest tree before the run, after setup and after the check, so a command that modifies, deletes or re-modes a tracked file fails even if it exits 0. Untracked and ignored files are allowed.
+
+The daemon provisions a root-signed `service` session for the run, signs the attestation with it and ends it, so the signer is never the author. The author and any session ever bound to the workspace cannot request the run. Setup failure, a non-zero exit, a timeout, cancellation (Ctrl-C on the CLI, which has no client deadline for this operation) and tracked mutation each publish a failed attestation with `reason` `setup_failed`, `setup_timeout`, `check_failed`, `check_timeout`, `cancelled` or `tracked_mutation`; setup and check status and duration are recorded separately. A checkout that fails verification (`binding_mismatch`, `tree_mismatch`, `dirty_checkout`) aborts without an attestation. `keep_worktree` is `never` (default), `on_failure` or `always`.
+
+If the daemon dies, or the verifier key is lost, before the attestation is published, no attestation exists. `system status` lists the run under `interrupted_runs`; retrying the same operation id returns `run_interrupted`, and a new operation id starts a fresh run. Attestations always carry `isolation: "none"`: Phase 1 evidence is not isolated (see `docs/security-model.md`).
 ## Observation
 
 Each open workspace is observed through a private Git index under `.ledger/runtime/`, so the write set is the full difference from the fixed base: tracked and untracked non-ignored files, deletions, both sides of renames, modes, symlinks, and commits the agent made itself. Observation is triggered by filesystem events (FSEvents or inotify) coalesced for 500 ms, by any call made by the workspace's session, and by a fallback poll every 10 seconds. `workspace status` returns the cached result and its observation time.

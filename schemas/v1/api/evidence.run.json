@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/evidence.run.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "manifest": {
+      "$ref": "../common.json#/$defs/hash"
+    },
+    "commit": {
+      "$ref": "../common.json#/$defs/git_oid"
+    },
+    "check_definition": {
+      "$ref": "../common.json#/$defs/hash"
+    },
+    "keep_worktree": {
+      "enum": [
+        "never",
+        "on_failure",
+        "always"
+      ]
+    }
+  },
+  "required": [
+    "manifest",
+    "commit",
+    "check_definition"
+  ]
+}

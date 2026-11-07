@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
@@ -124,6 +125,12 @@ func (v *validator) check(o envelope.Object) error {
 		}
 		_, err = v.subjectIn(p.IntentID, lifecycle.Intent, "open")
 		return err
+	case schema.KindEvidenceAttestation:
+		var p schema.EvidenceAttestation
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkAttestation(&p, signer)
 	case schema.KindSpeculationRun:
 		var p schema.SpeculationRun
 		if err := o.Decode(&p); err != nil {
@@ -472,4 +479,86 @@ func (v *validator) checkBinding(hash string, b *schema.WorkspaceBinding, signer
 	}
 	s.BindingHead, s.Owner = hash, b.SessionID
 	return nil
+}
+
+// checkAttestation enforces what a published attestation must satisfy
+// regardless of who asks: an active verifier session that is neither the
+// manifest author nor ever a holder of its workspace, the exact bound
+// commit and tree, a check definition and criteria the intent pinned, and a
+// result consistent with the recorded phases. Readers re-derive all of this.
+func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer string) error {
+	if !isSession(signer) || p.VerifierSession != signer {
+		return unauthorized("an attestation must be signed by its verifier session")
+	}
+	var m schema.ChangeManifest
+	if err := v.object(p.Manifest, schema.KindChangeManifest, &m); err != nil {
+		return apierr.New("unknown_manifest", "no change manifest %s", p.Manifest)
+	}
+	holders, err := workspaceHolders(v.ctx, v.q, m.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if signer == m.AuthorSession || slices.Contains(holders, signer) {
+		return apierr.New("author_signed_evidence", "session %s authored or held the workspace of manifest %s", signer, p.Manifest)
+	}
+	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	if commit == "" || commit != p.Commit {
+		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+	}
+	if p.ExecutedTree != m.Tree {
+		return apierr.New("tree_mismatch", "executed tree %s is not the manifest tree %s", p.ExecutedTree, m.Tree)
+	}
+	var d schema.CheckDefinition
+	if err := v.object(p.CheckDefinition, schema.KindCheckDefinition, &d); err != nil {
+		return err
+	}
+	if d.Category != p.Category {
+		return apierr.New("invalid_attestation", "category %s differs from the pinned definition's %s", p.Category, d.Category)
+	}
+	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	if err != nil {
+		return err
+	}
+	if kind != schema.KindIntent {
+		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
+	}
+	var intent schema.Intent
+	if err := json.Unmarshal(raw, &intent); err != nil {
+		return err
+	}
+	for _, id := range p.Criteria {
+		i := slices.IndexFunc(intent.Criteria, func(c schema.Criterion) bool { return c.ID == id })
+		if i < 0 {
+			return apierr.New("invalid_attestation", "intent %s has no criterion %q", m.IntentID, id)
+		}
+		ver := intent.Criteria[i].Verification
+		switch {
+		case p.Category == "judgment" && ver.Kind != "judgment":
+			return apierr.New("invalid_attestation", "criterion %q is not a judgment criterion", id)
+		case p.Category != "judgment" && (ver.Kind != "check" || ver.DefinitionHash != p.CheckDefinition):
+			return apierr.New("invalid_attestation", "criterion %q is not pinned to check definition %s", id, p.CheckDefinition)
+		}
+	}
+	if p.Category == "judgment" {
+		return nil
+	}
+	if (p.Result == "pass") != (p.Reason == nil) {
+		return apierr.New("inconsistent_result", "a pass has no reason and a failure has one")
+	}
+	if p.Result == "pass" && !passingPhases(p) {
+		return apierr.New("inconsistent_result", "result pass contradicts the recorded setup and check phases")
+	}
+	return nil
+}
+
+// passingPhases reports whether setup (when present) and check both exited
+// 0 without timing out.
+func passingPhases(p *schema.EvidenceAttestation) bool {
+	ok := func(ph *schema.Phase) bool {
+		return ph != nil && ph.ExitStatus != nil && *ph.ExitStatus == 0 && !ph.TimedOut
+	}
+	return (p.Setup == nil || ok(p.Setup)) && ok(p.Check)
 }

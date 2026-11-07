@@ -22,7 +22,9 @@ import (
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
-func fixture(t *testing.T) *Service {
+func fixture(t *testing.T) *Service { return fixtureWith(t, record.Options{}) }
+
+func fixtureWith(t *testing.T, opts record.Options) *Service {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -50,7 +52,7 @@ func fixture(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := record.Open(ctx, repo, record.Options{})
+	store, err := record.Open(ctx, repo, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

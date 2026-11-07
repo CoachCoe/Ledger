@@ -72,7 +72,56 @@ those checks. A trusted key cannot make a tampered record valid.
 
 A hosted service would need sandboxed execution, filesystem and network controls,
 secret isolation, per-agent key custody and authenticated API callers to enforce
-an agent boundary. Phase 1 does not provide isolated evidence execution.
+an agent boundary. Phase 1 does not provide isolated evidence execution; the next
+section states exactly what that means.
+
+## Evidence is not isolated
+
+`evidence.run` executes a check definition's setup and command with `/bin/sh -c`
+as the same operating-system user that runs the Ledger daemon. In Phase 1 there is
+no network, filesystem or process isolation. A check can read and write anything
+that user can, reach any network that user can, read the user's other files, and
+start processes. Every attestation therefore carries `isolation: "none"`, and the
+record schema accepts no other value. Do not describe Phase 1 evidence as produced
+in an isolated, sandboxed or hermetic environment.
+
+What Phase 1 does provide is fidelity and bounded execution, not containment:
+
+- A fresh detached worktree at the bound commit under `.ledger/runtime/verify/<run-id>/`,
+  never the author's workspace. Tracked content is compared with the manifest tree
+  before the run, after setup and after the check; any difference fails the run.
+  Untracked and ignored files (dependency installs, build output) are allowed and are
+  described in the attestation environment, not prevented.
+- A reduced child environment: only variables on the definition's allowlist are
+  passed, and the attestation records a digest of each value, never the value.
+  Allowlisted variables are still visible to the check, which may leak them.
+- A timeout per phase, a bounded output capture, and process-group termination so a
+  backgrounded child does not outlive the run. A process that deliberately leaves
+  its group (for example with `setsid`) is not tracked.
+- A verifier session distinct from the author, created per run by the daemon with no
+  path authority and ended afterwards. This separates who signed the evidence from who
+  wrote the change. It does not stop a check from reading the daemon's files; the
+  verifier key lives only in daemon memory, but the checks run as the same user and
+  could attempt to read that process's memory.
+
+A hosted service that runs untrusted agent code and checks would have to put a
+boundary around every run. At minimum:
+
+- a per-run container or virtual machine, destroyed after the run;
+- no network by default, with an explicit allowlist for dependency installation;
+- read-only source: the bound commit mounted read-only, with an ephemeral writable
+  filesystem for build output;
+- per-run credentials with the least authority, never the user's or the daemon's;
+- CPU, memory, process-count, disk and wall-clock limits enforced outside the process;
+- separate verifier key custody, so the key that signs attestations is held by the
+  service outside the sandbox and never exposed to the code under test; and
+- authenticated API callers, so an agent cannot ask for evidence about its own work as
+  another party.
+
+Until those exist, treat an attestation as "this command exited with this status on
+this tree on this machine", signed by a session that is not the author. It is not proof
+that the check was tamper-proof, or that the code under test could not influence the
+machine that ran it.
 
 ## Notifications
 

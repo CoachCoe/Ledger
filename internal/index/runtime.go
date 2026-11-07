@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -178,7 +179,11 @@ func (x *Index) LastProposal(ctx context.Context, id string) (Proposal, error) {
 // ManifestCommit returns the unique previously receipted commit for an exact
 // manifest. Re-proposing identical content must preserve its evidence binding.
 func (x *Index) ManifestCommit(ctx context.Context, manifest string) (string, error) {
-	rows, err := x.conn().QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
+	return manifestCommit(ctx, x.conn(), manifest)
+}
+
+func manifestCommit(ctx context.Context, q querier, manifest string) (string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
  WHERE m.hash=? AND op.operation='workspace.propose' AND json_extract(op.result,'$.manifest')=?`, manifest, manifest)
 	if err != nil {
 		return "", err
@@ -262,4 +267,60 @@ func (x *Index) CheckDefinition(ctx context.Context, hash string) (schema.CheckD
 		return d, err
 	}
 	return d, json.Unmarshal([]byte(raw), &d)
+}
+
+// WorkspaceHolders returns every session ever bound to workspace id: the
+// creating session and each later binding's session.
+func (x *Index) WorkspaceHolders(ctx context.Context, id string) ([]string, error) {
+	return workspaceHolders(ctx, x.conn(), id)
+}
+
+func workspaceHolders(ctx context.Context, q querier, id string) ([]string, error) {
+	kind, raw, err := creation(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	if kind != schema.KindWorkspace {
+		return nil, apierr.New("unknown_entity", "no workspace %s", id)
+	}
+	var w schema.Workspace
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return nil, err
+	}
+	holders := []string{w.SessionID}
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT session_id FROM bindings WHERE workspace_id=? ORDER BY session_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		if !slices.Contains(holders, sid) {
+			holders = append(holders, sid)
+		}
+	}
+	return holders, rows.Err()
+}
+
+// AttestationsFor returns the hashes of committed evidence attestations that
+// reference manifest, ordered by hash. Only objects of indexed groups exist
+// in the index, so uncommitted attestations never appear.
+func (x *Index) AttestationsFor(ctx context.Context, manifest string) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT hash FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	hashes := []string{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, rows.Err()
 }
