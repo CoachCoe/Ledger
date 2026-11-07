@@ -40,6 +40,8 @@ CREATE INDEX IF NOT EXISTS objects_workspace_change ON objects (json_extract(pay
 	WHERE kind = 'workspace';
 CREATE INDEX IF NOT EXISTS objects_evidence_manifest ON objects (json_extract(payload, '$.manifest'))
 	WHERE kind = 'evidence_attestation';
+CREATE INDEX IF NOT EXISTS objects_selection_manifest ON objects (json_extract(payload, '$.manifest'))
+	WHERE kind = 'selection_decision';
 CREATE TABLE IF NOT EXISTS members (
 	receipt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (receipt, hash));
 CREATE INDEX IF NOT EXISTS members_hash ON members (hash);

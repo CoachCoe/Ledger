@@ -13,6 +13,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/lifecycle"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/selection"
 )
 
 // Validate applies the rules for publishing a new local group: everything
@@ -131,6 +132,12 @@ func (v *validator) check(o envelope.Object) error {
 			return err
 		}
 		return v.checkAttestation(&p, signer)
+	case schema.KindSelectionDecision:
+		var p schema.SelectionDecision
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkSelection(&p, signer)
 	case schema.KindSpeculationRun:
 		var p schema.SpeculationRun
 		if err := o.Decode(&p); err != nil {
@@ -555,6 +562,103 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 	}
 	if p.Result == "pass" && !passingPhases(p) {
 		return apierr.New("inconsistent_result", "result pass contradicts the recorded setup and check phases")
+	}
+	return nil
+}
+
+// checkSelection enforces what a published selection decision must satisfy
+// regardless of who asks: the signer is the root or an active session that
+// did not author the manifest and is the recorded selector; the manifest is
+// the committed current proposal of a proposed workspace whose intent is
+// open; competitors are other committed manifests of the same intent; and
+// every evidence hash is a committed attestation for this exact revision.
+// The recorded criteria and contrary evidence must equal a fresh evaluation
+// of that set: a caller-supplied status that disagrees is status_mismatch.
+func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) error {
+	wantKind := "root"
+	if isSession(signer) {
+		wantKind = "session"
+	}
+	if p.Selector.Kind != wantKind || p.Selector.ID != signer {
+		return unauthorized("the selector must be the signer %s", signer)
+	}
+	m, err := manifestIn(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	if signer == m.AuthorSession {
+		return unauthorized("the author of manifest %s cannot select it", p.Manifest)
+	}
+	if p.IntentID != m.IntentID {
+		return apierr.New("invalid_selection", "intent %s is not the intent of manifest %s", p.IntentID, p.Manifest)
+	}
+	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	if commit == "" || commit != p.Commit {
+		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+	}
+	if _, err := v.subjectIn(m.IntentID, lifecycle.Intent, "open"); err != nil {
+		return err
+	}
+	if _, err := v.subjectIn(m.WorkspaceID, lifecycle.Workspace, "proposed"); err != nil {
+		return err
+	}
+	last, err := lastProposal(v.ctx, v.q, m.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if last.Manifest != p.Manifest {
+		return apierr.New("stale_revision", "manifest %s is not the current proposal; select %s", p.Manifest, last.Manifest).With("current_manifest", last.Manifest)
+	}
+	for i, c := range p.Competitors {
+		if c == p.Manifest || (i > 0 && c <= p.Competitors[i-1]) {
+			return apierr.New("invalid_selection", "competitors must be sorted, unique and exclude the selected manifest")
+		}
+		other, err := manifestIn(v.ctx, v.q, c)
+		if err != nil {
+			return err
+		}
+		if other.IntentID != m.IntentID {
+			return apierr.New("invalid_selection", "competitor %s belongs to intent %s, not %s", c, other.IntentID, m.IntentID)
+		}
+	}
+	if !slices.IsSorted(p.Evidence) || len(slices.Compact(slices.Clone(p.Evidence))) != len(p.Evidence) {
+		return apierr.New("invalid_selection", "evidence hashes must be sorted and unique")
+	}
+	set, err := evidenceByHash(v.ctx, v.q, p.Evidence)
+	if err != nil {
+		return err
+	}
+	for _, h := range p.Evidence {
+		i := slices.IndexFunc(set, func(e selection.Evidence) bool { return e.Hash == h })
+		switch {
+		case i < 0:
+			return apierr.New("unknown_evidence", "no committed evidence attestation %s", h).With("evidence", h)
+		case set[i].Att.Manifest != p.Manifest || set[i].Att.Commit != p.Commit || set[i].Att.ExecutedTree != m.Tree:
+			return apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", h, set[i].Att.Manifest, p.Manifest).
+				With("evidence", h).With("evidence_manifest", set[i].Att.Manifest)
+		}
+	}
+	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	if err != nil {
+		return err
+	}
+	if kind != schema.KindIntent {
+		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
+	}
+	var intent schema.Intent
+	if err := json.Unmarshal(raw, &intent); err != nil {
+		return err
+	}
+	known, err := evidenceFor(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	res := selection.Evaluate(selection.Binding{Manifest: p.Manifest, Commit: p.Commit, Tree: m.Tree, Criteria: intent.Criteria}, set, known)
+	if !selection.SameStatuses(res.Criteria, p.Criteria) || !slices.Equal(res.Contrary, p.ContraryEvidence) {
+		return apierr.New("status_mismatch", "recorded criteria or contrary evidence differ from the evaluation of the recorded evidence set")
 	}
 	return nil
 }

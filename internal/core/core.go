@@ -322,6 +322,7 @@ var mutations = map[string]mutation{
 	"session.end":         (*Service).endSession,
 	"intent.create":       (*Service).createIntent,
 	"intent.close":        (*Service).closeIntent,
+	"selection.record":    (*Service).recordSelection,
 	"workspace.fork":      (*Service).fork,
 	"workspace.propose":   (*Service).propose,
 	"workspace.rework":    (*Service).rework,

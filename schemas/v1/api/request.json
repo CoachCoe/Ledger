@@ -19,6 +19,7 @@
         "evidence.judge",
         "evidence.isIndependent",
         "intent.criteriaStatus",
+        "selection.record",
         "workspace.fork",
         "workspace.status",
         "workspace.propose",

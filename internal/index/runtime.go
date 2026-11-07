@@ -120,7 +120,11 @@ type Proposal struct {
 // LastProposal follows the accepted lifecycle chain to the latest proposal
 // receipt. The branch's current tip is not authority to overwrite external work.
 func (x *Index) LastProposal(ctx context.Context, id string) (Proposal, error) {
-	sub, err := x.Subject(ctx, id)
+	return lastProposal(ctx, x.conn(), id)
+}
+
+func lastProposal(ctx context.Context, q querier, id string) (Proposal, error) {
+	sub, err := loadSubject(ctx, q, id)
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -130,7 +134,7 @@ func (x *Index) LastProposal(ctx context.Context, id string) (Proposal, error) {
 	head := sub.Head
 	for head != "" {
 		var raw string
-		if err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
 			return Proposal{}, err
 		}
 		var event schema.LifecycleEvent
@@ -138,7 +142,7 @@ func (x *Index) LastProposal(ctx context.Context, id string) (Proposal, error) {
 			return Proposal{}, err
 		}
 		if event.ToState == "proposed" {
-			rows, err := x.conn().QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
+			rows, err := q.QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
 			if err != nil {
 				return Proposal{}, err
 			}
@@ -243,9 +247,13 @@ func (x *Index) ChangeWorkspace(ctx context.Context, changeID string) (string, e
 
 // Manifest returns a committed change manifest by hash.
 func (x *Index) Manifest(ctx context.Context, hash string) (schema.ChangeManifest, error) {
+	return manifestIn(ctx, x.conn(), hash)
+}
+
+func manifestIn(ctx context.Context, q querier, hash string) (schema.ChangeManifest, error) {
 	var m schema.ChangeManifest
 	var raw string
-	err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='change_manifest'`, hash).Scan(&raw)
+	err := q.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='change_manifest'`, hash).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, apierr.New("unknown_manifest", "no committed change manifest %s", hash)
 	}
@@ -310,6 +318,25 @@ func workspaceHolders(ctx context.Context, q querier, id string) ([]string, erro
 // in the index, so uncommitted attestations never appear.
 func (x *Index) AttestationsFor(ctx context.Context, manifest string) ([]string, error) {
 	rows, err := x.conn().QueryContext(ctx, `SELECT hash FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	hashes := []string{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, rows.Err()
+}
+
+// SelectionsFor returns the hashes of the committed selection decisions that
+// name manifest, ordered by hash. The lookup uses objects_selection_manifest.
+func (x *Index) SelectionsFor(ctx context.Context, manifest string) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT hash FROM objects WHERE kind='selection_decision' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
 	if err != nil {
 		return nil, err
 	}

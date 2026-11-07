@@ -28,6 +28,7 @@ func commands() map[string]command {
 		"coordination": {"poll or acknowledge notifications", liveCommand("coordination")},
 		"session":      {"create, end or recover a signing session", liveCommand("session")},
 		"evidence":     {"resolve a binding, run a check, judge a criterion, query independence", liveCommand("evidence")},
+		"selection":    {"record a selection decision (not acceptance; nothing is merged)", liveCommand("selection")},
 		"intent":       {"create, inspect, evaluate criteria of or close an intent", liveCommand("intent")},
 		"workspace":    {"fork, inspect, propose, rework or close a workspace", liveCommand("workspace")},
 		"system":       {"inspect daemon status", liveCommand("system")},

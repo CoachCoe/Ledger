@@ -68,6 +68,20 @@ exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT"}
 ! stdout '"status": "outstanding"'
 ! exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["0000000000000000000000000000000000000000000000000000000000000000"]}
 stdout '"code": "unknown_evidence"'
+# Selection: statuses are recomputed from the named evidence; relying only on
+# the mechanical run leaves the review outstanding. It is not acceptance.
+! exec ledger selection record {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["$ATT"],"criteria":[]}
+stdout '"code": "schema_invalid"'
+! exec ledger selection record --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["$ATT"]}
+stdout '"code": "unauthorized"'
+exec ledger selection record {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["$ATT"]}
+stdout '"accepted": false'
+stdout '"outstanding": \['
+stdout '"review"'
+exec git rev-parse refs/ledger/proposals/$MANIFEST
+stdout $COMMIT
+exec git rev-list --merges --all
+! stdout .
 exec ledger system status
 stdout '"interrupted_runs": \[\]'
 -- checks.json --

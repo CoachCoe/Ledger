@@ -25,7 +25,11 @@ const (
 // objects of indexed groups exist in the index, so uncommitted attestations
 // never appear. The lookup uses the objects_evidence_manifest index.
 func (x *Index) EvidenceFor(ctx context.Context, manifest string) ([]selection.Evidence, error) {
-	rows, err := x.conn().QueryContext(ctx, `SELECT hash, signer, payload FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
+	return evidenceFor(ctx, x.conn(), manifest)
+}
+
+func evidenceFor(ctx context.Context, q querier, manifest string) ([]selection.Evidence, error) {
+	rows, err := q.QueryContext(ctx, `SELECT hash, signer, payload FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -33,16 +37,20 @@ func (x *Index) EvidenceFor(ctx context.Context, manifest string) ([]selection.E
 	if err != nil {
 		return nil, err
 	}
-	return x.derive(ctx, raws)
+	return derive(ctx, q, raws)
 }
 
 // EvidenceByHash returns the committed attestations among hashes. Hashes
 // that name no committed attestation are omitted; callers decide whether
 // that is an error.
 func (x *Index) EvidenceByHash(ctx context.Context, hashes []string) ([]selection.Evidence, error) {
+	return evidenceByHash(ctx, x.conn(), hashes)
+}
+
+func evidenceByHash(ctx context.Context, q querier, hashes []string) ([]selection.Evidence, error) {
 	var raws []rawEvidence
 	for _, h := range hashes {
-		rows, err := x.conn().QueryContext(ctx, `SELECT hash, signer, payload FROM objects WHERE hash=? AND kind='evidence_attestation'`, h)
+		rows, err := q.QueryContext(ctx, `SELECT hash, signer, payload FROM objects WHERE hash=? AND kind='evidence_attestation'`, h)
 		if err != nil {
 			return nil, err
 		}
@@ -52,7 +60,7 @@ func (x *Index) EvidenceByHash(ctx context.Context, hashes []string) ([]selectio
 		}
 		raws = append(raws, got...)
 	}
-	return x.derive(ctx, raws)
+	return derive(ctx, q, raws)
 }
 
 type rawEvidence struct {
@@ -81,7 +89,7 @@ func scanEvidence(rows *sql.Rows) ([]rawEvidence, error) {
 // attested verifier session, a session created by a root key, and neither the
 // manifest's author nor ever a holder of its workspace. Independence says
 // nothing about whether the evidence is correct.
-func (x *Index) derive(ctx context.Context, raws []rawEvidence) ([]selection.Evidence, error) {
+func derive(ctx context.Context, q querier, raws []rawEvidence) ([]selection.Evidence, error) {
 	type parties struct {
 		author  string
 		holders []string
@@ -93,10 +101,10 @@ func (x *Index) derive(ctx context.Context, raws []rawEvidence) ([]selection.Evi
 		p := cache[r.att.Manifest]
 		if p == nil {
 			p = &parties{}
-			m, err := x.Manifest(ctx, r.att.Manifest)
+			m, err := manifestIn(ctx, q, r.att.Manifest)
 			if err == nil {
 				p.author = m.AuthorSession
-				p.holders, err = x.WorkspaceHolders(ctx, m.WorkspaceID)
+				p.holders, err = workspaceHolders(ctx, q, m.WorkspaceID)
 			}
 			p.err = err
 			cache[r.att.Manifest] = p
@@ -105,7 +113,7 @@ func (x *Index) derive(ctx context.Context, raws []rawEvidence) ([]selection.Evi
 			return nil, p.err
 		}
 		e := selection.Evidence{Hash: r.hash, Att: r.att, Signer: r.signer}
-		kind, creator, err := x.sessionFacts(ctx, r.signer)
+		kind, creator, err := sessionFacts(ctx, q, r.signer)
 		switch {
 		case err != nil:
 			return nil, err
@@ -132,9 +140,9 @@ func (x *Index) derive(ctx context.Context, raws []rawEvidence) ([]selection.Evi
 
 // sessionFacts returns a session's participant kind and the signer of its
 // creation record ("" when no such session is indexed).
-func (x *Index) sessionFacts(ctx context.Context, id string) (kind, creator string, err error) {
+func sessionFacts(ctx context.Context, q querier, id string) (kind, creator string, err error) {
 	var payload string
-	err = x.conn().QueryRowContext(ctx, `SELECT signer, payload FROM creations WHERE entity_id=? AND kind='session'`, id).Scan(&creator, &payload)
+	err = q.QueryRowContext(ctx, `SELECT signer, payload FROM creations WHERE entity_id=? AND kind='session'`, id).Scan(&creator, &payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", nil
 	}
