@@ -23,7 +23,7 @@ exec ledger coordination ack --session $SID {"session_id":"$SID","notification_i
 stdout '"acknowledged": true'
 exec ledger daemon stop
 exec ledger coordination notifications {"session_id":"$SID"}
-stdout '"acknowledged_at": "'
+stdout '"notifications": \[\]'
 exec ledger daemon stop
 exec ledger reindex
 stdout '"notifications": 1'

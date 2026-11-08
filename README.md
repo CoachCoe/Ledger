@@ -4,11 +4,11 @@ Ledger is a local control plane for agent-driven development over Git. Git store
 
 ## Build
 
-Requires Go 1.27.3 or later and Git 2.25 or later. macOS builds need cgo and Apple's command-line C toolchain for FSEvents.
+Requires Go 1.27.3 or later, Git 2.25 or later, cgo and a C compiler for tree-sitter. macOS also uses Apple's command-line C toolchain for FSEvents.
 
 ```sh
 make build     # bin/ledger
-make test      # go test -race ./...
+make test      # go test -race -p 1 ./...
 make lint      # go vet + golangci-lint (v2.15 or later)
 make demo      # the end-to-end demos
 make security  # govulncheck
@@ -24,7 +24,7 @@ Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":fa
 | `ledger init` | Create `.ledger/` in the current repository, exclude it from Git, create the root key in `~/.config/ledger/keys/` if needed, and record its public key. Safe to repeat. |
 | `ledger session …` | Create, end, or recover a signing session. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
-| `ledger coordination …` | Poll or acknowledge a session notification queue. |
+| `ledger coordination …` | Inspect advisory symbols, poll/acknowledge notifications, and create/list/release advisory leases. |
 | `ledger intent …` | Create, inspect, or close an intent. |
 | `ledger workspace …` | Fork, inspect, propose, rework, or close a workspace. |
 | `ledger evidence …` | Resolve a proposal's frozen binding, run a pinned check in a fresh verification worktree, record a judgment, or ask whether evidence is independent. |
@@ -60,6 +60,7 @@ Records, together with the Git commits they bind, are portable: `ledger export` 
 
 `demos/m2.sh` exercises scoped authority, delegation, unsafe symlinks, dependency-file denial, historical signature chains, queue recovery, and the public CLI. See [`docs/security-model.md`](docs/security-model.md) for the cooperative enforcement boundary.
 `demos/m3.sh` runs every M3 acceptance and recovery test, then, with the real binary, exports a bundle, makes the source unreadable, verifies it in a fresh directory with the network disabled (integrity verified, trust untrusted, then trusted with `--trust`), detects tampering, and imports it twice into a fresh repository.
+`demos/m4.sh` checks JS/TS/TSX/Python symbol analysis, symmetric watcher notifications within five seconds, queue and lease recovery, and a real CLI flow with frozen symbol provenance and advisory leases. Symbol analysis is incomplete; missing dependency edges do not establish safety.
 `demos/governance.sh` tells the M0–M3 story on a fixture repository: a root-scoped session, a denied out-of-scope proposal, independent evidence for the exact revision including a failing run and its contrary evidence, a human judgment, a selection that is not acceptance, and offline verification and import. The demos need `git`, `jq` and `python3`.
 
 ## Design

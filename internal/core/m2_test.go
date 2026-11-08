@@ -103,8 +103,12 @@ func TestM2QueueRecovery(t *testing.T) {
 	}
 	q = call(t, restarted, request("coordination.notifications", "", map[string]any{"session_id": sid}))
 	n = q["notifications"].([]any)
-	if len(n) != 1 || n[0].(map[string]any)["acknowledged_at"] == nil {
-		t.Fatal("queue lost on restart", n)
+	if len(n) != 0 {
+		t.Fatal("acknowledged warning redelivered after restart", n)
+	}
+	stored, err := restarted.Store.Index.Notifications(ctx, sid, "")
+	if err != nil || len(stored) != 1 || stored[0].AcknowledgedAt == nil {
+		t.Fatal("acknowledgment lost on restart", stored, err)
 	}
 	report, err := s.Store.Reindex(ctx)
 	if err != nil {

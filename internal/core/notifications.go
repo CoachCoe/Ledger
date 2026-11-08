@@ -14,9 +14,10 @@ import (
 
 func (s *Service) notifications(ctx context.Context, r api.Request) (any, error) {
 	in, err := decode[struct {
-		SessionID      string `json:"session_id"`
-		Since          string `json:"since"`
-		NotificationID string `json:"notification_id"`
+		SessionID       string   `json:"session_id"`
+		Since           string   `json:"since"`
+		NotificationID  string   `json:"notification_id"`
+		NotificationIDs []string `json:"notification_ids"`
 	}](r.Input)
 	if err != nil {
 		return nil, err
@@ -33,10 +34,14 @@ func (s *Service) notifications(ctx context.Context, r api.Request) (any, error)
 		return nil, err
 	}
 	if r.Operation == "coordination.ack" {
-		err := s.Store.Index.Acknowledge(ctx, in.SessionID, in.NotificationID, now())
+		ids := in.NotificationIDs
+		if in.NotificationID != "" {
+			ids = []string{in.NotificationID}
+		}
+		err := s.Store.Index.AcknowledgeMany(ctx, in.SessionID, ids, now())
 		return map[string]bool{"acknowledged": err == nil}, err
 	}
-	n, err := s.Store.Index.Notifications(ctx, in.SessionID, in.Since)
+	n, err := s.Store.Index.PendingNotifications(ctx, in.SessionID, in.Since)
 	return map[string]any{"notifications": n}, err
 }
 

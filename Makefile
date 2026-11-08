@@ -5,7 +5,7 @@ build:
 
 test:
 	go build ./...
-	go test -race ./...
+	go test -race -p 1 ./...
 
 lint:
 	go vet ./...
@@ -16,6 +16,7 @@ demo:
 	bash demos/m1.sh
 	bash demos/m2.sh
 	bash demos/m3.sh
+	bash demos/m4.sh
 	bash demos/governance.sh
 
 security:

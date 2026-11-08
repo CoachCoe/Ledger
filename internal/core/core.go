@@ -24,6 +24,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/symbols"
 	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
@@ -41,7 +42,10 @@ type Service struct {
 	rootID          string
 	caseSensitive   bool
 
-	observing sync.Map // workspace id -> *sync.Mutex
+	observing      sync.Map // workspace id -> *sync.Mutex
+	coordMu        sync.Mutex
+	symbolEngine   symbols.Engine
+	coordPublished map[string]string
 
 	// evidenceHooks are test seams for evidence runs; nil in production.
 	evidenceHooks *evidence.Hooks
@@ -88,6 +92,17 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	defer s.mu.Unlock()
 	if err := s.reconcile(ctx); err != nil {
 		return nil, err
+	}
+	// Every local session key was lost on restart, even when the missing root
+	// prevents publishing session-end events. No advisory lease may revive it.
+	leases, err := store.Index.Leases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, lease := range leases {
+		if err := store.Index.DeleteLease(ctx, lease.ID); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -206,6 +221,9 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 		if err := s.observeSession(ctx, r.SessionID); err != nil {
 			return nil, err
 		}
+	}
+	if r.Operation == "coordination.lease" || r.Operation == "coordination.release" || r.Operation == "coordination.leases" || r.Operation == "coordination.status" {
+		return s.coordination(ctx, r)
 	}
 	if api.ReadOnly(r.Operation) {
 		return s.read(ctx, r)
@@ -672,7 +690,11 @@ func (s *Service) propose(ctx context.Context, c *invocation) (prepared, error) 
 	if err != nil {
 		return prepared{}, err
 	}
-	manifest, err := envelope.Seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: recordFiles, SymbolsRead: []schema.Symbol{}, SymbolsWritten: []schema.Symbol{}}, c.signer)
+	analysis, err := s.symbolEngine.Compare(ctx, s.Store.Repo, w.BaseCommit, snap.Tree, snap.Files, in.ContextRefs)
+	if err != nil {
+		return prepared{}, err
+	}
+	manifest, err := envelope.Seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: recordFiles, SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written}, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}

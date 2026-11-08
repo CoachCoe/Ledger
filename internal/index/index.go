@@ -25,7 +25,7 @@ const schemaVersion = 1
 // local state that is never exported and may be discarded.
 var (
 	durableTables = []string{"objects", "members", "operations", "creations", "events", "bindings", "subjects"}
-	runtimeTables = []string{"workspace_paths", "write_sets", "notifications", "leases", "dependency_edges"}
+	runtimeTables = []string{"workspace_paths", "write_sets", "notifications", "leases", "dependency_edges", "symbol_observations"}
 )
 
 const ddl = `
@@ -75,10 +75,13 @@ CREATE TABLE IF NOT EXISTS notifications (
 	id TEXT PRIMARY KEY, recipient TEXT NOT NULL, doc TEXT NOT NULL,
 	created_at TEXT NOT NULL, acknowledged_at TEXT);
 CREATE INDEX IF NOT EXISTS notifications_recipient ON notifications (recipient);
+CREATE INDEX IF NOT EXISTS notifications_pending ON notifications (recipient,created_at,id) WHERE acknowledged_at IS NULL;
 CREATE TABLE IF NOT EXISTS leases (
 	id TEXT PRIMARY KEY, holder TEXT NOT NULL, doc TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS dependency_edges (
 	workspace_id TEXT NOT NULL, doc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS symbol_observations (
+	workspace_id TEXT PRIMARY KEY, tree TEXT NOT NULL, doc TEXT NOT NULL, observed_at TEXT NOT NULL);
 `
 
 // Index is an open index database. It is safe for concurrent use; Refresh

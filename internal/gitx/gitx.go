@@ -215,11 +215,29 @@ func (r *Repo) WriteBlobs(ctx context.Context, paths []string) ([]string, error)
 type TreeEntry struct {
 	Path string
 	Blob string
+	Mode string
+	Size int64 // populated by ListTreeDetails
 }
 
 // ListTree returns every blob reachable from the tree of commit.
 func (r *Repo) ListTree(ctx context.Context, commit string) ([]TreeEntry, error) {
-	out, err := r.git(ctx, nil, nil, "ls-tree", "-r", "-z", "--full-tree", commit)
+	return r.listTree(ctx, commit, false)
+}
+
+// ListTreeDetails includes blob sizes and submodule entries. Consumers can skip
+// large blobs and conservatively handle gitlinks without reading their contents.
+func (r *Repo) ListTreeDetails(ctx context.Context, commit string) ([]TreeEntry, error) {
+	return r.listTree(ctx, commit, true)
+}
+
+func (r *Repo) listTree(ctx context.Context, commit string, gitlinks bool) ([]TreeEntry, error) {
+	args := []string{"ls-tree", "-r", "-z", "--full-tree"}
+	fields := 3
+	if gitlinks {
+		args = append(args, "-l")
+		fields = 4
+	}
+	out, err := r.git(ctx, nil, nil, append(args, commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,10 +248,17 @@ func (r *Repo) ListTree(ctx context.Context, commit string) ([]TreeEntry, error)
 		}
 		meta, path, ok := strings.Cut(rec, "\t")
 		f := strings.Fields(meta)
-		if !ok || len(f) != 3 || f[1] != "blob" {
+		if !ok || len(f) != fields || f[1] != "blob" && (!gitlinks || f[0] != "160000" || f[1] != "commit") {
 			return nil, fmt.Errorf("gitx: unexpected ls-tree entry %q", rec)
 		}
-		entries = append(entries, TreeEntry{Path: path, Blob: f[2]})
+		var size int64
+		if gitlinks && f[1] == "blob" {
+			size, err = strconv.ParseInt(f[3], 10, 64)
+			if err != nil || size < 0 {
+				return nil, fmt.Errorf("gitx: invalid blob size in %q", rec)
+			}
+		}
+		entries = append(entries, TreeEntry{Path: path, Blob: f[2], Mode: f[0], Size: size})
 	}
 	return entries, nil
 }

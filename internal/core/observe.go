@@ -44,6 +44,9 @@ func (s *Service) observe(ctx context.Context, w schema.Workspace) (workspace.Sn
 		return snap, "", err
 	}
 	at := now()
+	if err := s.observeSymbols(ctx, w, snap, at); err != nil {
+		return snap, "", err
+	}
 	return snap, at, s.Store.Index.SaveObservation(ctx, w.ID, s.Provider.Path(w.ID), at, snap.Status)
 }
 
@@ -91,6 +94,10 @@ func (s *Service) Observe(ctx context.Context) error {
 		})
 	}
 	wg.Wait()
+	s.coordMu.Lock()
+	leaseErr := s.expireLeases(ctx)
+	s.coordMu.Unlock()
+	errs = append(errs, leaseErr)
 	return errors.Join(errs...)
 }
 

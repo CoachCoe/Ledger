@@ -18,11 +18,14 @@ type Notification struct {
 	Subject        NotificationSubject      `json:"subject"`
 	Counterpart    *NotificationCounterpart `json:"counterpart"`
 	Confidence     string                   `json:"confidence"`
+	OverlapKind    string                   `json:"overlap_kind,omitzero"`
+	Reason         string                   `json:"reason,omitzero"`
 	CreatedAt      string                   `json:"created_at"`
 	AcknowledgedAt *string                  `json:"acknowledged_at"`
 }
 type NotificationSubject struct {
-	Path string `json:"path"`
+	Path   string         `json:"path,omitzero"`
+	Symbol *schema.Symbol `json:"symbol,omitempty"`
 }
 type NotificationCounterpart struct {
 	WorkspaceID string `json:"workspace_id"`
@@ -50,7 +53,21 @@ func (x *Index) Enqueue(ctx context.Context, n Notification) error {
 	return x.notificationFault("enqueue_after")
 }
 func (x *Index) Notifications(ctx context.Context, recipient, since string) ([]Notification, error) {
-	rows, err := x.conn().QueryContext(ctx, `SELECT doc,acknowledged_at FROM notifications WHERE recipient=? AND (?='' OR julianday(created_at)>=julianday(?)) ORDER BY created_at,id`, recipient, since, since)
+	return x.notifications(ctx, recipient, since, false)
+}
+
+// PendingNotifications avoids loading the recipient's acknowledged history.
+func (x *Index) PendingNotifications(ctx context.Context, recipient, since string) ([]Notification, error) {
+	return x.notifications(ctx, recipient, since, true)
+}
+
+func (x *Index) notifications(ctx context.Context, recipient, since string, pending bool) ([]Notification, error) {
+	query := `SELECT doc,acknowledged_at FROM notifications WHERE recipient=? AND (?='' OR julianday(created_at)>=julianday(?))`
+	if pending {
+		query += ` AND acknowledged_at IS NULL`
+	}
+	query += ` ORDER BY created_at,id`
+	rows, err := x.conn().QueryContext(ctx, query, recipient, since, since)
 	if err != nil {
 		return nil, err
 	}
@@ -74,19 +91,32 @@ func (x *Index) Notifications(ctx context.Context, recipient, since string) ([]N
 	return out, rows.Err()
 }
 func (x *Index) Acknowledge(ctx context.Context, recipient, id, at string) error {
+	return x.AcknowledgeMany(ctx, recipient, []string{id}, at)
+}
+func (x *Index) AcknowledgeMany(ctx context.Context, recipient string, ids []string, at string) error {
 	if err := x.notificationFault("ack_before"); err != nil {
 		return err
 	}
-	result, err := x.conn().ExecContext(ctx, `UPDATE notifications SET acknowledged_at=COALESCE(acknowledged_at,?) WHERE id=? AND recipient=?`, at, id, recipient)
+	tx, err := x.conn().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
+	defer tx.Rollback()
+	for _, id := range ids {
+		result, err := tx.ExecContext(ctx, `UPDATE notifications SET acknowledged_at=COALESCE(acknowledged_at,?) WHERE id=? AND recipient=?`, at, id, recipient)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apierr.New("unknown_notification", "no notification for recipient")
+		}
 	}
-	if n == 0 {
-		return apierr.New("unknown_notification", "no notification for recipient")
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	return x.notificationFault("ack_after")
 }

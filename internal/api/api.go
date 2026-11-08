@@ -59,5 +59,8 @@ func (r Request) Digest() (string, error) {
 }
 
 func ReadOnly(op string) bool {
+	if op == "coordination.leases" || op == "coordination.status" {
+		return true
+	}
 	return op == "coordination.notifications" || op == "coordination.ack" || op == "system.status" || op == "intent.status" || op == "workspace.status" || op == "evidence.resolve" || op == "evidence.isIndependent" || op == "intent.criteriaStatus"
 }

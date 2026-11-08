@@ -29,7 +29,11 @@
         "capability.issue",
         "capability.delegate",
         "coordination.notifications",
-        "coordination.ack"
+        "coordination.ack",
+        "coordination.lease",
+        "coordination.release",
+        "coordination.leases",
+        "coordination.status"
       ]
     },
     "operation_id": {
@@ -70,7 +74,9 @@
                 "system.status",
                 "workspace.status",
                 "coordination.notifications",
-                "coordination.ack"
+                "coordination.ack",
+                "coordination.leases",
+                "coordination.status"
               ]
             }
           }

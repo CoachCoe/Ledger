@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/coordination.lease.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "const": true
+        },
+        "observed_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "snapshot_digest": {
+          "$ref": "../common.json#/$defs/hash"
+        },
+        "lease": {
+          "$ref": "../runtime/lease.json"
+        }
+      },
+      "required": [
+        "runtime",
+        "observed_at",
+        "snapshot_digest",
+        "lease"
+      ]
+    }
+  }
+}
