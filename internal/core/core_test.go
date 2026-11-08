@@ -255,6 +255,45 @@ func TestClosePreservesIgnoredUserFiles(t *testing.T) {
 	}
 }
 
+func TestCloseRemovesAProposedWorkspaceOnlyWhileItMatchesTheProposal(t *testing.T) {
+	for name, edit := range map[string]string{"unchanged": "", "edited after proposal": "later edit\n"} {
+		t.Run(name, func(t *testing.T) {
+			s := fixture(t)
+			session := call(t, s, request("session.create", "", map[string]any{}))
+			sid := session["session_id"].(string)
+			intent := call(t, s, request("intent.create", "", map[string]any{"description": "close", "criteria": []any{map[string]any{"id": "review", "statement": "review", "verification": map[string]any{"kind": "judgment", "reviewer": "any"}}}}))
+			ws := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": session["capability_id"]}))
+			path := ws["path"].(string)
+			if err := os.WriteFile(filepath.Join(path, "refund.txt"), []byte("refund\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			call(t, s, request("workspace.propose", sid, map[string]any{"workspace_id": ws["workspace_id"]}))
+			call(t, s, request("workspace.rework", sid, map[string]any{"workspace_id": ws["workspace_id"]}))
+			if edit != "" {
+				if err := os.WriteFile(filepath.Join(path, "refund.txt"), []byte(edit), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := s.Handle(context.Background(), request("workspace.close", sid, map[string]any{"workspace_id": ws["workspace_id"], "reason": "finished"}))
+			if edit == "" {
+				if err != nil {
+					t.Fatalf("the proposal retains every file, so close removes the worktree: %v", err)
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("worktree still present: %v", err)
+				}
+				return
+			}
+			if !apierr.HasCode(err, "cleanup_pending") || apierr.As(err).Details["committed"] != true {
+				t.Fatalf("an edit after the proposal is preserved: %v", err)
+			}
+			if raw, err := os.ReadFile(filepath.Join(path, "refund.txt")); err != nil || string(raw) != edit {
+				t.Fatalf("edit lost: %q %v", raw, err)
+			}
+		})
+	}
+}
+
 func TestMovedWorkspaceReconstructsWithoutRuntimeIndex(t *testing.T) {
 	s := fixture(t)
 	ctx := context.Background()

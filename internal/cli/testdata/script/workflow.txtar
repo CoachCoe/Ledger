@@ -94,14 +94,17 @@ stdout '^Ledger-Session: '$SID2'$'
 exec git rev-list --parents -n 1 $BRANCH
 cmpenv stdout $WORK/parents
 
-# Closing keeps untracked work: the close commits, cleanup stays pending
-# until the files are dealt with and recovery is retried.
+# Work after the last proposal is recorded nowhere, so closing keeps it: the
+# close commits, and cleanup stays pending until the files are dealt with and
+# recovery is retried.
+cp $WORK/repo/tools/report.py $WPATH/tools/after.py
 ! exec ledger workspace close --session $SID2 {"workspace_id":"$WSP","reason":"finished"}
 stdout '"code": "cleanup_pending"'
 exists $WPATH/src/billing/refund.ts
+exists $WPATH/tools/after.py
 exec ledger workspace status {"workspace_id":"$WSP"}
 stdout '"state": "closed"'
-rm $WPATH/src/billing/refund.ts $WPATH/tools/later.py
+rm $WPATH/src/billing/refund.ts $WPATH/tools/later.py $WPATH/tools/after.py
 exec git -C $WPATH checkout -- tools/report.py
 exec ledger daemon stop
 exec ledger recover

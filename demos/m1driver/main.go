@@ -239,7 +239,11 @@ func run() error {
 		return err
 	}
 	fmt.Println("ok: restart observes and preserves edits, ends lost-key authority, and explicitly rebinds a replacement session")
-	// Closing preserves dirty user files and reports cleanup separately.
+	// An edit after the last proposal is recorded nowhere, so closing keeps
+	// it and reports cleanup separately.
+	if err := os.WriteFile(filepath.Join(path, "later.py"), []byte("x = 2\n"), 0600); err != nil {
+		return err
+	}
 	if _, err := ledger("workspace", "close", "--session", replacement, payload(map[string]any{"workspace_id": wid, "reason": "demo_complete"})); err == nil {
 		return fmt.Errorf("dirty cleanup should be pending")
 	}
@@ -250,8 +254,8 @@ func run() error {
 	if status["state"] != "closed" {
 		return fmt.Errorf("close was not committed")
 	}
-	if _, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil {
-		return fmt.Errorf("close deleted user edits: %w", err)
+	if raw, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil || string(raw) != "x = 2\n" {
+		return fmt.Errorf("close deleted user edits: %q %v", raw, err)
 	}
 	report, err := ledger("recover")
 	if err != nil {
@@ -260,7 +264,7 @@ func run() error {
 	if pending, ok := report["cleanup_pending"].([]any); !ok || len(pending) == 0 {
 		return fmt.Errorf("missing cleanup-pending report")
 	}
-	fmt.Println("ok: close is durable, dirty user files survive, cleanup remains explicitly pending")
+	fmt.Println("ok: close is durable, unproposed edits survive, cleanup remains explicitly pending")
 	fmt.Println("M1 demo passed.")
 	return nil
 }

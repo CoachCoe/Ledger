@@ -826,7 +826,9 @@ func (s *Service) rework(ctx context.Context, c *invocation) (prepared, error) {
 }
 
 // closeWorkspace publishes the terminal state before removing the
-// worktree, so a cleanup failure never hides the committed close.
+// worktree, so a cleanup failure never hides the committed close. A
+// worktree that still holds exactly its latest proposal loses nothing when
+// removed, because the proposal commit retains it.
 func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, error) {
 	in, err := decode[struct {
 		WorkspaceID string `json:"workspace_id"`
@@ -835,8 +837,19 @@ func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, 
 	if err != nil {
 		return prepared{}, err
 	}
-	cleanup := []record.Effect{{Kind: record.EffectWorktreeRemove, WorkspaceID: in.WorkspaceID, Path: s.Provider.Path(in.WorkspaceID), After: true}}
-	return s.transitionWorkspace(ctx, c, in.WorkspaceID, "closed", &in.Reason, cleanup)
+	cleanup := record.Effect{Kind: record.EffectWorktreeRemove, WorkspaceID: in.WorkspaceID, Path: s.Provider.Path(in.WorkspaceID), After: true}
+	last, err := s.Store.Index.LastProposal(ctx, in.WorkspaceID)
+	if err != nil && !apierr.HasCode(err, "unknown_entity") {
+		return prepared{}, err
+	}
+	if last.Manifest != "" {
+		m, err := s.Store.Index.Manifest(ctx, last.Manifest)
+		if err != nil {
+			return prepared{}, err
+		}
+		cleanup.Base, cleanup.Tree = m.BaseCommit, m.Tree
+	}
+	return s.transitionWorkspace(ctx, c, in.WorkspaceID, "closed", &in.Reason, []record.Effect{cleanup})
 }
 
 func (s *Service) transitionWorkspace(ctx context.Context, c *invocation, id, to string, reason *string, effects []record.Effect) (prepared, error) {

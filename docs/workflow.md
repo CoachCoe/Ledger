@@ -79,7 +79,7 @@ Capture uses two independent private indexes and retries when files change mid-c
 
 Session private keys exist only in daemon memory. When the daemon restarts, sessions whose keys were lost are ended with root-signed events; if the root key is unavailable, `system status` reports `recovery_pending` and those sessions cannot sign. Work continues only through `session recover`. Closed and selected workspaces cannot be rebound.
 
-Close publishes the terminal state before cleanup. Modified, untracked, and ignored files are preserved: if any remain, the call fails with `cleanup_pending`, `committed: true`, the operation id and the receipt, and `ledger recover` reports the outstanding cleanup until the files are dealt with and recovery is retried. Branches and retained revisions survive closure.
+Close publishes the terminal state before cleanup. A worktree whose content still equals its latest proposal is removed, since the retained proposal commit holds every file. Anything else is preserved: modified, untracked or ignored files that no proposal records make the call fail with `cleanup_pending`, `committed: true`, the operation id and the receipt, and `ledger recover` reports the outstanding cleanup until the files are dealt with and recovery is retried. Branches and retained revisions survive closure.
 
 ## Protocol
 
