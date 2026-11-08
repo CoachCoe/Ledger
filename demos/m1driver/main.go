@@ -254,8 +254,12 @@ func run() error {
 	if status["state"] != "closed" {
 		return fmt.Errorf("close was not committed")
 	}
-	if raw, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil || string(raw) != "x = 2\n" {
-		return fmt.Errorf("close deleted user edits: %q %v", raw, err)
+	raw, err := os.ReadFile(filepath.Join(path, "later.py"))
+	if err != nil {
+		return fmt.Errorf("close deleted user edits: %w", err)
+	}
+	if string(raw) != "x = 2\n" {
+		return fmt.Errorf("close changed user edits: %q", raw)
 	}
 	report, err := ledger("recover")
 	if err != nil {
