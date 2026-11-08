@@ -55,9 +55,6 @@ func TestNewID(t *testing.T) {
 	if !re.MatchString(a) || a == b {
 		t.Fatalf("ids %q %q", a, b)
 	}
-	if IDPrefix(a) != PrefixIntent || IDPrefix("plain") != "" {
-		t.Fatal("IDPrefix")
-	}
 	if ShortID(a) != a[:12] || ShortID("plain") != "plain" {
 		t.Fatalf("ShortID(%q) = %q", a, ShortID(a))
 	}

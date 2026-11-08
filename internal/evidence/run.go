@@ -88,7 +88,7 @@ func Execute(ctx context.Context, repo *gitx.Repo, runtimeDir string, p Plan, ho
 		return Outcome{}, apierr.New("invalid_checks", "%v", err)
 	}
 	template := Journal{RunID: p.RunID, OperationID: p.OperationID, CheckDefinition: p.Check.DefinitionHash, VerifierSession: p.VerifierSession}
-	wt, err := prepare(ctx, repo, runtimeDir, p.Binding, template, hooks)
+	wt, err := Prepare(ctx, repo, runtimeDir, p.Binding, template, hooks)
 	if err != nil {
 		return Outcome{}, err
 	}

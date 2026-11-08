@@ -1,6 +1,7 @@
 package api
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -69,6 +70,31 @@ func TestOutputSchemasRemainClosed(t *testing.T) {
 		}
 		if err := schema.ValidateAPI(name, []byte(`{"api_version":1,"ok":false,"error":{"code":"test","message":"test","extra":true}}`)); err == nil {
 			t.Fatal("unknown error property accepted")
+		}
+	}
+}
+
+func TestReadOnlyOperationsComeFromTheRequestSchema(t *testing.T) {
+	ops, err := Operations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readOnly) == 0 {
+		t.Fatal("no read-only operations")
+	}
+	for op := range readOnly {
+		if !slices.Contains(ops, op) {
+			t.Errorf("read-only %s is not an operation", op)
+		}
+	}
+	for _, op := range []string{"system.status", "history.why", "coordination.ack", "speculation.status"} {
+		if !ReadOnly(op) {
+			t.Errorf("%s needs no operation id", op)
+		}
+	}
+	for _, op := range []string{"workspace.propose", "speculation.score", "bundle.import", "workspace.write"} {
+		if ReadOnly(op) {
+			t.Errorf("%s is a mutation", op)
 		}
 	}
 }

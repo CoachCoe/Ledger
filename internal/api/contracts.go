@@ -11,16 +11,46 @@ import (
 	"github.com/CoachCoe/Ledger/schemas"
 )
 
-// Operations is the versioned protocol's authoritative operation list.
-func Operations() ([]string, error) {
+// requestSchema is the subset of v1/api/request.json that names operations.
+type requestSchema struct {
+	Properties struct{ Operation struct{ Enum []string } }
+	AllOf      []struct {
+		If struct {
+			Properties struct {
+				Operation struct{ Not struct{ Enum []string } }
+			}
+		}
+	}
+}
+
+func loadRequestSchema() (requestSchema, error) {
+	var doc requestSchema
 	b, err := schemas.FS.ReadFile("v1/api/request.json")
 	if err != nil {
-		return nil, err
+		return doc, err
 	}
-	var doc struct {
-		Properties struct{ Operation struct{ Enum []string } }
+	return doc, json.Unmarshal(b, &doc)
+}
+
+// readOnly is the request schema's list of operations exempt from the
+// operation id requirement. The schema is embedded, so failing to read it is
+// a build defect.
+var readOnly = func() map[string]bool {
+	doc, err := loadRequestSchema()
+	if err != nil || len(doc.AllOf) != 1 {
+		panic(fmt.Sprintf("api: embedded request schema: %v", err))
 	}
-	if err := json.Unmarshal(b, &doc); err != nil {
+	ops := map[string]bool{}
+	for _, op := range doc.AllOf[0].If.Properties.Operation.Not.Enum {
+		ops[op] = true
+	}
+	return ops
+}()
+
+// Operations is the versioned protocol's authoritative operation list.
+func Operations() ([]string, error) {
+	doc, err := loadRequestSchema()
+	if err != nil {
 		return nil, err
 	}
 	slices.Sort(doc.Properties.Operation.Enum)

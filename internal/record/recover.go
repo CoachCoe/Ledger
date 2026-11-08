@@ -84,7 +84,7 @@ func (s *Store) Reindex(ctx context.Context) (*Report, error) {
 		return nil, err
 	}
 	defer unlock()
-	discarded, err := s.Index.RuntimeRows()
+	discarded, err := s.Index.RuntimeRows(ctx)
 	if err != nil {
 		return nil, err
 	}

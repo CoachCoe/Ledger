@@ -69,14 +69,6 @@ type Result struct {
 	MechanicalFailed bool
 }
 
-// Summary counts criteria by status.
-type Summary struct {
-	Satisfied        int
-	Failed           int
-	Outstanding      int
-	MechanicalFailed bool
-}
-
 // Consistent reports why an attestation's recorded result contradicts its
 // recorded phases, or "" when it is consistent. A pass needs a successful
 // setup (when present) and check; judgments record no process phases.
@@ -230,22 +222,6 @@ func contrary(b Binding, known []Evidence) []string {
 		}
 	}
 	return sorted(out)
-}
-
-// Summarize counts the criteria of r by status.
-func Summarize(r Result) Summary {
-	s := Summary{MechanicalFailed: r.MechanicalFailed}
-	for _, c := range r.Criteria {
-		switch c.Status {
-		case Satisfied:
-			s.Satisfied++
-		case Failed:
-			s.Failed++
-		default:
-			s.Outstanding++
-		}
-	}
-	return s
 }
 
 func dedupe(in []Evidence) []Evidence {

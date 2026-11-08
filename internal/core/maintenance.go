@@ -48,7 +48,7 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 			return nil, err
 		}
 		s.coordPublished = nil
-		digest, err := s.Store.Index.Digest()
+		digest, err := s.Store.Index.Digest(ctx)
 		return map[string]any{"report": report, "index_digest": digest}, err
 	}
 	in, err := decode[struct {
@@ -103,7 +103,7 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		if err := s.reconcile(ctx); err != nil {
 			return nil, err
 		}
-		digest, err := s.Store.Index.Digest()
+		digest, err := s.Store.Index.Digest(ctx)
 		return map[string]any{"import": report, "index_digest": digest}, err
 	}
 	var src *verify.Source

@@ -4,7 +4,6 @@ package api
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"strings"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -59,15 +58,6 @@ func (r Request) Digest() (string, error) {
 	return canon.Hash(b), nil
 }
 
-func ReadOnly(op string) bool {
-	if op == "bundle.verify" {
-		return true
-	}
-	if strings.HasPrefix(op, "history.") || op == "coordination.nearby" {
-		return true
-	}
-	if op == "coordination.leases" || op == "coordination.status" || op == "speculation.status" {
-		return true
-	}
-	return op == "coordination.notifications" || op == "coordination.ack" || op == "system.status" || op == "intent.status" || op == "workspace.status" || op == "evidence.resolve" || op == "evidence.isIndependent" || op == "intent.criteriaStatus"
-}
+// ReadOnly reports whether op takes no operation id: it signs nothing, so a
+// retry needs no frozen identity.
+func ReadOnly(op string) bool { return readOnly[op] }

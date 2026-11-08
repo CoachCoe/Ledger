@@ -87,15 +87,6 @@ func ParseTimestamp(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }
 
-// IDPrefix returns the entity prefix of id, including the underscore.
-func IDPrefix(id string) string {
-	i := strings.IndexByte(id, '_')
-	if i < 0 {
-		return ""
-	}
-	return id[:i+1]
-}
-
 type RootKey struct {
 	PublicKey string `json:"public_key"`
 	CreatedAt string `json:"created_at"`

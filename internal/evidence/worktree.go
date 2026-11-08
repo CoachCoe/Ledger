@@ -65,14 +65,9 @@ type Worktree struct {
 // <runtimeDir>/verify/<runID>. Before anything can run it checks the three
 // commit bindings, that the checkout's tree equals the manifest tree, and
 // that no tracked file differs. On any failure no worktree remains and the
-// journal is "aborted" with a structured error.
-func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding, runID string, hooks *Hooks) (*Worktree, error) {
-	return prepare(ctx, repo, runtimeDir, b, Journal{RunID: runID}, hooks)
-}
-
-// prepare is Prepare with a journal template carrying the run's operation,
-// check definition and verifier, which the journal keeps for recovery.
-func prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding, j Journal, hooks *Hooks) (*Worktree, error) {
+// journal is "aborted" with a structured error. The journal template j
+// carries the run's operation, check definition and verifier for recovery.
+func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding, j Journal, hooks *Hooks) (*Worktree, error) {
 	runID := j.RunID
 	path := VerifyPath(runtimeDir, runID)
 	j.State, j.Manifest, j.Commit, j.Tree, j.WorktreePath = StatePreparing, b.Manifest, b.Commit, b.Tree, path

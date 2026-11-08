@@ -55,7 +55,7 @@ func (s *site) mustImport(path string) *verify.ImportReport {
 
 func (s *site) digest() string {
 	s.t.Helper()
-	d, err := s.store.Index.Digest()
+	d, err := s.store.Index.Digest(context.Background())
 	if err != nil {
 		s.t.Fatal(err)
 	}

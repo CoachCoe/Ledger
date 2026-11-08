@@ -106,12 +106,20 @@ func TestAC113_TruthTable(t *testing.T) {
 				if r := statusOf(res, "review"); r.Status != Outstanding {
 					t.Fatalf("review: %+v", r)
 				}
-				if sum := Summarize(res); sum.MechanicalFailed != (fails > 0) || sum.Outstanding != 1+btoi(passes+fails == 0) || sum.Satisfied+sum.Failed+sum.Outstanding != 2 {
-					t.Fatalf("summary: %+v", sum)
+				if n := countStatuses(res); res.MechanicalFailed != (fails > 0) || n[Outstanding] != 1+btoi(passes+fails == 0) || n[Satisfied]+n[Failed]+n[Outstanding] != 2 {
+					t.Fatalf("summary: %v mechanical failure %v", n, res.MechanicalFailed)
 				}
 			})
 		}
 	}
+}
+
+func countStatuses(r Result) map[string]int {
+	n := map[string]int{}
+	for _, c := range r.Criteria {
+		n[c.Status]++
+	}
+	return n
 }
 
 func TestAC113_TruthTableJudgment(t *testing.T) {
@@ -135,7 +143,7 @@ func TestAC113_TruthTableJudgment(t *testing.T) {
 		if name == "mixed" && (!slices.Equal(got.Deciding, []string{"jf"}) || !slices.Equal(got.Conflicting, []string{"jp"})) {
 			t.Fatalf("mixed detail: %+v", got)
 		}
-		if Summarize(res).MechanicalFailed {
+		if res.MechanicalFailed {
 			t.Fatalf("%s: a judgment failure is not a mechanical failure", name)
 		}
 	}

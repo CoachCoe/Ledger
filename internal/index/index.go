@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS leases (
 	id TEXT PRIMARY KEY, holder TEXT NOT NULL, doc TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS dependency_edges (
 	workspace_id TEXT NOT NULL, doc TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS dependency_edges_workspace ON dependency_edges (workspace_id);
 CREATE TABLE IF NOT EXISTS symbol_observations (
 	workspace_id TEXT PRIMARY KEY, tree TEXT NOT NULL, doc TEXT NOT NULL, observed_at TEXT NOT NULL);
 `
@@ -161,11 +162,11 @@ func migrate(db *sql.DB) error {
 func (x *Index) Close() error { return x.conn().Close() }
 
 // RuntimeRows counts rows in the runtime tables, which reindex discards.
-func (x *Index) RuntimeRows() (map[string]int, error) {
+func (x *Index) RuntimeRows(ctx context.Context) (map[string]int, error) {
 	out := map[string]int{}
 	for _, t := range runtimeTables {
 		var n int
-		if err := x.conn().QueryRow(`SELECT COUNT(*) FROM ` + t).Scan(&n); err != nil {
+		if err := x.conn().QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t).Scan(&n); err != nil {
 			return nil, err
 		}
 		out[t] = n
@@ -175,18 +176,18 @@ func (x *Index) RuntimeRows() (map[string]int, error) {
 
 // Digest returns a hash over every durable table in a fixed order, so two
 // indexes built from the same records compare equal.
-func (x *Index) Digest() (string, error) {
+func (x *Index) Digest(ctx context.Context) (string, error) {
 	h := sha256.New()
 	for _, t := range durableTables {
-		if err := dumpTable(x.conn(), t, h); err != nil {
+		if err := dumpTable(ctx, x.conn(), t, h); err != nil {
 			return "", err
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func dumpTable(db *sql.DB, table string, w io.Writer) error {
-	rows, err := db.QueryContext(context.Background(), `SELECT * FROM `+table+` ORDER BY 1, 2`) //nolint:gosec // table is from durableTables
+func dumpTable(ctx context.Context, db *sql.DB, table string, w io.Writer) error {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM `+table+` ORDER BY 1, 2`) //nolint:gosec // table is from durableTables
 	if err != nil {
 		return err
 	}

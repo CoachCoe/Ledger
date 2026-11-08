@@ -209,7 +209,7 @@ func cmdImport(args []string) (result any, err error) {
 	if err != nil {
 		return nil, err
 	}
-	digest, err := s.Index.Digest()
+	digest, err := s.Index.Digest(ctx)
 	if err != nil {
 		return nil, err
 	}

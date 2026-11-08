@@ -217,7 +217,7 @@ func subject(t testing.TB, s *Store, id string) *index.Subject {
 
 func digest(t testing.TB, s *Store) string {
 	t.Helper()
-	d, err := s.Index.Digest()
+	d, err := s.Index.Digest(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
