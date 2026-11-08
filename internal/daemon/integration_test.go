@@ -3,10 +3,15 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -25,9 +30,6 @@ func TestPublicCLILifecycle(t *testing.T) {
 		t.Fatalf("build: %v %s", err, out)
 	}
 	repo := filepath.Join(work, "repo")
-	if err := os.Mkdir(repo, 0700); err != nil {
-		t.Fatal(err)
-	}
 	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
 	run := func(args ...string) (map[string]any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -70,9 +72,11 @@ func TestPublicCLILifecycle(t *testing.T) {
 		}
 
 	}
+	if err := os.CopyFS(repo, os.DirFS("../../testdata/fixtures/polyglot")); err != nil {
+		t.Fatal(err)
+	}
 	git("init", "-q")
-	os.WriteFile(filepath.Join(repo, "a.ts"), []byte("export const x=1;\n"), 0600)
-	git("add", "a.ts")
+	git("add", "-A")
 	git("commit", "-qm", "base")
 	must("init")
 	// Simultaneous first clients must converge on one daemon.
@@ -96,6 +100,25 @@ func TestPublicCLILifecycle(t *testing.T) {
 	if _, err := run("daemon"); err == nil {
 		t.Fatal("second daemon accepted")
 	}
+	// Oversized and non-API requests are refused at the transport.
+	socket := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(repo, ".ledger/runtime/ledgerd.sock"))
+	}}}
+	response, err := socket.Post("http://ledger/v1", "application/json", strings.NewReader(`{"input":"`+strings.Repeat("x", 2<<20)+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reply struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&reply); err != nil || reply.Error.Code != "request_too_large" {
+		t.Fatalf("oversized request: %+v %v", reply, err)
+	}
+	response.Body.Close()
+	if response, err = socket.Get("http://ledger/v1"); err != nil || response.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET accepted: %v %v", response, err)
+	}
+	response.Body.Close()
 	session := must("session", "create", `{"agent_name":"fixture"}`)
 	sid := session["session_id"].(string)
 	intent := must("intent", "create", `{"description":"test a change","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"human"}}]}`)
@@ -128,7 +151,7 @@ func TestPublicCLILifecycle(t *testing.T) {
 	ws, _ := json.Marshal(map[string]any{"workspace_id": wid})
 	must("workspace", "status", string(ws)) // establish a clean cached observation
 	// A plain disk edit must reach the runtime observer without a session API call.
-	edit := exec.Command("sh", "-c", "printf 'export const x=2;\n' > a.ts")
+	edit := exec.Command("sh", "-c", "printf 'export const RATE = 0.25;\n' >> src/billing/tax.js")
 	edit.Dir = path
 	if err := edit.Run(); err != nil {
 		t.Fatal(err)
@@ -248,3 +271,130 @@ func TestPublicCLILifecycle(t *testing.T) {
 type commandError struct{ out string }
 
 func (e *commandError) Error() string { return e.out }
+
+func TestAC111_CancelledRunRecordedWhenClientDisconnects(t *testing.T) {
+	// Ctrl-C on `ledger evidence run` closes the connection; the daemon's
+	// request context is cancelled, the child process group is killed, and a
+	// failed "cancelled" attestation is still published.
+	work, err := os.MkdirTemp("/tmp", "ledger-m3-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(work) })
+	binary := filepath.Join(work, "ledger")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/ledger")
+	build.Dir = "../.."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	repo := filepath.Join(work, "repo")
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
+	command := func(args ...string) *exec.Cmd {
+		cmd := exec.Command(binary, args...)
+		cmd.Dir = repo
+		cmd.Env = env
+		return cmd
+	}
+	must := func(args ...string) map[string]any {
+		t.Helper()
+		out, err := command(args...).CombinedOutput()
+		var response struct {
+			Result map[string]any `json:"result"`
+		}
+		if e := json.Unmarshal(out, &response); e != nil || err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
+		}
+		if nested, ok := response.Result["result"].(map[string]any); ok {
+			return nested
+		}
+		return response.Result
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+	}
+	if err := os.CopyFS(repo, os.DirFS("../../testdata/fixtures/polyglot")); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q")
+	git("add", "-A")
+	git("commit", "-qm", "base")
+	must("init")
+	t.Cleanup(func() { _ = command("daemon", "stop").Run() })
+	started := filepath.Join(work, "started")
+	checks := `[{"name":"slow","category":"mechanical","setup":null,"command":"echo $$ > ` + started + `; sleep 300","working_directory":".","env_allowlist":[],"timeout_seconds":120,"output_limit_bytes":1024}]`
+	if err := os.WriteFile(filepath.Join(repo, ".ledger", "checks.json"), []byte(checks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := must("session", "create", `{"agent_name":"author"}`)
+	sid := session["session_id"].(string)
+	intent := must("intent", "create", `{"description":"slow check","criteria":[{"id":"tests","statement":"passes","verification":{"kind":"check","check":"slow"}}]}`)
+	fork, _ := json.Marshal(map[string]any{"intent_id": intent["intent_id"], "capability_id": session["capability_id"]})
+	ws := must("workspace", "fork", "--session", sid, string(fork))
+	if err := os.WriteFile(filepath.Join(ws["path"].(string), "new.py"), []byte("x=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	propose, _ := json.Marshal(map[string]any{"workspace_id": ws["workspace_id"]})
+	proposal := must("workspace", "propose", "--session", sid, string(propose))
+	resolve, _ := json.Marshal(map[string]any{"manifest": proposal["manifest"]})
+	bound := must("evidence", "resolve", string(resolve))
+	def := bound["checks"].([]any)[0].(map[string]any)["definition_hash"]
+	run, _ := json.Marshal(map[string]any{"manifest": proposal["manifest"], "commit": proposal["commit"], "check_definition": def})
+
+	cli := command("evidence", "run", string(run))
+	if err := cli.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cli.Wait() }()
+	var pid int
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		if raw, err := os.ReadFile(started); err == nil && strings.TrimSpace(string(raw)) != "" {
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &pid); err == nil {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			_ = cli.Process.Kill()
+			t.Fatal("the check never started")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err := cli.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-waited:
+	case <-time.After(15 * time.Second):
+		_ = cli.Process.Kill()
+		t.Fatal("ledger evidence run ignored Ctrl-C")
+	}
+	// The daemon records a failed, cancelled attestation and kills the child.
+	var found string
+	for deadline := time.Now().Add(30 * time.Second); found == "" && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		_ = filepath.WalkDir(filepath.Join(repo, ".ledger", "objects"), func(path string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				if raw, _ := os.ReadFile(path); strings.Contains(string(raw), `"kind":"evidence_attestation"`) {
+					found = string(raw)
+				}
+			}
+			return nil
+		})
+	}
+	if !strings.Contains(found, `"reason":"cancelled"`) || !strings.Contains(found, `"result":"fail"`) {
+		t.Fatalf("no cancelled attestation recorded: %s", found)
+	}
+	for deadline := time.Now().Add(10 * time.Second); syscall.Kill(pid, 0) == nil; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("check process %d survived the cancelled run", pid)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(repo, ".ledger", "runtime", "verify")); len(entries) != 0 {
+		t.Fatalf("verification worktrees remain: %v", entries)
+	}
+}

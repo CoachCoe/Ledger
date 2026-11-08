@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "allow": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "deny": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "may_add_dependencies": {
+      "type": "boolean"
+    },
+    "session_id": {
+      "$ref": "../common.json#/$defs/session_id"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/timestamp"
+    },
+    "parent_capability_id": {
+      "$ref": "../common.json#/$defs/capability_id"
+    }
+  },
+  "required": [
+    "session_id",
+    "allow",
+    "deny",
+    "may_add_dependencies",
+    "expires_at",
+    "parent_capability_id"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/capability.delegate.json"
+}

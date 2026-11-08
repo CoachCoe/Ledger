@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/capability"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/lifecycle"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/selection"
 )
 
 // Validate applies the rules for publishing a new local group: everything
@@ -19,7 +22,7 @@ import (
 // run under the RecordStore lock so that state cannot change before the
 // group is published.
 func (x *Index) Validate(ctx context.Context, g Group) error {
-	if err := verify(ctx, x.db, g); err != nil {
+	if err := verify(ctx, x.conn(), g, x.caseSensitive()); err != nil {
 		return err
 	}
 	var r schema.OperationReceipt
@@ -33,7 +36,7 @@ func (x *Index) Validate(ctx context.Context, g Group) error {
 	if len(ops) > 0 {
 		return apierr.New("operation_exists", "operation %s is already committed", r.OperationID)
 	}
-	v := &validator{ctx: ctx, q: x.db, local: map[string]envelope.Object{}, objects: map[string]envelope.Object{}, sims: map[string]*Subject{}, at: r.At}
+	v := &validator{ctx: ctx, q: x.conn(), local: map[string]envelope.Object{}, objects: map[string]envelope.Object{}, sims: map[string]*Subject{}, at: r.At, sensitive: x.caseSensitive()}
 	for _, o := range g.Members {
 		v.objects[o.Hash] = o
 	}
@@ -49,12 +52,13 @@ func (x *Index) Validate(ctx context.Context, g Group) error {
 }
 
 type validator struct {
-	at      string
-	ctx     context.Context
-	q       querier
-	local   map[string]envelope.Object // creations in this group, by entity id
-	objects map[string]envelope.Object // members of this group, by hash
-	sims    map[string]*Subject        // subjects as changed by this group
+	sensitive bool
+	at        string
+	ctx       context.Context
+	q         querier
+	local     map[string]envelope.Object // creations in this group, by entity id
+	objects   map[string]envelope.Object // members of this group, by hash
+	sims      map[string]*Subject        // subjects as changed by this group
 }
 
 func (v *validator) check(o envelope.Object) error {
@@ -120,15 +124,34 @@ func (v *validator) check(o envelope.Object) error {
 		if w.BaseCommit != p.BaseCommit || w.ChangeID != p.ChangeID || w.IntentID != p.IntentID {
 			return unauthorized("manifest workspace binding differs")
 		}
-		_, err = v.subjectIn(p.IntentID, lifecycle.Intent, "open")
-		return err
+		if _, err := v.subjectIn(p.IntentID, lifecycle.Intent, "open"); err != nil {
+			return err
+		}
+		return v.checkSubmission(p.WorkspaceID)
+	case schema.KindEvidenceAttestation:
+		var p schema.EvidenceAttestation
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkAttestation(&p, signer)
+	case schema.KindSelectionDecision:
+		var p schema.SelectionDecision
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkSelection(&p, signer)
 	case schema.KindSpeculationRun:
 		var p schema.SpeculationRun
 		if err := o.Decode(&p); err != nil {
 			return err
 		}
-		_, err := v.subjectIn(p.IntentID, lifecycle.Intent, "open")
-		return err
+		return v.checkRun(&p, signer)
+	case schema.KindAttemptRecord:
+		var p schema.AttemptRecord
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkAttempt(&p, signer)
 	case schema.KindLifecycleEvent:
 		var e schema.LifecycleEvent
 		if err := o.Decode(&e); err != nil {
@@ -187,23 +210,26 @@ func (v *validator) signerActive(signer string) error {
 	if err != nil {
 		return err
 	}
-	expires, err := time.Parse(time.RFC3339Nano, c.ExpiresAt)
-	if err != nil {
-		return err
-	}
 	at, err := time.Parse(time.RFC3339Nano, v.at)
 	if err != nil {
 		return err
 	}
-	started, err := time.Parse(time.RFC3339Nano, session.StartedAt)
+	started, err := schema.ParseTimestamp(session.StartedAt)
 	if err != nil {
 		return err
 	}
 	if at.Before(started) {
 		return apierr.New("session_inactive", "operation precedes session start")
 	}
-	if !at.Before(expires) {
-		return apierr.New("capability_expired", "session %s capability expired", signer)
+	_, err = capability.Chain(c.ID, func(id string) (schema.Capability, error) {
+		p, e := v.capability(id)
+		if e != nil {
+			return schema.Capability{}, e
+		}
+		return *p, nil
+	}, v.sensitive, at)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -235,6 +261,9 @@ func (v *validator) capability(id string) (*schema.Capability, error) {
 	k, payload, err := creation(v.ctx, v.q, id)
 	if err != nil {
 		return nil, err
+	}
+	if k == "" {
+		return nil, apierr.New(CodeUnavailable, "missing capability %s", id)
 	}
 	if k != schema.KindCapability {
 		return nil, apierr.New("unknown_entity", "no capability %s", id)
@@ -353,6 +382,9 @@ func (v *validator) object(hash string, kind schema.Kind, out any) error {
 }
 
 func (v *validator) checkCapability(p *schema.Capability, signer string) error {
+	if err := capability.Validate(*p, v.sensitive); err != nil {
+		return err
+	}
 	if p.Issuer.Kind == "root" {
 		if p.Issuer.Fingerprint != signer {
 			return unauthorized("root capability %s must be signed by its issuer", p.ID)
@@ -361,6 +393,9 @@ func (v *validator) checkCapability(p *schema.Capability, signer string) error {
 	}
 	parent, err := v.capability(p.Issuer.CapabilityID)
 	if err != nil {
+		return err
+	}
+	if err := capability.Narrow(*parent, *p, v.sensitive); err != nil {
 		return err
 	}
 	if parent.SessionID != signer {
@@ -424,6 +459,21 @@ func (v *validator) checkEvent(hash string, e *schema.LifecycleEvent, signer str
 	if isSession(signer) && s.Owner != signer {
 		return unauthorized("%s does not own %s", signer, e.SubjectID)
 	}
+	switch e.SubjectKind {
+	case lifecycle.Workspace:
+		if err := v.checkRunWorkspaceEvent(e); err != nil {
+			return err
+		}
+	case lifecycle.SpeculationRun:
+		if signer != s.Owner {
+			return unauthorized("only the creator of run %s may transition it", e.SubjectID)
+		}
+		if terminalRun[e.ToState] {
+			if err := v.checkRunEnding(e.SubjectID, e.ToState); err != nil {
+				return err
+			}
+		}
+	}
 	if e.ToState == "interrupted" {
 		s.Resume = s.State
 	}
@@ -458,4 +508,199 @@ func (v *validator) checkBinding(hash string, b *schema.WorkspaceBinding, signer
 	}
 	s.BindingHead, s.Owner = hash, b.SessionID
 	return nil
+}
+
+// checkAttestation enforces what a published attestation must satisfy
+// regardless of who asks: an active verifier session that is neither the
+// manifest author nor ever a holder of its workspace, the exact bound
+// commit and tree, a check definition and criteria the intent pinned, and a
+// result consistent with the recorded phases. Readers re-derive all of this.
+func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer string) error {
+	if !isSession(signer) || p.VerifierSession != signer {
+		return unauthorized("an attestation must be signed by its verifier session")
+	}
+	var m schema.ChangeManifest
+	if err := v.object(p.Manifest, schema.KindChangeManifest, &m); err != nil {
+		return apierr.New("unknown_manifest", "no change manifest %s", p.Manifest)
+	}
+	holders, err := workspaceHolders(v.ctx, v.q, m.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if signer == m.AuthorSession || slices.Contains(holders, signer) {
+		return apierr.New("author_signed_evidence", "session %s authored or held the workspace of manifest %s", signer, p.Manifest)
+	}
+	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	if commit == "" || commit != p.Commit {
+		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+	}
+	if p.ExecutedTree != m.Tree {
+		return apierr.New("tree_mismatch", "executed tree %s is not the manifest tree %s", p.ExecutedTree, m.Tree)
+	}
+	var d schema.CheckDefinition
+	if err := v.object(p.CheckDefinition, schema.KindCheckDefinition, &d); err != nil {
+		return err
+	}
+	if d.Category != p.Category {
+		return apierr.New("invalid_attestation", "category %s differs from the pinned definition's %s", p.Category, d.Category)
+	}
+	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	if err != nil {
+		return err
+	}
+	if kind != schema.KindIntent {
+		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
+	}
+	var intent schema.Intent
+	if err := json.Unmarshal(raw, &intent); err != nil {
+		return err
+	}
+	for _, id := range p.Criteria {
+		i := slices.IndexFunc(intent.Criteria, func(c schema.Criterion) bool { return c.ID == id })
+		if i < 0 {
+			return apierr.New("invalid_attestation", "intent %s has no criterion %q", m.IntentID, id)
+		}
+		ver := intent.Criteria[i].Verification
+		switch {
+		case p.Category == "judgment" && ver.Kind != "judgment":
+			return apierr.New("invalid_attestation", "criterion %q is not a judgment criterion", id)
+		case p.Category != "judgment" && (ver.Kind != "check" || ver.DefinitionHash != p.CheckDefinition):
+			return apierr.New("invalid_attestation", "criterion %q is not pinned to check definition %s", id, p.CheckDefinition)
+		}
+	}
+	if p.Category == "judgment" {
+		// A judgment runs nothing: no phases, one criterion, and the
+		// definition record it references is the judgment definition.
+		if p.Setup != nil || p.Check != nil || len(p.Criteria) != 1 || d.Name != "judgment" {
+			return apierr.New("invalid_attestation", "a judgment names exactly one criterion, records no process phases and references its judgment definition")
+		}
+		return nil
+	}
+	if (p.Result == "pass") != (p.Reason == nil) {
+		return apierr.New("inconsistent_result", "a pass has no reason and a failure has one")
+	}
+	if p.Result == "pass" && !passingPhases(p) {
+		return apierr.New("inconsistent_result", "result pass contradicts the recorded setup and check phases")
+	}
+	return nil
+}
+
+// checkSelection enforces what a published selection decision must satisfy
+// regardless of who asks: the signer is the root or an active session that
+// did not author the manifest and is the recorded selector; the manifest is
+// the committed current proposal of a proposed workspace whose intent is
+// open; competitors are other committed manifests of the same intent; and
+// every evidence hash is a committed attestation for this exact revision.
+// The recorded criteria and contrary evidence must equal a fresh evaluation
+// of that set: a caller-supplied status that disagrees is status_mismatch.
+func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) error {
+	m, err := manifestIn(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	if p.Selector.Kind == "speculation_run" {
+		if err := v.checkRunSelection(p, m, signer); err != nil {
+			return err
+		}
+	} else {
+		wantKind := "root"
+		if isSession(signer) {
+			wantKind = "session"
+		}
+		if p.Selector.Kind != wantKind || p.Selector.ID != signer {
+			return unauthorized("the selector must be the signer %s", signer)
+		}
+		if r, err := v.runFor(m.WorkspaceID); err != nil {
+			return err
+		} else if r != nil {
+			return apierr.New("run_active", "manifest %s is a candidate of speculation run %s; only the run selects it", p.Manifest, r.ID).With("run_id", r.ID)
+		}
+	}
+	if signer == m.AuthorSession {
+		return unauthorized("the author of manifest %s cannot select it", p.Manifest)
+	}
+	if p.IntentID != m.IntentID {
+		return apierr.New("invalid_selection", "intent %s is not the intent of manifest %s", p.IntentID, p.Manifest)
+	}
+	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	if commit == "" || commit != p.Commit {
+		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+	}
+	if _, err := v.subjectIn(m.IntentID, lifecycle.Intent, "open"); err != nil {
+		return err
+	}
+	if _, err := v.subjectIn(m.WorkspaceID, lifecycle.Workspace, "proposed"); err != nil {
+		return err
+	}
+	last, err := lastProposal(v.ctx, v.q, m.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if last.Manifest != p.Manifest {
+		return apierr.New("stale_revision", "manifest %s is not the current proposal; select %s", p.Manifest, last.Manifest).With("current_manifest", last.Manifest)
+	}
+	for i, c := range p.Competitors {
+		if c == p.Manifest || (i > 0 && c <= p.Competitors[i-1]) {
+			return apierr.New("invalid_selection", "competitors must be sorted, unique and exclude the selected manifest")
+		}
+		other, err := manifestIn(v.ctx, v.q, c)
+		if err != nil {
+			return err
+		}
+		if other.IntentID != m.IntentID {
+			return apierr.New("invalid_selection", "competitor %s belongs to intent %s, not %s", c, other.IntentID, m.IntentID)
+		}
+	}
+	if !slices.IsSorted(p.Evidence) || len(slices.Compact(slices.Clone(p.Evidence))) != len(p.Evidence) {
+		return apierr.New("invalid_selection", "evidence hashes must be sorted and unique")
+	}
+	set, err := evidenceByHash(v.ctx, v.q, p.Evidence)
+	if err != nil {
+		return err
+	}
+	for _, h := range p.Evidence {
+		i := slices.IndexFunc(set, func(e selection.Evidence) bool { return e.Hash == h })
+		switch {
+		case i < 0:
+			return apierr.New("unknown_evidence", "no committed evidence attestation %s", h).With("evidence", h)
+		case set[i].Att.Manifest != p.Manifest || set[i].Att.Commit != p.Commit || set[i].Att.ExecutedTree != m.Tree:
+			return apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", h, set[i].Att.Manifest, p.Manifest).
+				With("evidence", h).With("evidence_manifest", set[i].Att.Manifest)
+		}
+	}
+	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	if err != nil {
+		return err
+	}
+	if kind != schema.KindIntent {
+		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
+	}
+	var intent schema.Intent
+	if err := json.Unmarshal(raw, &intent); err != nil {
+		return err
+	}
+	known, err := evidenceFor(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return err
+	}
+	res := selection.Evaluate(selection.Binding{Manifest: p.Manifest, Commit: p.Commit, Tree: m.Tree, Criteria: intent.Criteria}, set, known)
+	if !selection.SameStatuses(res.Criteria, p.Criteria) || !slices.Equal(res.Contrary, p.ContraryEvidence) {
+		return apierr.New("status_mismatch", "recorded criteria or contrary evidence differ from the evaluation of the recorded evidence set")
+	}
+	return nil
+}
+
+// passingPhases reports whether setup (when present) and check both exited
+// 0 without timing out.
+func passingPhases(p *schema.EvidenceAttestation) bool {
+	ok := func(ph *schema.Phase) bool {
+		return ph != nil && ph.ExitStatus != nil && *ph.ExitStatus == 0 && !ph.TimedOut
+	}
+	return (p.Setup == nil || ok(p.Setup)) && ok(p.Check)
 }

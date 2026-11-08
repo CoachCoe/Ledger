@@ -1,6 +1,6 @@
 # ADR 0015: Asynchronous speculation with frozen candidates and atomic resolution
 
-- Status: Accepted
+- Status: Accepted; implemented and refined by [ADR 0023](0023-speculation-runs.md)
 - Date: 2026-11-05
 
 ## Context

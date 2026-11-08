@@ -1,6 +1,6 @@
-# M1 observer acceptance measurements
+# Observer latency measurements
 
-The committed JSON files record local acceptance runs of the production daemon. Both runs use ten detached workspaces of [NestJS](https://github.com/nestjs/nest) at `6e83cc83c99cbac0108384392902e7230ed94843` (2,743 tracked files), with its 1,621-package, approximately 540 MB ignored dependency tree installed in every workspace. These are filesystem observer measurements, not application performance benchmarks.
+The committed JSON files record local runs of the production daemon, made before the harness was ported to Go with the same method. Both runs use ten detached workspaces of [NestJS](https://github.com/nestjs/nest) at `6e83cc83c99cbac0108384392902e7230ed94843` (2,743 tracked files), with its 1,621-package, approximately 540 MB ignored dependency tree installed in every workspace. These are filesystem observer measurements, not application performance benchmarks.
 
 The harness makes plain file edits independently in each workspace every 1–3 seconds for 60 seconds. Separate clients read cached `workspace.status` over the public Unix API every 100 ms without session ids, so reads cannot trigger observation. It includes the final debounce window and fails on any missed edit, request error, or latency above two seconds. Latencies include observation, API scheduling and reader polling. The default 500 ms debounce and 10-second fallback poll remain enabled.
 
@@ -13,16 +13,16 @@ Both runs are on the same Apple Silicon host. macOS uses FSEvents and APFS depen
 
 ## Reproduce
 
-Build Ledger with Go 1.27.3 (cgo enabled on macOS). Use a fresh disposable repository: the harness creates root/session keys under a temporary configuration directory, initializes Ledger, creates signed intents/workspaces, copies dependencies, edits files and leaves its records/results available for inspection. It stops its daemon on exit.
+Build Ledger with Go 1.27.3 (cgo enabled on macOS). Use a fresh disposable repository: the harness creates root and session keys under a temporary configuration directory, initializes Ledger, creates signed intents and workspaces, copies dependencies, edits files, and leaves its records and results available for inspection. It stops its daemon on exit.
 
 ```sh
 go build -o /tmp/ledger ./cmd/ledger
+go build -o /tmp/observerbench ./tools/observerbench
 git clone https://github.com/nestjs/nest.git /tmp/ledger-observer-nest
 git -C /tmp/ledger-observer-nest checkout 6e83cc83c99cbac0108384392902e7230ed94843
 cd /tmp/ledger-observer-nest
 npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
-cd /path/to/Ledger
-python3 tools/benchmark-observer.py /tmp/ledger /tmp/ledger-observer-nest --seconds 60
+/tmp/observerbench -seconds 60 /tmp/ledger /tmp/ledger-observer-nest
 ```
 
-The standard-library-only harness writes `.ledger/observer-benchmark.json` in that disposable repository. `--legacy-peer-deps` is needed by this pinned fixture's dependency graph. The application does not depend on Node or these packages.
+The harness uses only the public CLI and socket API and writes `.ledger/observer-benchmark.json` in that disposable repository. `--legacy-peer-deps` is needed by this pinned fixture's dependency graph. The application does not depend on Node or these packages.

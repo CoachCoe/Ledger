@@ -3,56 +3,61 @@ package core
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/schema"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
-	"time"
+
+	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
-func (s *Service) proposalMessage(ctx context.Context, w schema.Workspace, manifest, sid string) (string, error) {
-	intent, err := creation[schema.Intent](ctx, s.Store.Index, w.IntentID, schema.KindIntent)
-	if err != nil {
-		return "", err
-	}
-	summary := strings.Split(strings.ReplaceAll(intent.Description, "\r", "\n"), "\n")[0]
-	summary = strings.ReplaceAll(summary, "\x00", " ")
-	return "Ledger: " + summary + "\n\nLedger-Change: " + w.ChangeID + "\nLedger-Intent: " + w.IntentID + "\nLedger-Session: " + sid + "\nLedger-Manifest: " + manifest + "\n", nil
+// observers bounds concurrent workspace captures in one observation pass.
+const observers = 10
+
+// workspaceView is the workspace.status result. Terminal workspaces carry
+// only their identity, state and path.
+type workspaceView struct {
+	WorkspaceID string            `json:"workspace_id"`
+	State       string            `json:"state"`
+	Path        string            `json:"path"`
+	BaseCommit  string            `json:"base_commit,omitzero"`
+	WriteSet    []string          `json:"write_set,omitzero"`
+	Status      map[string]string `json:"status,omitzero"`
+	ObservedAt  string            `json:"observed_at,omitzero"`
+	Tree        string            `json:"tree,omitzero"`
 }
 
-func (s *Service) refreshWorkspace(ctx context.Context, id string) (any, error) {
-	sub, w, _, err := s.boundWorkspace(ctx, id, "")
+// observe captures w through its persistent private index and saves the
+// write set. The per-workspace lock keeps concurrent observers off the same
+// private index and stops an older capture overwriting a newer one.
+func (s *Service) observe(ctx context.Context, w schema.Workspace) (workspace.Snapshot, string, error) {
+	m, _ := s.observing.LoadOrStore(w.ID, new(sync.Mutex))
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	snap, err := s.Provider.Snapshot(ctx, w, workspace.IndexPath(s.runtimeDir(), w.ID))
 	if err != nil {
-		return nil, err
+		return snap, "", err
 	}
-	path := s.Provider.Path(id)
-	if sub.State == "closed" || sub.State == "selected" {
-		return map[string]any{"workspace_id": id, "state": sub.State, "path": path}, nil
+	if err := s.warnScope(ctx, w, snap); err != nil {
+		return snap, "", err
 	}
-	snap, err := s.Provider.Snapshot(ctx, w, workspace.IndexPath(s.Store.Dir+"/runtime", id), false)
-	if err != nil {
-		return nil, err
+	at := now()
+	if err := s.observeSymbols(ctx, w, snap, at); err != nil {
+		return snap, "", err
 	}
-	at := schema.Timestamp(time.Now())
-	if err := s.Store.Index.SaveObservation(ctx, id, path, at, snap.Status); err != nil {
-		return nil, err
-	}
-	return map[string]any{"workspace_id": id, "state": sub.State, "path": path, "base_commit": w.BaseCommit, "write_set": snap.Files, "status": snap.Status, "observed_at": at, "tree": snap.Tree}, nil
+	return snap, at, s.Store.Index.SaveObservation(ctx, w.ID, s.Provider.Path(w.ID), at, snap.Status)
 }
+
 func (s *Service) observeSession(ctx context.Context, sid string) error {
-	subjects, err := s.Store.Index.Subjects(ctx)
+	active, err := s.Store.Index.ActiveWorkspaces(ctx, sid)
 	if err != nil {
 		return err
 	}
-	for _, sub := range subjects {
-		if sub.Kind == "workspace" && sub.Owner == sid && (sub.State == "open" || sub.State == "proposed") && sub.Conflict == "" {
-			if _, err := s.refreshWorkspace(ctx, sub.ID); err != nil {
-				return err
-			}
+	for _, w := range active {
+		if _, _, err := s.observe(ctx, w); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -60,87 +65,67 @@ func (s *Service) observeSession(ctx context.Context, sid string) error {
 
 // Workspaces returns reconstructible active worktree paths for watcher setup.
 func (s *Service) Workspaces(ctx context.Context) (map[string]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	subjects, err := s.Store.Index.Subjects(ctx)
+	active, err := s.Store.Index.ActiveWorkspaces(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	paths := map[string]string{}
-	for _, sub := range subjects {
-		if sub.Kind == "workspace" && (sub.State == "open" || sub.State == "proposed") && sub.Conflict == "" {
-			paths[sub.ID] = s.Provider.Path(sub.ID)
-		}
+	paths := make(map[string]string, len(active))
+	for _, w := range active {
+		paths[w.ID] = s.Provider.Path(w.ID)
 	}
 	return paths, nil
 }
 
-// Observe refreshes active workspaces on watcher events and the fallback poll.
+// Observe refreshes every active workspace, for watcher events and the
+// fallback poll.
 func (s *Service) Observe(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	objects, err := s.Store.Index.Objects(ctx, schema.KindWorkspace)
+	active, err := s.Store.Index.ActiveWorkspaces(ctx, "")
 	if err != nil {
 		return err
 	}
-	type observed struct {
-		w        schema.Workspace
-		snapshot workspace.Snapshot
-		at       string
-		err      error
-	}
-	results := make(chan observed, len(objects))
-	slots := make(chan struct{}, 10)
+	errs := make([]error, len(active))
+	slots := make(chan struct{}, observers)
 	var wg sync.WaitGroup
-	for _, raw := range objects {
-		var w schema.Workspace
-		if err := json.Unmarshal(raw, &w); err != nil {
-			return err
-		}
-		sub, err := s.Store.Index.Subject(ctx, w.ID)
-		if err != nil {
-			return err
-		}
-		if sub == nil || sub.Conflict != "" || (sub.State != "open" && sub.State != "proposed") {
-			continue
-		}
+	for i, w := range active {
 		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			snap, err := s.Provider.Snapshot(ctx, w, workspace.IndexPath(s.Store.Dir+"/runtime", w.ID), false)
-			results <- observed{w: w, snapshot: snap, at: schema.Timestamp(time.Now()), err: err}
+			_, _, errs[i] = s.observe(ctx, w)
 		})
 	}
 	wg.Wait()
-	close(results)
-	var problems []error
-	for result := range results {
-		if result.err != nil {
-			problems = append(problems, result.err)
-			continue
-		}
-		if err := s.Store.Index.SaveObservation(ctx, result.w.ID, s.Provider.Path(result.w.ID), result.at, result.snapshot.Status); err != nil {
-			problems = append(problems, err)
-		}
-	}
-	return errors.Join(problems...)
-
+	s.coordMu.Lock()
+	leaseErr := s.expireLeases(ctx)
+	s.coordMu.Unlock()
+	errs = append(errs, leaseErr)
+	return errors.Join(errs...)
 }
 
-func (s *Service) workspaceStatus(ctx context.Context, id string) (any, error) {
+// workspaceStatus returns the cached observation, capturing one only if the
+// workspace has never been observed.
+func (s *Service) workspaceStatus(ctx context.Context, id string) (workspaceView, error) {
 	sub, w, _, err := s.boundWorkspace(ctx, id, "")
 	if err != nil {
-		return nil, err
+		return workspaceView{}, err
 	}
+	view := workspaceView{WorkspaceID: id, State: sub.State, Path: s.Provider.Path(id)}
 	if sub.State == "closed" || sub.State == "selected" {
-		return map[string]any{"workspace_id": id, "state": sub.State, "path": s.Provider.Path(id)}, nil
+		return view, nil
 	}
+	view.BaseCommit = w.BaseCommit
 	status, at, err := s.Store.Index.Observation(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.refreshWorkspace(ctx, id)
+		snap, at, err := s.observe(ctx, w)
+		if err != nil {
+			return workspaceView{}, err
+		}
+		view.WriteSet, view.Status, view.ObservedAt, view.Tree = snap.Files, snap.Status, at, snap.Tree
+		return view, nil
 	}
 	if err != nil {
-		return nil, err
+		return workspaceView{}, err
 	}
-	return map[string]any{"workspace_id": id, "state": sub.State, "path": s.Provider.Path(id), "base_commit": w.BaseCommit, "write_set": slices.Sorted(maps.Keys(status)), "status": status, "observed_at": at}, nil
+	view.WriteSet = append([]string{}, slices.Sorted(maps.Keys(status))...)
+	view.Status, view.ObservedAt = status, at
+	return view, nil
 }

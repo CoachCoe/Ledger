@@ -2,9 +2,17 @@ package record
 
 import (
 	"context"
+
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/index"
+)
+
+// Effect kinds.
+const (
+	EffectRef            = "ref"
+	EffectWorktreeAdd    = "worktree_add"
+	EffectWorktreeRemove = "worktree_remove"
 )
 
 // Effect is a frozen external side effect recorded before execution.
@@ -17,8 +25,13 @@ type Effect struct {
 	Ref         string `json:"ref,omitempty"`
 	Old         string `json:"old,omitempty"`
 	New         string `json:"new,omitempty"`
-	After       bool   `json:"after"`
+	// Tree, on a worktree removal, is a retained tree (a submitted
+	// candidate) whose exact content may be removed even though uncommitted.
+	Tree  string `json:"tree,omitempty"`
+	After bool   `json:"after"`
 }
+
+// EffectsFunc is a BuildFunc that also returns the operation's effects.
 type EffectsFunc func(*index.Index) (any, []envelope.Object, []Effect, error)
 
 // DoEffects prepares signed records and frozen external effects under the

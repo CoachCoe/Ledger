@@ -67,6 +67,16 @@ func NewID(prefix string) string {
 	return prefix + idEncoding.EncodeToString(b[:])
 }
 
+// ShortID abbreviates an entity id to its prefix and first 8 random
+// characters (40 bits) for display names such as proposal branches.
+func ShortID(id string) string {
+	_, random, ok := strings.Cut(id, "_")
+	if !ok || len(random) <= 8 {
+		return id
+	}
+	return id[:len(id)-len(random)+8]
+}
+
 // Timestamp formats t as a record timestamp: UTC, millisecond precision.
 func Timestamp(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z")
@@ -75,15 +85,6 @@ func Timestamp(t time.Time) string {
 // ParseTimestamp parses a record timestamp.
 func ParseTimestamp(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
-}
-
-// IDPrefix returns the entity prefix of id, including the underscore.
-func IDPrefix(id string) string {
-	i := strings.IndexByte(id, '_')
-	if i < 0 {
-		return ""
-	}
-	return id[:i+1]
 }
 
 type RootKey struct {
@@ -296,13 +297,32 @@ type Strategy struct {
 	Spec string `json:"spec"`
 }
 
+// CandidateBinding names one attempt workspace of a speculation run.
+type CandidateBinding struct {
+	WorkspaceID string `json:"workspace_id"`
+	Strategy    string `json:"strategy"`
+}
+
+// ScorerDefinition is a run's pinned tiebreaker. A command scorer runs
+// Command; a submission scorer waits for scores through the API.
+type ScorerDefinition struct {
+	Kind           string   `json:"kind"`
+	Command        *string  `json:"command"`
+	EnvAllowlist   []string `json:"env_allowlist"`
+	TimeoutSeconds *int64   `json:"timeout_seconds"`
+}
+
 type SpeculationRun struct {
-	ID         string     `json:"id"`
-	IntentID   string     `json:"intent_id"`
-	Strategies []Strategy `json:"strategies"`
-	Scorer     string     `json:"scorer"`
-	Deadline   string     `json:"deadline"`
-	CreatedAt  string     `json:"created_at"`
+	ID               string             `json:"id"`
+	IntentID         string             `json:"intent_id"`
+	Strategies       []Strategy         `json:"strategies"`
+	Attempts         []CandidateBinding `json:"attempts"`
+	Checks           []string           `json:"checks"`
+	Scorer           string             `json:"scorer"`
+	ScorerDefinition ScorerDefinition   `json:"scorer_definition"`
+	BaseCommit       string             `json:"base_commit"`
+	Deadline         string             `json:"deadline"`
+	CreatedAt        string             `json:"created_at"`
 }
 
 type OperationReceipt struct {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -192,7 +193,7 @@ func TestWorkspaceOwnershipAndRebinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if digest(t, s) != before || subject(t, s, ws).Owner != b.ID() {
-		t.Fatal("ownership not reconstructed by reindex")
+		t.Fatalf("ownership not reconstructed by reindex: %+v", subject(t, s, ws))
 	}
 }
 
@@ -253,4 +254,31 @@ func TestStaleRefCacheFallsBack(t *testing.T) {
 	if !maps.Equal(refHashes(t, s), diskHashes(t, s)) {
 		t.Fatal("ref and disk differ")
 	}
+}
+
+func TestM2DelegationReplayAndHistoricalExpiry(t *testing.T) {
+	// AC-164–165: parent expiry, widening, wrong holder and recorded time.
+	s := newStore(t)
+	a, b := startSession(t, s), startSession(t, s)
+	parent := capability(t, a.capID, a.ID(), root)
+	p := mustPayload[schema.Capability](t, parent)
+	makeChild := func(allow []string, expires string, signer identity.Signer) envelope.Object {
+		return seal(t, schema.KindCapability, schema.Capability{ID: schema.NewID(schema.PrefixCapability), SessionID: b.ID(), Issuer: schema.Issuer{Kind: "capability", CapabilityID: p.ID}, Allow: allow, Deny: []string{}, ExpiresAt: expires, CreatedAt: schema.Timestamp(fixedNow)}, signer)
+	}
+	good := makeChild([]string{"src/**"}, "2026-11-06T11:00:00.000Z", a)
+	if _, err := s.Do(ctx, as(a, "delegate"), members(good)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Do(ctx, as(a, "expiry-widen"), members(makeChild([]string{"src/**"}, "2026-11-07T12:00:00.000Z", a)))
+	expectCode(t, err, "capability_widening")
+	_, err = s.Do(ctx, as(b, "wrong-holder"), members(makeChild([]string{"src/**"}, "2026-11-06T11:00:00.000Z", b)))
+	expectCode(t, err, "unauthorized")
+	// Replay verifies historical claims even when the verifier wall clock is
+	// later than every capability in the chain.
+	s.opts.Now = func() time.Time { return fixedNow.Add(7 * 24 * time.Hour) }
+	if _, err := s.Reindex(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Do(ctx, as(a, "expired-parent"), members(makeChild([]string{"src/**"}, "2026-11-06T11:00:00.000Z", a)))
+	expectCode(t, err, "capability_expired")
 }

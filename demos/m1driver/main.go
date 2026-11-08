@@ -3,10 +3,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,9 +19,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func run() error {
 	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: m1driver <ledger-binary>")
+		return errors.New("usage: m1driver <ledger-binary>")
 	}
 	binary, err := filepath.Abs(os.Args[1])
 	if err != nil {
@@ -141,7 +144,7 @@ func run() error {
 	fmt.Println("ok: detached workspace, exact fork retry, shell edit observed within two seconds")
 	var manifests []string
 	var commits []string
-	for revision := 0; revision < 3; revision++ {
+	for revision := range 3 {
 		if revision > 0 {
 			if _, err := ledger("workspace", "rework", "--session", sid, ws); err != nil {
 				return err
@@ -206,6 +209,15 @@ func run() error {
 	if _, err := ledger("system", "status"); err != nil {
 		return err
 	}
+	// A root read returns the cached observation, so this checks the
+	// daemon re-observed on start rather than on this call.
+	status, err := ledger("workspace", "status", ws)
+	if err != nil {
+		return err
+	}
+	if paths, _ := status["write_set"].([]any); !slices.Contains(paths, any("later.py")) {
+		return fmt.Errorf("edit made while stopped not observed on restart: %v", paths)
+	}
 	if _, err := ledger("workspace", "rework", "--session", sid, ws); err == nil {
 		return fmt.Errorf("lost session still signs")
 	}
@@ -226,20 +238,28 @@ func run() error {
 	if _, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil {
 		return err
 	}
-	fmt.Println("ok: restart preserves edits, ends lost-key authority, and explicitly rebinds a replacement session")
-	// Closing preserves dirty user files and reports cleanup separately.
+	fmt.Println("ok: restart observes and preserves edits, ends lost-key authority, and explicitly rebinds a replacement session")
+	// An edit after the last proposal is recorded nowhere, so closing keeps
+	// it and reports cleanup separately.
+	if err := os.WriteFile(filepath.Join(path, "later.py"), []byte("x = 2\n"), 0600); err != nil {
+		return err
+	}
 	if _, err := ledger("workspace", "close", "--session", replacement, payload(map[string]any{"workspace_id": wid, "reason": "demo_complete"})); err == nil {
 		return fmt.Errorf("dirty cleanup should be pending")
 	}
-	status, err := ledger("workspace", "status", ws)
+	status, err = ledger("workspace", "status", ws)
 	if err != nil {
 		return err
 	}
 	if status["state"] != "closed" {
 		return fmt.Errorf("close was not committed")
 	}
-	if _, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil {
+	raw, err := os.ReadFile(filepath.Join(path, "later.py"))
+	if err != nil {
 		return fmt.Errorf("close deleted user edits: %w", err)
+	}
+	if string(raw) != "x = 2\n" {
+		return fmt.Errorf("close changed user edits: %q", raw)
 	}
 	report, err := ledger("recover")
 	if err != nil {
@@ -248,7 +268,7 @@ func run() error {
 	if pending, ok := report["cleanup_pending"].([]any); !ok || len(pending) == 0 {
 		return fmt.Errorf("missing cleanup-pending report")
 	}
-	fmt.Println("ok: close is durable, dirty user files survive, cleanup remains explicitly pending")
+	fmt.Println("ok: close is durable, unproposed edits survive, cleanup remains explicitly pending")
 	fmt.Println("M1 demo passed.")
 	return nil
 }

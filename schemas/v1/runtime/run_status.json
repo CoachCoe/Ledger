@@ -3,16 +3,12 @@
   "$id": "https://schemas.ledger.invalid/v1/runtime/run_status.json",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "run_id",
-    "state",
-    "deadline",
-    "attempts",
-    "selection"
-  ],
   "properties": {
     "run_id": {
       "$ref": "../common.json#/$defs/run_id"
+    },
+    "intent_id": {
+      "$ref": "../common.json#/$defs/intent_id"
     },
     "state": {
       "enum": [
@@ -24,22 +20,75 @@
         "interrupted"
       ]
     },
+    "resume": {
+      "anyOf": [
+        {
+          "enum": [
+            "collecting",
+            "evaluating"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "deadline": {
       "$ref": "../common.json#/$defs/timestamp"
+    },
+    "deadline_passed": {
+      "type": "boolean"
+    },
+    "scorer": {
+      "$ref": "../common.json#/$defs/hash"
+    },
+    "scorer_kind": {
+      "enum": [
+        "command",
+        "submission"
+      ]
+    },
+    "checks": {
+      "$ref": "../common.json#/$defs/hashes"
+    },
+    "base_commit": {
+      "$ref": "../common.json#/$defs/git_oid"
     },
     "attempts": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "workspace_id",
-          "manifest",
-          "submitted"
-        ],
         "properties": {
           "workspace_id": {
             "$ref": "../common.json#/$defs/workspace_id"
+          },
+          "strategy": {
+            "$ref": "../common.json#/$defs/name"
+          },
+          "workspace_state": {
+            "enum": [
+              "open",
+              "proposed",
+              "selected",
+              "closed"
+            ]
+          },
+          "session_id": {
+            "$ref": "../common.json#/$defs/session_id"
+          },
+          "submitted": {
+            "type": "boolean"
           },
           "manifest": {
             "anyOf": [
@@ -51,11 +100,67 @@
               }
             ]
           },
-          "submitted": {
-            "type": "boolean"
+          "commit": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/git_oid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt_record": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "selected",
+                  "failed_criteria",
+                  "lost_tiebreaker",
+                  "timeout",
+                  "cancelled",
+                  "interrupted",
+                  "not_proposed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
-        "title": "Attempt status"
+        "required": [
+          "workspace_id",
+          "strategy",
+          "workspace_state",
+          "session_id",
+          "submitted",
+          "manifest",
+          "commit",
+          "branch",
+          "attempt_record",
+          "outcome"
+        ]
       }
     },
     "selection": {
@@ -69,5 +174,20 @@
       ]
     }
   },
+  "required": [
+    "run_id",
+    "intent_id",
+    "state",
+    "resume",
+    "reason",
+    "deadline",
+    "deadline_passed",
+    "scorer",
+    "scorer_kind",
+    "checks",
+    "base_commit",
+    "attempts",
+    "selection"
+  ],
   "title": "Speculation run status"
 }

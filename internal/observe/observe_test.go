@@ -2,10 +2,11 @@ package observe
 
 import (
 	"context"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 func TestIgnoredDependencyFilterInvalidatesOnRulesAndKeepsTrackedFiles(t *testing.T) {

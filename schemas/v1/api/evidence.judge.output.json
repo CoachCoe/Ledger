@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/evidence.judge.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "$ref": "response.json#/$defs/mutation_result",
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "attestation": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "check_definition": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "manifest": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "commit": {
+              "$ref": "../common.json#/$defs/git_oid"
+            },
+            "criterion_id": {
+              "$ref": "../common.json#/$defs/name"
+            },
+            "result": {
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "reviewer_session": {
+              "$ref": "../common.json#/$defs/session_id"
+            },
+            "reviewer_kind": {
+              "enum": [
+                "human",
+                "agent",
+                "service"
+              ]
+            }
+          },
+          "required": [
+            "attestation",
+            "check_definition",
+            "manifest",
+            "commit",
+            "criterion_id",
+            "result",
+            "reviewer_session",
+            "reviewer_kind"
+          ]
+        }
+      }
+    }
+  }
+}

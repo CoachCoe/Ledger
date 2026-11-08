@@ -1,11 +1,17 @@
 version: "2"
 linters:
   enable:
+    - copyloopvar
     - errorlint
+    - gocritic
     - gosec
+    - intrange
     - misspell
+    - predeclared
     - unconvert
     - unparam
+    - usestdlibvars
+    - wastedassign
   settings:
     errcheck:
       exclude-functions:
@@ -29,3 +35,11 @@ linters:
     rules:
       - path: _test\.go
         linters: [gosec, errcheck]
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/CoachCoe/Ledger

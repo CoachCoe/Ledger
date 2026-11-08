@@ -3,26 +3,34 @@
   "$id": "https://schemas.ledger.invalid/v1/runtime/run_handoff.json",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "run_id",
-    "attempts"
-  ],
   "properties": {
     "run_id": {
       "$ref": "../common.json#/$defs/run_id"
     },
+    "intent_id": {
+      "$ref": "../common.json#/$defs/intent_id"
+    },
+    "state": {
+      "const": "collecting"
+    },
+    "deadline": {
+      "$ref": "../common.json#/$defs/timestamp"
+    },
+    "scorer": {
+      "$ref": "../common.json#/$defs/hash"
+    },
+    "base_commit": {
+      "$ref": "../common.json#/$defs/git_oid"
+    },
+    "checks": {
+      "$ref": "../common.json#/$defs/hashes"
+    },
     "attempts": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "workspace_id",
-          "session_id",
-          "capability_id",
-          "strategy",
-          "path"
-        ],
         "properties": {
           "workspace_id": {
             "$ref": "../common.json#/$defs/workspace_id"
@@ -36,14 +44,33 @@
           "strategy": {
             "$ref": "../common.json#/$defs/name"
           },
+          "spec": {
+            "$ref": "../common.json#/$defs/text"
+          },
           "path": {
             "$ref": "../common.json#/$defs/path"
           }
         },
-        "title": "Attempt handoff"
-      },
-      "minItems": 1
+        "required": [
+          "workspace_id",
+          "session_id",
+          "capability_id",
+          "strategy",
+          "spec",
+          "path"
+        ]
+      }
     }
   },
+  "required": [
+    "run_id",
+    "intent_id",
+    "state",
+    "deadline",
+    "scorer",
+    "base_commit",
+    "checks",
+    "attempts"
+  ],
   "title": "Speculation run handoff"
 }

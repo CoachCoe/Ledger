@@ -7,6 +7,15 @@
     },
     "operation": {
       "enum": [
+        "bundle.import",
+        "bundle.export",
+        "bundle.verify",
+        "system.recover",
+        "system.reindex",
+        "history.why",
+        "history.attempts",
+        "history.dependents",
+        "coordination.nearby",
         "daemon.stop",
         "session.create",
         "session.end",
@@ -14,12 +23,34 @@
         "intent.create",
         "intent.close",
         "intent.status",
+        "evidence.resolve",
+        "evidence.run",
+        "evidence.judge",
+        "evidence.isIndependent",
+        "intent.criteriaStatus",
+        "selection.record",
         "workspace.fork",
+        "workspace.write",
         "workspace.status",
         "workspace.propose",
         "workspace.rework",
         "workspace.close",
-        "system.status"
+        "system.status",
+        "capability.issue",
+        "capability.delegate",
+        "coordination.notifications",
+        "coordination.ack",
+        "coordination.lease",
+        "coordination.release",
+        "coordination.leases",
+        "coordination.status",
+        "speculation.start",
+        "speculation.submit",
+        "speculation.status",
+        "speculation.evaluate",
+        "speculation.score",
+        "speculation.resume",
+        "speculation.cancel"
       ]
     },
     "operation_id": {
@@ -53,9 +84,22 @@
           "operation": {
             "not": {
               "enum": [
+                "bundle.verify",
+                "history.why",
+                "history.attempts",
+                "history.dependents",
+                "coordination.nearby",
+                "evidence.resolve",
+                "evidence.isIndependent",
+                "intent.criteriaStatus",
                 "intent.status",
                 "system.status",
-                "workspace.status"
+                "workspace.status",
+                "coordination.notifications",
+                "coordination.ack",
+                "coordination.leases",
+                "coordination.status",
+                "speculation.status"
               ]
             }
           }

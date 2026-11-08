@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/bundle.import.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "bundle": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trust": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "trust_file": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "bundle",
+    "trust"
+  ]
+}

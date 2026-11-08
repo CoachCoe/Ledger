@@ -50,7 +50,7 @@ func cmdReindex(args []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		digest, err := s.Index.Digest()
+		digest, err := s.Index.Digest(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +70,7 @@ func cmdStatus(args []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		digest, err := s.Index.Digest()
+		digest, err := s.Index.Digest(ctx)
 		if err != nil {
 			return nil, err
 		}

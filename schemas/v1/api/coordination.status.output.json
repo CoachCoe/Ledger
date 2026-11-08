@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/coordination.status.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "const": true
+        },
+        "observed_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "snapshot_digest": {
+          "$ref": "../common.json#/$defs/hash"
+        },
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspace_id"
+        },
+        "analysis": {"$ref":"../runtime/symbol_analysis.json"}
+      },
+      "required": [
+        "runtime",
+        "observed_at",
+        "snapshot_digest",
+        "workspace_id",
+        "analysis"
+      ]
+    }
+  }
+}

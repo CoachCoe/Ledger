@@ -5,10 +5,11 @@ package observe
 import (
 	"context"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 type WorkspaceObserver interface{ Close() error }
@@ -24,6 +25,7 @@ type Manager struct {
 func New(disabled bool, notify func()) *Manager {
 	return &Manager{watches: map[string]WorkspaceObserver{}, paths: map[string]string{}, Notify: notify, Errors: make(chan error, 1), Disabled: disabled}
 }
+
 func (m *Manager) Sync(paths map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -57,6 +59,7 @@ func (m *Manager) Sync(paths map[string]string) error {
 	}
 	return nil
 }
+
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -67,6 +70,7 @@ func (m *Manager) Close() error {
 	}
 	return errors.Join(errs...)
 }
+
 func ignored(ctx context.Context, root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
@@ -101,6 +105,7 @@ func newFilter(root string) (*filter, error) {
 	}
 	return f, nil
 }
+
 func (f *filter) ignored(ctx context.Context, path string) bool {
 	rel, err := filepath.Rel(f.root, path)
 	if err != nil {

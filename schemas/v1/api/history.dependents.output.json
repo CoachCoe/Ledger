@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/history.dependents.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scope",
+            "verification",
+            "receipt_missing_members",
+            "pending_records",
+            "record_problems"
+          ],
+          "properties": {
+            "scope": {
+              "const": "indexed_committed_records"
+            },
+            "verification": {
+              "const": "not_performed"
+            },
+            "receipt_missing_members": {
+              "$ref": "../common.json#/$defs/hashes"
+            },
+            "pending_records": {
+              "$ref": "../common.json#/$defs/hashes"
+            },
+            "record_problems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hash",
+                  "code",
+                  "error"
+                ],
+                "properties": {
+                  "hash": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "subject_conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "reason",
+              "creation",
+              "detail"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "creation": {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              "detail": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "../common.json#/$defs/hashes"
+                }
+              }
+            }
+          }
+        },
+        "operation_conflicts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "../common.json#/$defs/hashes"
+          }
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "manifest": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "hash": {
+                    "$ref": "../common.json#/$defs/hash"
+                  },
+                  "kind": {
+                    "const": "change_manifest"
+                  },
+                  "payload": {
+                    "$ref": "../change_manifest.json"
+                  }
+                },
+                "required": [
+                  "hash",
+                  "kind",
+                  "payload"
+                ]
+              },
+              "selections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "hash": {
+                      "$ref": "../common.json#/$defs/hash"
+                    },
+                    "kind": {
+                      "const": "selection_decision"
+                    },
+                    "payload": {
+                      "$ref": "../selection_decision.json"
+                    }
+                  },
+                  "required": [
+                    "hash",
+                    "kind",
+                    "payload"
+                  ]
+                }
+              },
+              "symbols": {
+                "$ref": "../common.json#/$defs/symbols"
+              },
+              "confidence": {
+                "const": "manifest_cooccurrence"
+              }
+            },
+            "required": [
+              "manifest",
+              "selections",
+              "symbols",
+              "confidence"
+            ]
+          }
+        }
+      },
+      "required": [
+        "coverage",
+        "subject_conflicts",
+        "operation_conflicts",
+        "records"
+      ]
+    }
+  }
+}

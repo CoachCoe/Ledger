@@ -1,9 +1,11 @@
 package api
 
 import (
+	"slices"
+	"testing"
+
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"testing"
 )
 
 func TestProtocolRejectsInvalidAndUnknownInput(t *testing.T) {
@@ -16,7 +18,7 @@ func TestProtocolRejectsInvalidAndUnknownInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*Request){
-		"version": func(r *Request) { r.Version = 2 }, "operation": func(r *Request) { r.Operation = "unknown" }, "id": func(r *Request) { r.OperationID = "" }, "extra": func(r *Request) { r.Input = []byte(`{"allow":["src/**"]}`) }, "malformed": func(r *Request) { r.Input = []byte(`{"model":1}`) },
+		"version": func(r *Request) { r.Version = 2 }, "operation": func(r *Request) { r.Operation = "unknown" }, "id": func(r *Request) { r.OperationID = "" }, "extra": func(r *Request) { r.Input = []byte(`{"unknown":true}`) }, "malformed": func(r *Request) { r.Input = []byte(`{"model":1}`) },
 	} {
 		r := good
 		mutate(&r)
@@ -68,6 +70,31 @@ func TestOutputSchemasRemainClosed(t *testing.T) {
 		}
 		if err := schema.ValidateAPI(name, []byte(`{"api_version":1,"ok":false,"error":{"code":"test","message":"test","extra":true}}`)); err == nil {
 			t.Fatal("unknown error property accepted")
+		}
+	}
+}
+
+func TestReadOnlyOperationsComeFromTheRequestSchema(t *testing.T) {
+	ops, err := Operations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readOnly) == 0 {
+		t.Fatal("no read-only operations")
+	}
+	for op := range readOnly {
+		if !slices.Contains(ops, op) {
+			t.Errorf("read-only %s is not an operation", op)
+		}
+	}
+	for _, op := range []string{"system.status", "history.why", "coordination.ack", "speculation.status"} {
+		if !ReadOnly(op) {
+			t.Errorf("%s needs no operation id", op)
+		}
+	}
+	for _, op := range []string{"workspace.propose", "speculation.score", "bundle.import", "workspace.write"} {
+		if ReadOnly(op) {
+			t.Errorf("%s is a mutation", op)
 		}
 	}
 }

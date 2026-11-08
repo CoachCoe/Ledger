@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/evidence_run.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "state",
+    "manifest",
+    "commit",
+    "tree",
+    "worktree_path"
+  ],
+  "properties": {
+    "run_id": {
+      "$ref": "../common.json#/$defs/run_id"
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "preparing",
+        "ready",
+        "running",
+        "published",
+        "interrupted",
+        "aborted"
+      ]
+    },
+    "manifest": {
+      "$ref": "../common.json#/$defs/hash"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "tree": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "check_definition": {
+      "type": "string"
+    },
+    "worktree_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verifier_session": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "title": "Evidence run journal"
+}

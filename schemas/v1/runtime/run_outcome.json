@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/run_outcome.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "$ref": "../common.json#/$defs/run_id"
+    },
+    "state": {
+      "enum": [
+        "resolved",
+        "cancelled"
+      ]
+    },
+    "selection": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "winner": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workspace_id": {
+              "$ref": "../common.json#/$defs/workspace_id"
+            },
+            "manifest": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "commit": {
+              "$ref": "../common.json#/$defs/git_oid"
+            },
+            "branch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "manifest",
+            "commit",
+            "branch"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "scores": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "$ref": "../common.json#/$defs/workspace_id"
+          },
+          "strategy": {
+            "$ref": "../common.json#/$defs/name"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/git_oid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "selected",
+              "failed_criteria",
+              "lost_tiebreaker",
+              "timeout",
+              "cancelled",
+              "interrupted",
+              "not_proposed"
+            ]
+          },
+          "attempt_record": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selection": {
+            "$ref": "../common.json#/$defs/hash"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failed_criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/name"
+            }
+          }
+        },
+        "required": [
+          "workspace_id",
+          "strategy",
+          "manifest",
+          "commit",
+          "outcome",
+          "attempt_record",
+          "score",
+          "failed_criteria"
+        ]
+      }
+    },
+    "accepted": {
+      "const": false
+    },
+    "merged": {
+      "const": false
+    }
+  },
+  "required": [
+    "run_id",
+    "state",
+    "selection",
+    "winner",
+    "scores",
+    "attempts",
+    "accepted",
+    "merged"
+  ],
+  "title": "Speculation run outcome"
+}

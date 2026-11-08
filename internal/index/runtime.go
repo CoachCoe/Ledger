@@ -5,29 +5,55 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"slices"
+
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
-// Objects returns committed objects of kind in content-hash order.
-func (x *Index) Objects(ctx context.Context, kind schema.Kind) (map[string][]byte, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT hash,payload FROM objects WHERE kind=? ORDER BY hash`, kind)
+// ActiveWorkspaces returns the creation records of unconflicted open or
+// proposed workspaces, only those currently bound to owner if it is set.
+func (x *Index) ActiveWorkspaces(ctx context.Context, owner string) ([]schema.Workspace, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT c.payload FROM subjects s JOIN creations c ON c.hash=s.creation
+ WHERE s.kind='workspace' AND s.state IN ('open','proposed') AND s.conflict='' AND (?='' OR s.owner=?) ORDER BY s.id`, owner, owner)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string][]byte{}
+	var out []schema.Workspace
 	for rows.Next() {
-		var h, p string
-		if err := rows.Scan(&h, &p); err != nil {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		out[h] = []byte(p)
+		var w schema.Workspace
+		if err := json.Unmarshal(raw, &w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }
+
+// HasChildIntent reports whether any committed intent names id as its parent.
+func (x *Index) HasChildIntent(ctx context.Context, id string) (bool, error) {
+	return x.exists(ctx, `SELECT 1 FROM objects WHERE kind='intent' AND json_extract(payload,'$.parent_id')=?`, id)
+}
+
+// IntentHasChange reports whether any committed change manifest attaches to id.
+func (x *Index) IntentHasChange(ctx context.Context, id string) (bool, error) {
+	return x.exists(ctx, `SELECT 1 FROM objects WHERE kind='change_manifest' AND json_extract(payload,'$.intent_id')=?`, id)
+}
+
+func (x *Index) exists(ctx context.Context, query string, args ...any) (bool, error) {
+	var found bool
+	err := x.conn().QueryRowContext(ctx, `SELECT EXISTS(`+query+`)`, args...).Scan(&found)
+	return found, err
+}
+
+// SaveObservation replaces a workspace's runtime write set.
 func (x *Index) SaveObservation(ctx context.Context, id, path, at string, status map[string]string) error {
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.conn().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -52,7 +78,7 @@ func (x *Index) Binding(ctx context.Context, s *Subject, w schema.Workspace) (st
 		return w.SessionID, w.CapabilityID, nil
 	}
 	var raw string
-	if err := x.db.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, s.BindingHead).Scan(&raw); err != nil {
+	if err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, s.BindingHead).Scan(&raw); err != nil {
 		return "", "", err
 	}
 	var b schema.WorkspaceBinding
@@ -65,10 +91,10 @@ func (x *Index) Binding(ctx context.Context, s *Subject, w schema.Workspace) (st
 // Observation reads the last persisted runtime write set without touching files.
 func (x *Index) Observation(ctx context.Context, id string) (map[string]string, string, error) {
 	var at string
-	if err := x.db.QueryRowContext(ctx, `SELECT observed_at FROM workspace_paths WHERE workspace_id=?`, id).Scan(&at); err != nil {
+	if err := x.conn().QueryRowContext(ctx, `SELECT observed_at FROM workspace_paths WHERE workspace_id=?`, id).Scan(&at); err != nil {
 		return nil, "", err
 	}
-	rows, err := x.db.QueryContext(ctx, `SELECT path,status FROM write_sets WHERE workspace_id=? ORDER BY path`, id)
+	rows, err := x.conn().QueryContext(ctx, `SELECT path,status FROM write_sets WHERE workspace_id=? ORDER BY path`, id)
 	if err != nil {
 		return nil, "", err
 	}
@@ -84,33 +110,44 @@ func (x *Index) Observation(ctx context.Context, id string) (map[string]string, 
 	return status, at, rows.Err()
 }
 
-// ProposalCommit follows the accepted lifecycle chain to the latest proposal
+// Proposal is the commit and branch a workspace's latest proposal published.
+type Proposal struct {
+	Manifest string `json:"manifest"`
+	Commit   string `json:"commit"`
+	Branch   string `json:"branch"`
+}
+
+// LastProposal follows the accepted lifecycle chain to the latest proposal
 // receipt. The branch's current tip is not authority to overwrite external work.
-func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
-	sub, err := x.Subject(ctx, id)
+func (x *Index) LastProposal(ctx context.Context, id string) (Proposal, error) {
+	return lastProposal(ctx, x.conn(), id)
+}
+
+func lastProposal(ctx context.Context, q querier, id string) (Proposal, error) {
+	sub, err := loadSubject(ctx, q, id)
 	if err != nil {
-		return "", err
+		return Proposal{}, err
 	}
 	if sub == nil {
-		return "", apierr.New("unknown_entity", "no workspace %s", id)
+		return Proposal{}, apierr.New("unknown_entity", "no workspace %s", id)
 	}
 	head := sub.Head
 	for head != "" {
 		var raw string
-		if err := x.db.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
-			return "", err
+		if err := q.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=?`, head).Scan(&raw); err != nil {
+			return Proposal{}, err
 		}
 		var event schema.LifecycleEvent
 		if err := json.Unmarshal([]byte(raw), &event); err != nil {
-			return "", err
+			return Proposal{}, err
 		}
 		if event.ToState == "proposed" {
-			rows, err := x.db.QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
+			rows, err := q.QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation IN ('workspace.propose','speculation.submit')`, head)
 			if err != nil {
-				return "", err
+				return Proposal{}, err
 			}
 			var result struct {
-				Commit      string `json:"commit"`
+				Proposal    `json:",inline"`
 				WorkspaceID string `json:"workspace_id"`
 			}
 			count := 0
@@ -118,36 +155,40 @@ func (x *Index) ProposalCommit(ctx context.Context, id string) (string, error) {
 				var raw string
 				if err := rows.Scan(&raw); err != nil {
 					rows.Close()
-					return "", err
+					return Proposal{}, err
 				}
 				if err := json.Unmarshal([]byte(raw), &result); err != nil {
 					rows.Close()
-					return "", err
+					return Proposal{}, err
 				}
 				count++
 			}
 			rows.Close()
 			if err := rows.Err(); err != nil {
-				return "", err
+				return Proposal{}, err
 			}
 			if count != 1 || result.WorkspaceID != id || result.Commit == "" {
-				return "", apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
+				return Proposal{}, apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
 			}
-			return result.Commit, nil
+			return result.Proposal, nil
 		}
 		head = ""
 		if event.Previous != nil {
 			head = *event.Previous
 		}
 	}
-	return "", nil
+	return Proposal{}, nil
 }
 
 // ManifestCommit returns the unique previously receipted commit for an exact
 // manifest. Re-proposing identical content must preserve its evidence binding.
 func (x *Index) ManifestCommit(ctx context.Context, manifest string) (string, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
- WHERE m.hash=? AND op.operation='workspace.propose' AND json_extract(op.result,'$.manifest')=?`, manifest, manifest)
+	return manifestCommit(ctx, x.conn(), manifest)
+}
+
+func manifestCommit(ctx context.Context, q querier, manifest string) (string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
+ WHERE m.hash=? AND op.operation IN ('workspace.propose','speculation.submit') AND json_extract(op.result,'$.manifest')=?`, manifest, manifest)
 	if err != nil {
 		return "", err
 	}
@@ -171,10 +212,142 @@ func (x *Index) ManifestCommit(ctx context.Context, manifest string) (string, er
 // allows init to reconstruct its local retry identity after config/index loss.
 func (x *Index) RootOperation(ctx context.Context, fingerprint string) (string, error) {
 	var id string
-	err := x.db.QueryRowContext(ctx, `SELECT op.operation_id FROM operations op JOIN members m ON m.receipt=op.receipt JOIN objects o ON o.hash=m.hash
+	err := x.conn().QueryRowContext(ctx, `SELECT op.operation_id FROM operations op JOIN members m ON m.receipt=op.receipt JOIN objects o ON o.hash=m.hash
  WHERE op.operation='ledger.init' AND o.kind='root_key' AND o.signer=? ORDER BY op.receipt LIMIT 1`, fingerprint).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return id, err
+}
+
+// ChangeWorkspace returns the unique committed workspace carrying a change id.
+func (x *Index) ChangeWorkspace(ctx context.Context, changeID string) (string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT json_extract(payload,'$.id') FROM objects WHERE kind='workspace' AND json_extract(payload,'$.change_id')=?`, changeID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var id string
+	for rows.Next() {
+		if id != "" {
+			return "", apierr.New("conflicting_creation", "change %s belongs to more than one workspace", changeID)
+		}
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", apierr.New("unknown_entity", "no change %s", changeID)
+	}
+	return id, nil
+}
+
+// Manifest returns a committed change manifest by hash.
+func (x *Index) Manifest(ctx context.Context, hash string) (schema.ChangeManifest, error) {
+	return manifestIn(ctx, x.conn(), hash)
+}
+
+func manifestIn(ctx context.Context, q querier, hash string) (schema.ChangeManifest, error) {
+	var m schema.ChangeManifest
+	var raw string
+	err := q.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='change_manifest'`, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return m, apierr.New("unknown_manifest", "no committed change manifest %s", hash)
+	}
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal([]byte(raw), &m)
+}
+
+// CheckDefinition returns a committed check definition record by hash.
+func (x *Index) CheckDefinition(ctx context.Context, hash string) (schema.CheckDefinition, error) {
+	var d schema.CheckDefinition
+	var raw string
+	err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='check_definition'`, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return d, apierr.New("unknown_check_definition", "no committed check definition %s", hash)
+	}
+	if err != nil {
+		return d, err
+	}
+	return d, json.Unmarshal([]byte(raw), &d)
+}
+
+// WorkspaceHolders returns every session ever bound to workspace id: the
+// creating session and each later binding's session.
+func (x *Index) WorkspaceHolders(ctx context.Context, id string) ([]string, error) {
+	return workspaceHolders(ctx, x.conn(), id)
+}
+
+func workspaceHolders(ctx context.Context, q querier, id string) ([]string, error) {
+	kind, raw, err := creation(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	if kind != schema.KindWorkspace {
+		return nil, apierr.New("unknown_entity", "no workspace %s", id)
+	}
+	var w schema.Workspace
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return nil, err
+	}
+	holders := []string{w.SessionID}
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT session_id FROM bindings WHERE workspace_id=? ORDER BY session_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		if !slices.Contains(holders, sid) {
+			holders = append(holders, sid)
+		}
+	}
+	return holders, rows.Err()
+}
+
+// AttestationsFor returns the hashes of committed evidence attestations that
+// reference manifest, ordered by hash. Only objects of indexed groups exist
+// in the index, so uncommitted attestations never appear.
+func (x *Index) AttestationsFor(ctx context.Context, manifest string) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT hash FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	hashes := []string{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, rows.Err()
+}
+
+// SelectionsFor returns the hashes of the committed selection decisions that
+// name manifest, ordered by hash. The lookup uses objects_selection_manifest.
+func (x *Index) SelectionsFor(ctx context.Context, manifest string) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT hash FROM objects WHERE kind='selection_decision' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	hashes := []string{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, h)
+	}
+	return hashes, rows.Err()
 }

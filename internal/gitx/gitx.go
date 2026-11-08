@@ -215,11 +215,29 @@ func (r *Repo) WriteBlobs(ctx context.Context, paths []string) ([]string, error)
 type TreeEntry struct {
 	Path string
 	Blob string
+	Mode string
+	Size int64 // populated by ListTreeDetails
 }
 
 // ListTree returns every blob reachable from the tree of commit.
 func (r *Repo) ListTree(ctx context.Context, commit string) ([]TreeEntry, error) {
-	out, err := r.git(ctx, nil, nil, "ls-tree", "-r", "-z", "--full-tree", commit)
+	return r.listTree(ctx, commit, false)
+}
+
+// ListTreeDetails includes blob sizes and submodule entries. Consumers can skip
+// large blobs and conservatively handle gitlinks without reading their contents.
+func (r *Repo) ListTreeDetails(ctx context.Context, commit string) ([]TreeEntry, error) {
+	return r.listTree(ctx, commit, true)
+}
+
+func (r *Repo) listTree(ctx context.Context, commit string, gitlinks bool) ([]TreeEntry, error) {
+	args := []string{"ls-tree", "-r", "-z", "--full-tree"}
+	fields := 3
+	if gitlinks {
+		args = append(args, "-l")
+		fields = 4
+	}
+	out, err := r.git(ctx, nil, nil, append(args, commit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,10 +248,17 @@ func (r *Repo) ListTree(ctx context.Context, commit string) ([]TreeEntry, error)
 		}
 		meta, path, ok := strings.Cut(rec, "\t")
 		f := strings.Fields(meta)
-		if !ok || len(f) != 3 || f[1] != "blob" {
+		if !ok || len(f) != fields || f[1] != "blob" && (!gitlinks || f[0] != "160000" || f[1] != "commit") {
 			return nil, fmt.Errorf("gitx: unexpected ls-tree entry %q", rec)
 		}
-		entries = append(entries, TreeEntry{Path: path, Blob: f[2]})
+		var size int64
+		if gitlinks && f[1] == "blob" {
+			size, err = strconv.ParseInt(f[3], 10, 64)
+			if err != nil || size < 0 {
+				return nil, fmt.Errorf("gitx: invalid blob size in %q", rec)
+			}
+		}
+		entries = append(entries, TreeEntry{Path: path, Blob: f[2], Mode: f[0], Size: size})
 	}
 	return entries, nil
 }
@@ -308,4 +333,99 @@ func (r *Repo) UpdateRefCAS(ctx context.Context, ref, newID, old string) error {
 		return apierr.New("ref_moved", "%s is at %q, expected %q", ref, current, old).With("current", current)
 	}
 	return err
+}
+
+// Commit is the parsed content of a commit object.
+type Commit struct {
+	SHA     string
+	Tree    string
+	Parents []string
+	Message string
+}
+
+var objectID = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// ReadCommit parses a commit object. A missing object fails with
+// "dependency_unavailable"; an object that is not a commit fails with
+// "invalid_commit".
+func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
+	if !objectID.MatchString(sha) {
+		return Commit{}, apierr.New("invalid_commit", "%q is not a full object id", sha)
+	}
+	if _, err := r.git(ctx, nil, nil, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		var ge *Error
+		if errors.As(err, &ge) {
+			return Commit{}, apierr.New("dependency_unavailable", "commit %s is not available", sha)
+		}
+		return Commit{}, err
+	}
+	out, err := r.git(ctx, nil, nil, "cat-file", "commit", sha)
+	if err != nil {
+		return Commit{}, err
+	}
+	headers, message, _ := strings.Cut(string(out), "\n\n")
+	c := Commit{SHA: sha, Message: message}
+	for line := range strings.SplitSeq(headers, "\n") {
+		// Continuation lines (for example a signature) begin with a space.
+		key, value, _ := strings.Cut(line, " ")
+		switch key {
+		case "tree":
+			c.Tree = value
+		case "parent":
+			c.Parents = append(c.Parents, value)
+		}
+	}
+	if c.Tree == "" {
+		return Commit{}, apierr.New("invalid_commit", "commit %s has no tree", sha)
+	}
+	return c, nil
+}
+
+// WorktreeInfo is one entry of `git worktree list`.
+type WorktreeInfo struct {
+	Path     string
+	Head     string
+	Detached bool
+}
+
+// WorktreeAddDetached creates a linked worktree at path with a detached HEAD
+// at commit. The path must not exist.
+func (r *Repo) WorktreeAddDetached(ctx context.Context, path, commit string) error {
+	_, err := Run(ctx, r.MainDir, nil, nil, "worktree", "add", "--detach", "--quiet", path, commit)
+	return err
+}
+
+// WorktreeRemove force-removes the linked worktree at path and prunes its
+// administrative entry.
+func (r *Repo) WorktreeRemove(ctx context.Context, path string) error {
+	if _, err := Run(ctx, r.MainDir, nil, nil, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+	_, err := Run(ctx, r.MainDir, nil, nil, "worktree", "prune")
+	return err
+}
+
+// Worktrees lists every worktree of the repository.
+func (r *Repo) Worktrees(ctx context.Context) ([]WorktreeInfo, error) {
+	out, err := Run(ctx, r.MainDir, nil, nil, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var list []WorktreeInfo
+	for line := range strings.SplitSeq(string(out), "\n") {
+		key, value, _ := strings.Cut(line, " ")
+		switch key {
+		case "worktree":
+			list = append(list, WorktreeInfo{Path: value})
+		case "HEAD":
+			if len(list) > 0 {
+				list[len(list)-1].Head = value
+			}
+		case "detached":
+			if len(list) > 0 {
+				list[len(list)-1].Detached = true
+			}
+		}
+	}
+	return list, nil
 }

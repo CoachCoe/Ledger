@@ -5,12 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
-	"fmt"
-	"github.com/CoachCoe/Ledger/internal/api"
-	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/canon"
-	"github.com/CoachCoe/Ledger/internal/daemon"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"net"
 	"net/http"
 	"os"
@@ -18,8 +12,16 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/CoachCoe/Ledger/internal/api"
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/canon"
+	"github.com/CoachCoe/Ledger/internal/daemon"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
+// Call sends request to the repository's daemon, starting it if it is not
+// running.
 func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error) {
 	raw, err := canon.Marshal(request)
 	if err != nil {
@@ -36,18 +38,20 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
-	once := func() (any, error, bool) {
-		req, err := http.NewRequestWithContext(ctx, "POST", "http://ledger/v1", bytes.NewReader(raw))
+	// once reports unreachable when the daemon is not listening, so the
+	// caller can start it; every other failure is final.
+	once := func() (result any, unreachable bool, err error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://ledger/v1", bytes.NewReader(raw))
 		if err != nil {
-			return nil, err, false
+			return nil, false, err
 		}
 		response, err := client.Do(req)
 		if err != nil {
-			return nil, err, true
+			return nil, true, err
 		}
 		defer func() { _ = response.Body.Close() }()
-		if response.StatusCode != 200 {
-			return nil, apierr.New("transport_error", "daemon returned HTTP %d", response.StatusCode), false
+		if response.StatusCode != http.StatusOK {
+			return nil, false, apierr.New("transport_error", "daemon returned HTTP %d", response.StatusCode)
 		}
 		var r struct {
 			OK     bool          `json:"ok"`
@@ -55,24 +59,25 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 			Error  *apierr.Error `json:"error"`
 		}
 		if err := json.UnmarshalRead(response.Body, &r); err != nil {
-			return nil, err, false
+			return nil, false, err
 		}
 		if !r.OK {
 			if r.Error == nil {
-				return nil, apierr.New("transport_error", "missing error envelope"), false
+				return nil, false, apierr.New("transport_error", "missing error envelope")
 			}
-			return nil, r.Error, false
+			return nil, false, r.Error
 		}
-		return r.Result, nil, false
+		return r.Result, false, nil
 	}
-	if result, err, connect := once(); !connect {
+	if result, unreachable, err := once(); !unreachable {
 		return result, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	log, err := os.OpenFile(filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	logPath := filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.log")
+	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -98,10 +103,10 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline.C:
-			return nil, apierr.New("daemon_unavailable", "daemon did not start: %v; see %s", last, fmt.Sprintf("%s/.ledger/runtime/ledgerd.log", repo.MainDir))
+			return nil, apierr.New("daemon_unavailable", "daemon did not start: %v; see %s", last, logPath)
 		case <-tick.C:
-			result, err, connect := once()
-			if !connect {
+			result, unreachable, err := once()
+			if !unreachable {
 				return result, err
 			}
 			last = err

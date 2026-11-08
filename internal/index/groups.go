@@ -7,9 +7,10 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/canon"
 	"slices"
 	"strings"
+
+	"github.com/CoachCoe/Ledger/internal/canon"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -43,10 +44,10 @@ const (
 // with CodeUnavailable, anything else with CodeInvalid or
 // "signature_invalid".
 func (x *Index) Verify(ctx context.Context, g Group) error {
-	return verify(ctx, x.db, g)
+	return verify(ctx, x.conn(), g, x.caseSensitive())
 }
 
-func verify(ctx context.Context, q querier, g Group) error {
+func verify(ctx context.Context, q querier, g Group, sensitive bool) error {
 	for _, o := range append(slices.Clone(g.Members), g.Receipt) {
 		if _, err := envelope.ParseStored(o.Bytes, o.Hash); err != nil {
 			return err
@@ -195,7 +196,7 @@ func verify(ctx context.Context, q querier, g Group) error {
 			return unauthorized("session %s does not match its root-issued capability", p.ID)
 		}
 	}
-	return nil
+	return verifyAuthority(ctx, q, g, r, sensitive)
 }
 
 func isSession(principal string) bool { return strings.HasPrefix(principal, schema.PrefixSession) }
@@ -245,12 +246,12 @@ func resolveKey(ctx context.Context, q querier, signer string, local map[string]
 // are recorded on the affected subjects, never resolved by choosing one
 // side. Applying a group twice has no further effect.
 func (x *Index) Apply(ctx context.Context, g Group) error {
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.conn().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := verify(ctx, tx, g); err != nil {
+	if err := verify(ctx, tx, g, x.caseSensitive()); err != nil {
 		return err
 	}
 	var r schema.OperationReceipt
@@ -423,7 +424,7 @@ func recompute(ctx context.Context, q querier, id string) error {
 	st := lifecycle.Derive(s.Kind, events)
 	s.State, s.Head, s.Resume = st.State, st.Head, st.Resume
 	s.Detail.Fork = st.Fork
-	s.Detail.Rejected = append(misattributed, st.Rejected...)
+	s.Detail.Rejected = slices.Concat(misattributed, st.Rejected)
 	slices.Sort(s.Detail.Rejected)
 	if len(st.Fork) > 0 {
 		s.Conflict = "lifecycle_fork"
@@ -472,6 +473,16 @@ func loadEvents(ctx context.Context, q querier, subject, creation string) (event
 		if e.Actor != signer {
 			misattributed = append(misattributed, e.Hash)
 			continue
+		}
+		if isSession(signer) {
+			owner, err := eventOwner(ctx, q, e.LifecycleEvent)
+			if err != nil {
+				return nil, nil, err
+			}
+			if owner != signer {
+				misattributed = append(misattributed, e.Hash)
+				continue
+			}
 		}
 		events = append(events, e)
 	}
@@ -543,7 +554,7 @@ func saveSubject(ctx context.Context, q querier, s Subject) error {
 
 // Subject returns a subject's derived state, or nil if it does not exist.
 func (x *Index) Subject(ctx context.Context, id string) (*Subject, error) {
-	return loadSubject(ctx, x.db, id)
+	return loadSubject(ctx, x.conn(), id)
 }
 
 type subjectScanner interface{ Scan(...any) error }
@@ -570,7 +581,16 @@ func loadSubject(ctx context.Context, q querier, id string) (*Subject, error) {
 // Subjects reads one SQLite statement snapshot, avoiding partial N+1
 // reads or nil dereferences if another process reindexes concurrently.
 func (x *Index) Subjects(ctx context.Context) ([]Subject, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT `+subjectColumns+` FROM subjects ORDER BY id`)
+	return x.subjects(ctx, `SELECT `+subjectColumns+` FROM subjects ORDER BY id`)
+}
+
+// SubjectsIn returns the subjects of kind currently in state.
+func (x *Index) SubjectsIn(ctx context.Context, kind, state string) ([]Subject, error) {
+	return x.subjects(ctx, `SELECT `+subjectColumns+` FROM subjects WHERE kind=? AND state=? ORDER BY id`, kind, state)
+}
+
+func (x *Index) subjects(ctx context.Context, query string, args ...any) ([]Subject, error) {
+	rows, err := x.conn().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +617,7 @@ type Operation struct {
 // Operations returns the receipts indexed for an operation id. More than
 // one means an imported receipt conflicts with a local one.
 func (x *Index) Operations(ctx context.Context, operationID string) ([]Operation, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT receipt, operation, request_digest, result FROM operations
+	rows, err := x.conn().QueryContext(ctx, `SELECT receipt, operation, request_digest, result FROM operations
 		WHERE operation_id = ? ORDER BY receipt`, operationID)
 	if err != nil {
 		return nil, err
@@ -617,7 +637,7 @@ func (x *Index) Operations(ctx context.Context, operationID string) ([]Operation
 // HasReceipt reports whether a receipt's group is indexed.
 func (x *Index) HasReceipt(ctx context.Context, receipt string) (bool, error) {
 	var n int
-	err := x.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE receipt = ?`, receipt).Scan(&n)
+	err := x.conn().QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE receipt = ?`, receipt).Scan(&n)
 	return n > 0, err
 }
 
@@ -625,7 +645,7 @@ func (x *Index) HasReceipt(ctx context.Context, receipt string) (bool, error) {
 // fails with "conflicting_creation" if there is more than one, and returns
 // "" if there is none.
 func (x *Index) Creation(ctx context.Context, id string) (kind schema.Kind, payload []byte, err error) {
-	return creation(ctx, x.db, id)
+	return creation(ctx, x.conn(), id)
 }
 
 func creation(ctx context.Context, q querier, id string) (schema.Kind, []byte, error) {
@@ -657,13 +677,13 @@ func creation(ctx context.Context, q querier, id string) (schema.Kind, []byte, e
 // Committed reports whether an object belongs to an indexed group.
 func (x *Index) Committed(ctx context.Context, hash string) (bool, error) {
 	var n int
-	err := x.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM members WHERE hash = ?`, hash).Scan(&n)
+	err := x.conn().QueryRowContext(ctx, `SELECT COUNT(*) FROM members WHERE hash = ?`, hash).Scan(&n)
 	return n > 0, err
 }
 
 // ConflictingOperations returns operation ids with more than one receipt.
 func (x *Index) ConflictingOperations(ctx context.Context) (map[string][]string, error) {
-	rows, err := x.db.QueryContext(ctx, `SELECT operation_id, receipt FROM operations WHERE operation_id IN
+	rows, err := x.conn().QueryContext(ctx, `SELECT operation_id, receipt FROM operations WHERE operation_id IN
 		(SELECT operation_id FROM operations GROUP BY operation_id HAVING COUNT(*) > 1) ORDER BY operation_id, receipt`)
 	if err != nil {
 		return nil, err

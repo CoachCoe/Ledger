@@ -3,13 +3,14 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 func TestSnapshotKeepsFixedBaseAndUserIndex(t *testing.T) {
@@ -158,6 +159,7 @@ func TestSnapshotCoversRenameDeleteModeAndSymlink(t *testing.T) {
 		t.Fatal(tree)
 	}
 }
+
 func TestCommittedUnpopulatedSubmoduleChangeRejected(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -177,5 +179,46 @@ func TestCommittedUnpopulatedSubmoduleChangeRejected(t *testing.T) {
 	run("commit", "-qm", "agent submodule")
 	if _, err := Capture(ctx, root, base, filepath.Join(t.TempDir(), "index")); !apierr.HasCode(err, "unsupported_submodule") {
 		t.Fatal(err)
+	}
+}
+
+func TestM2ManifestPathsNormalizeWithoutLosingGitNames(t *testing.T) {
+	raw := "src/Cafe\u0301.ts"
+	snap := Snapshot{Files: []string{raw}}
+	files, err := snap.RecordFiles()
+	if err != nil || len(files) != 1 || files[0] != "src/Caf\u00e9.ts" || snap.Files[0] != raw {
+		t.Fatalf("normalized record / raw lookup: %v %v", files, err)
+	}
+	snap.Files = append(snap.Files, "src/Caf\u00e9.ts")
+	if _, err := snap.RecordFiles(); !apierr.HasCode(err, "path_alias") {
+		t.Fatal("ambiguous aliases accepted", err)
+	}
+}
+
+func TestM2FrozenSymlinkResolution(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	env := []string{"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid"}
+	if _, err := gitx.Run(ctx, dir, nil, env, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	blob := func(target string) string {
+		raw, err := gitx.Run(ctx, dir, strings.NewReader(target), nil, "hash-object", "-w", "--stdin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(raw))
+	}
+	entries := map[string]treeEntry{"src/caf\u00e9": {mode: "120000", oid: blob("../../outside")}, "src/escape": {mode: "120000", oid: blob("../../outside")}, "src/safe": {mode: "100644"}}
+	for _, p := range []string{"src/Cafe\u0301", "src/escape/../safe"} {
+		_, err := resolveTreePath(ctx, dir, p, entries, false)
+		if err == nil {
+			t.Fatal("allowed aliased or cleaned escape", p)
+		}
+	}
+	entries["src/link"] = treeEntry{mode: "120000", oid: blob("../src/safe")}
+	resolved, err := resolveTreePath(ctx, dir, "src/link", entries, true)
+	if err != nil || resolved != "src/safe" {
+		t.Fatalf("safe relative link: %q %v", resolved, err)
 	}
 }

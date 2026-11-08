@@ -12,6 +12,7 @@ import (
 func TestRuntimeSchemas(t *testing.T) {
 	sym := `{"path":"a.py","language":"python","name":"f","kind":"function","disambiguator":null}`
 	ses, wsp, run := "ses_"+strings.Repeat("a", 26), "wsp_"+strings.Repeat("a", 26), "run_"+strings.Repeat("a", 26)
+	intent, hash := "int_"+strings.Repeat("a", 26), strings.Repeat("c", 64)
 	valid := map[string]string{
 		"notification": `{"id":"ntf_` + strings.Repeat("a", 26) + `","recipient":"` + ses + `","kind":"overlap",
 			"subject":{"symbol":` + sym + `},"counterpart":null,"confidence":"direct",
@@ -19,10 +20,20 @@ func TestRuntimeSchemas(t *testing.T) {
 		"lease": `{"id":"lse_` + strings.Repeat("a", 26) + `","holder":"` + ses + `","paths":["a.py"],"symbols":[],
 			"reason":"refactor","expires_at":"2026-11-05T12:00:00Z"}`,
 		"dependency_edge": `{"source":` + sym + `,"target":` + sym + `,"relation":"read","confidence":"unresolved","observed_by":"tree-sitter"}`,
-		"run_handoff": `{"run_id":"` + run + `","attempts":[{"workspace_id":"` + wsp + `","session_id":"` + ses + `",
-			"capability_id":"cap_` + strings.Repeat("a", 26) + `","strategy":"inline","path":"/tmp/w"}]}`,
-		"run_status": `{"run_id":"` + run + `","state":"collecting","deadline":"2026-11-05T12:00:00Z",
-			"attempts":[{"workspace_id":"` + wsp + `","manifest":null,"submitted":false}],"selection":null}`,
+		"run_handoff": `{"run_id":"` + run + `","intent_id":"` + intent + `","state":"collecting","deadline":"2026-11-05T12:00:00Z",
+			"scorer":"` + hash + `","base_commit":"` + strings.Repeat("b", 40) + `","checks":["` + hash + `"],
+			"attempts":[{"workspace_id":"` + wsp + `","session_id":"` + ses + `",
+			"capability_id":"cap_` + strings.Repeat("a", 26) + `","strategy":"inline","spec":"Inline it","path":"/tmp/w"}]}`,
+		"run_status": `{"run_id":"` + run + `","intent_id":"` + intent + `","state":"interrupted","resume":"evaluating","reason":"scorer_failed",
+			"deadline":"2026-11-05T12:00:00Z","deadline_passed":true,"scorer":"` + hash + `","scorer_kind":"command",
+			"checks":["` + hash + `"],"base_commit":"` + strings.Repeat("b", 40) + `",
+			"attempts":[{"workspace_id":"` + wsp + `","strategy":"inline","workspace_state":"open","session_id":"` + ses + `",
+			"submitted":false,"manifest":null,"commit":null,"branch":null,"attempt_record":null,"outcome":null}],"selection":null}`,
+		"run_outcome": `{"run_id":"` + run + `","state":"resolved","selection":null,"winner":null,"scores":null,
+			"attempts":[{"workspace_id":"` + wsp + `","strategy":"inline","manifest":null,"commit":null,"outcome":"timeout",
+			"attempt_record":"` + hash + `","score":null,"failed_criteria":[]}],"accepted":false,"merged":false}`,
+		"evidence_run": `{"run_id":"` + run + `","state":"ready","manifest":"` + strings.Repeat("a", 64) + `",
+			"commit":"` + strings.Repeat("b", 40) + `","tree":"` + strings.Repeat("c", 40) + `","worktree_path":"/tmp/v"}`,
 	}
 	for name, doc := range valid {
 		if err := ValidateRuntime(name, []byte(doc)); err != nil {
@@ -44,8 +55,8 @@ func TestNewID(t *testing.T) {
 	if !re.MatchString(a) || a == b {
 		t.Fatalf("ids %q %q", a, b)
 	}
-	if IDPrefix(a) != PrefixIntent || IDPrefix("plain") != "" {
-		t.Fatal("IDPrefix")
+	if ShortID(a) != a[:12] || ShortID("plain") != "plain" {
+		t.Fatalf("ShortID(%q) = %q", a, ShortID(a))
 	}
 }
 

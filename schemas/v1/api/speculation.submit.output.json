@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/speculation.submit.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "$ref": "response.json#/$defs/mutation_result",
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run_id": {
+              "$ref": "../common.json#/$defs/run_id"
+            },
+            "workspace_id": {
+              "$ref": "../common.json#/$defs/workspace_id"
+            },
+            "change_id": {
+              "$ref": "../common.json#/$defs/change_id"
+            },
+            "manifest": {
+              "$ref": "../common.json#/$defs/hash"
+            },
+            "commit": {
+              "$ref": "../common.json#/$defs/git_oid"
+            },
+            "tree": {
+              "$ref": "../common.json#/$defs/git_oid"
+            },
+            "branch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "run_id",
+            "workspace_id",
+            "change_id",
+            "manifest",
+            "commit",
+            "tree",
+            "branch"
+          ]
+        }
+      }
+    }
+  }
+}

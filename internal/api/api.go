@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -16,6 +17,7 @@ type Request struct {
 	SessionID   string         `json:"session_id"`
 	Input       jsontext.Value `json:"input"`
 }
+
 type Response struct {
 	Version int           `json:"api_version"`
 	OK      bool          `json:"ok"`
@@ -29,6 +31,7 @@ func Reply(result any, err error) Response {
 	}
 	return Response{Version: 1, OK: true, Result: result}
 }
+
 func Parse(raw []byte) (Request, error) {
 	var r Request
 	b, err := canon.Canonical(raw)
@@ -46,6 +49,7 @@ func Parse(raw []byte) (Request, error) {
 	}
 	return r, nil
 }
+
 func (r Request) Digest() (string, error) {
 	b, err := canon.Marshal(r)
 	if err != nil {
@@ -53,6 +57,7 @@ func (r Request) Digest() (string, error) {
 	}
 	return canon.Hash(b), nil
 }
-func ReadOnly(op string) bool {
-	return op == "system.status" || op == "intent.status" || op == "workspace.status"
-}
+
+// ReadOnly reports whether op takes no operation id: it signs nothing, so a
+// retry needs no frozen identity.
+func ReadOnly(op string) bool { return readOnly[op] }

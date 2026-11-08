@@ -28,6 +28,7 @@ type schemaSet struct {
 	kinds    map[Kind]*jsonschema.Schema
 	runtime  map[string]*jsonschema.Schema
 	api      map[string]*jsonschema.Schema
+	bundle   *jsonschema.Schema
 }
 
 func compileAll() (*schemaSet, error) {
@@ -63,6 +64,8 @@ func compileAll() (*schemaSet, error) {
 		switch {
 		case rel == "envelope.json":
 			s.envelope = sch
+		case rel == "bundle_inventory.json":
+			s.bundle = sch
 		case strings.HasPrefix(rel, "api/"):
 			s.api[name] = sch
 		case strings.HasPrefix(rel, "runtime/"):
@@ -147,6 +150,34 @@ func ValidateAPI(name string, raw []byte) error {
 	}
 	if err := sch.Validate(inst); err != nil {
 		return invalid(name, err)
+	}
+	return nil
+}
+
+// BundleVersion is the only bundle inventory version this build reads.
+const BundleVersion = 1
+
+// ValidateBundle validates a bundle inventory document. An inventory whose
+// bundle_version is not BundleVersion fails with unsupported_bundle_version
+// before any other interpretation.
+func ValidateBundle(raw []byte) error {
+	s, err := compiled()
+	if err != nil {
+		return err
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return invalid("bundle_inventory", err)
+	}
+	m, ok := inst.(map[string]any)
+	if !ok {
+		return invalid("bundle_inventory", fmt.Errorf("not an object"))
+	}
+	if v, ok := m["bundle_version"]; !ok || fmt.Sprint(v) != fmt.Sprint(BundleVersion) {
+		return apierr.New("unsupported_bundle_version", "bundle_version %v is not supported", v)
+	}
+	if err := s.bundle.Validate(inst); err != nil {
+		return invalid("bundle_inventory", err)
 	}
 	return nil
 }

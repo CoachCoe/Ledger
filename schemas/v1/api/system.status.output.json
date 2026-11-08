@@ -61,6 +61,33 @@
         "recovery_pending": {
           "type": "boolean"
         },
+        "interrupted_runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "run_id": {
+                "$ref": "../common.json#/$defs/run_id"
+              },
+              "manifest": {
+                "$ref": "../common.json#/$defs/hash"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "manifest",
+              "commit",
+              "reason"
+            ]
+          }
+        },
         "process_id": {
           "type": "integer",
           "minimum": 1,
@@ -70,6 +97,7 @@
       "required": [
         "subjects",
         "recovery_pending",
+        "interrupted_runs",
         "process_id"
       ]
     }

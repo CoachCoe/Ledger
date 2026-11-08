@@ -2,14 +2,17 @@ package workspace
 
 import (
 	"context"
-	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/gitx"
-	"golang.org/x/text/unicode/norm"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 type Snapshot struct {
@@ -75,42 +78,57 @@ func Capture(ctx context.Context, path, base, indexFile string) (Snapshot, error
 		if !utf8.ValidString(name) {
 			return Snapshot{}, apierr.New("invalid_path", "file path is not UTF-8")
 		}
-		result.Files = append(result.Files, norm.NFC.String(name))
-		result.Status[norm.NFC.String(name)] = meta[4]
+		result.Files = append(result.Files, name)
+		result.Status[name] = meta[4]
 	}
 	slices.Sort(result.Files)
 	return result, nil
 }
 
-// StableSnapshot uses independent private indexes to detect capture-time
-// edits. It is bounded and deliberately does not claim an atomic filesystem snapshot.
-func StableSnapshot(ctx context.Context, path, base, runtimeDir string) (Snapshot, error) {
-	var last Snapshot
-	for range 3 {
-		pair := make([]Snapshot, 2)
-		for i := range pair {
-			tmp, err := os.CreateTemp(runtimeDir, "capture-*")
-			if err != nil {
-				return last, err
-			}
-			name := tmp.Name()
-			tmp.Close()
-			os.Remove(name)
-			snap, err := Capture(ctx, path, base, name)
-			os.Remove(name)
-			os.Remove(name + ".lock")
-			if err != nil {
-				return last, err
-			}
-			pair[i] = snap
-		}
-		if pair[0].Tree == pair[1].Tree {
-			return pair[1], nil
-		}
-		last = pair[1]
+// StableSnapshot captures twice through fresh private indexes in dir and
+// accepts the result only when both trees agree, retrying a bounded number
+// of times. It detects edits during capture; it does not claim an atomic
+// filesystem snapshot.
+func StableSnapshot(ctx context.Context, path, base, dir string) (Snapshot, error) {
+	scratch, err := os.MkdirTemp(dir, "capture-")
+	if err != nil {
+		return Snapshot{}, err
 	}
-	return last, apierr.New("concurrent_edit", "files changed during proposal capture; retry when writes settle")
+	defer os.RemoveAll(scratch)
+	for attempt := range 3 {
+		var trees [2]Snapshot
+		for i := range trees {
+			snap, err := Capture(ctx, path, base, filepath.Join(scratch, fmt.Sprintf("%d-%d.index", attempt, i)))
+			if err != nil {
+				return Snapshot{}, err
+			}
+			trees[i] = snap
+		}
+		if trees[0].Tree == trees[1].Tree {
+			return trees[1], nil
+		}
+	}
+	return Snapshot{}, apierr.New("concurrent_edit", "files changed during proposal capture; retry when writes settle")
 }
+
+// IndexPath is the persistent private observation index of workspace id.
 func IndexPath(runtimeDir, id string) string {
 	return filepath.Join(runtimeDir, "observe-"+id+".index")
+}
+
+// RecordFiles returns NFC paths for immutable manifests while the snapshot
+// retains exact Git names for tree/blob lookup. Ambiguous aliases fail closed.
+func (s Snapshot) RecordFiles() ([]string, error) {
+	out := make([]string, 0, len(s.Files))
+	seen := map[string]bool{}
+	for _, p := range s.Files {
+		n := norm.NFC.String(p)
+		if seen[n] {
+			return nil, apierr.New("path_alias", "multiple Git paths normalize to %q", n)
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	slices.Sort(out)
+	return out, nil
 }

@@ -3,10 +3,12 @@ package record
 import (
 	"encoding/json/v2"
 	"errors"
-	"github.com/CoachCoe/Ledger/internal/identity"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/CoachCoe/Ledger/internal/identity"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -158,6 +160,7 @@ func TestRootKeyRepublicationKeepsOneAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestIntentCannotParentOrSupersedeItself(t *testing.T) {
 	s := newStore(t)
 	id := schema.NewID(schema.PrefixIntent)
@@ -190,5 +193,25 @@ func TestSingleRefFaultStopsPublication(t *testing.T) {
 	}})
 	if _, err := writer.Do(ctx, op("single-ref-fault"), members(intentRecord(t, schema.NewID(schema.PrefixIntent)))); err == nil {
 		t.Fatal("one-shot fault was swallowed by ref fallback")
+	}
+}
+
+func TestDeletedIndexIsRebuiltByTheNextOperation(t *testing.T) {
+	s := newStore(t)
+	before := schema.NewID(schema.PrefixIntent)
+	if _, err := s.Do(ctx, op("before-delete"), members(intentRecord(t, before))); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(filepath.Join(s.Dir, "index.db"+suffix)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	after := schema.NewID(schema.PrefixIntent)
+	if _, err := s.Do(ctx, op("after-delete"), members(intentRecord(t, after))); err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, s, before) == nil || subject(t, s, after) == nil {
+		t.Fatal("index was not rebuilt from the record files")
 	}
 }

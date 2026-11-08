@@ -7,7 +7,11 @@
     "id",
     "intent_id",
     "strategies",
+    "attempts",
+    "checks",
     "scorer",
+    "scorer_definition",
+    "base_commit",
     "deadline",
     "created_at"
   ],
@@ -39,14 +43,127 @@
       },
       "minItems": 1
     },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace_id",
+          "strategy"
+        ],
+        "properties": {
+          "workspace_id": {
+            "$ref": "common.json#/$defs/workspace_id"
+          },
+          "strategy": {
+            "$ref": "common.json#/$defs/name"
+          }
+        },
+        "title": "Candidate binding"
+      },
+      "minItems": 1,
+      "maxItems": 64
+    },
+    "checks": {
+      "allOf": [
+        {
+          "$ref": "common.json#/$defs/hashes"
+        },
+        {
+          "minItems": 1
+        }
+      ]
+    },
     "scorer": {
       "$ref": "common.json#/$defs/hash"
+    },
+    "scorer_definition": {
+      "$ref": "#/$defs/scorer_definition"
+    },
+    "base_commit": {
+      "$ref": "common.json#/$defs/git_oid"
     },
     "deadline": {
       "$ref": "common.json#/$defs/timestamp"
     },
     "created_at": {
       "$ref": "common.json#/$defs/timestamp"
+    }
+  },
+  "$defs": {
+    "scorer_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "command",
+        "env_allowlist",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "command",
+            "submission"
+          ]
+        },
+        "command": {
+          "$ref": "common.json#/$defs/nullable_text"
+        },
+        "env_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "command"
+            },
+            "command": {
+              "type": "string"
+            },
+            "timeout_seconds": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "submission"
+            },
+            "command": {
+              "type": "null"
+            },
+            "env_allowlist": {
+              "maxItems": 0
+            },
+            "timeout_seconds": {
+              "type": "null"
+            }
+          }
+        }
+      ],
+      "title": "Scorer definition"
     }
   },
   "title": "Speculation run creation"

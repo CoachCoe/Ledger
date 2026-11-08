@@ -13,8 +13,10 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
+	"sync/atomic"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
 const schemaVersion = 1
@@ -23,13 +25,29 @@ const schemaVersion = 1
 // local state that is never exported and may be discarded.
 var (
 	durableTables = []string{"objects", "members", "operations", "creations", "events", "bindings", "subjects"}
-	runtimeTables = []string{"workspace_paths", "write_sets", "notifications", "leases", "dependency_edges"}
+	runtimeTables = []string{"workspace_paths", "write_sets", "notifications", "leases", "dependency_edges", "symbol_observations"}
 )
 
 const ddl = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS objects (
 	hash TEXT PRIMARY KEY, kind TEXT NOT NULL, signer TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS objects_intent_parent ON objects (json_extract(payload, '$.parent_id'))
+	WHERE kind = 'intent';
+CREATE INDEX IF NOT EXISTS objects_manifest_intent ON objects (json_extract(payload, '$.intent_id'))
+	WHERE kind = 'change_manifest';
+CREATE INDEX IF NOT EXISTS objects_workspace_change ON objects (json_extract(payload, '$.change_id'))
+	WHERE kind = 'workspace';
+CREATE INDEX IF NOT EXISTS objects_evidence_manifest ON objects (json_extract(payload, '$.manifest'))
+	WHERE kind = 'evidence_attestation';
+CREATE INDEX IF NOT EXISTS objects_selection_manifest ON objects (json_extract(payload, '$.manifest'))
+	WHERE kind = 'selection_decision';
+CREATE INDEX IF NOT EXISTS objects_manifest_workspace ON objects (json_extract(payload, '$.workspace_id'))
+	WHERE kind = 'change_manifest';
+CREATE INDEX IF NOT EXISTS objects_attempt_run ON objects (json_extract(payload, '$.run_id'))
+	WHERE kind = 'attempt_record';
+CREATE INDEX IF NOT EXISTS objects_selection_selector ON objects (json_extract(payload, '$.selector.id'))
+	WHERE kind = 'selection_decision';
 CREATE TABLE IF NOT EXISTS members (
 	receipt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (receipt, hash));
 CREATE INDEX IF NOT EXISTS members_hash ON members (hash);
@@ -53,6 +71,7 @@ CREATE TABLE IF NOT EXISTS subjects (
 	id TEXT PRIMARY KEY, kind TEXT NOT NULL, creation TEXT NOT NULL, state TEXT NOT NULL,
 	head TEXT NOT NULL, resume TEXT NOT NULL, owner TEXT NOT NULL, binding_head TEXT NOT NULL,
 	conflict TEXT NOT NULL, detail TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS subjects_kind_state ON subjects (kind, state);
 CREATE TABLE IF NOT EXISTS workspace_paths (
 	workspace_id TEXT PRIMARY KEY, path TEXT NOT NULL, observed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS write_sets (
@@ -62,51 +81,74 @@ CREATE TABLE IF NOT EXISTS notifications (
 	id TEXT PRIMARY KEY, recipient TEXT NOT NULL, doc TEXT NOT NULL,
 	created_at TEXT NOT NULL, acknowledged_at TEXT);
 CREATE INDEX IF NOT EXISTS notifications_recipient ON notifications (recipient);
+CREATE INDEX IF NOT EXISTS notifications_pending ON notifications (recipient,created_at,id) WHERE acknowledged_at IS NULL;
 CREATE TABLE IF NOT EXISTS leases (
 	id TEXT PRIMARY KEY, holder TEXT NOT NULL, doc TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS dependency_edges (
 	workspace_id TEXT NOT NULL, doc TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS dependency_edges_workspace ON dependency_edges (workspace_id);
+CREATE TABLE IF NOT EXISTS symbol_observations (
+	workspace_id TEXT PRIMARY KEY, tree TEXT NOT NULL, doc TEXT NOT NULL, observed_at TEXT NOT NULL);
 `
 
-// Index is an open index database.
+// Index is an open index database. It is safe for concurrent use; Refresh
+// swaps the connection atomically so readers never observe a torn Index.
 type Index struct {
-	db   *sql.DB
-	path string
-	file os.FileInfo
+	// NotificationFault is a test-only crash boundary hook; set before concurrent use.
+	NotificationFault func(string) error
+	db                atomic.Pointer[sql.DB]
+	path              string
+	file              os.FileInfo
 }
+
+func (x *Index) conn() *sql.DB { return x.db.Load() }
 
 // Open opens or creates the index at path and applies migrations.
 func Open(path string) (*Index, error) {
+	x := &Index{path: path}
+	db, file, err := connect(path)
+	if err != nil {
+		return nil, err
+	}
+	x.db.Store(db)
+	x.file = file
+	return x, nil
+}
+
+func connect(path string) (*sql.DB, os.FileInfo, error) {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(10000)")
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "synchronous(FULL)")
+	// Every transaction writes. Taking the write lock at BEGIN makes
+	// concurrent writers wait out busy_timeout; a deferred transaction that
+	// read before another writer committed fails with SQLITE_BUSY_SNAPSHOT.
+	q.Add("_txlock", "immediate")
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	x := &Index{db: db, path: path}
-	if err := x.migrate(); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	x.file, err = os.Stat(path)
+	file, err := os.Stat(path)
 	if err != nil {
 		db.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	return x, nil
+	return db, file, nil
 }
 
-func (x *Index) migrate() error {
-	if _, err := x.db.Exec(ddl); err != nil {
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(ddl); err != nil {
 		return fmt.Errorf("index: migrate: %w", err)
 	}
 	var v int
-	err := x.db.QueryRow(`SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'schema_version'`).Scan(&v)
+	err := db.QueryRow(`SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'schema_version'`).Scan(&v)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		_, err = x.db.Exec(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`, fmt.Sprint(schemaVersion))
+		_, err = db.Exec(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`, strconv.Itoa(schemaVersion))
 		return err
 	case err != nil:
 		return err
@@ -117,14 +159,14 @@ func (x *Index) migrate() error {
 }
 
 // Close closes the database.
-func (x *Index) Close() error { return x.db.Close() }
+func (x *Index) Close() error { return x.conn().Close() }
 
 // RuntimeRows counts rows in the runtime tables, which reindex discards.
-func (x *Index) RuntimeRows() (map[string]int, error) {
+func (x *Index) RuntimeRows(ctx context.Context) (map[string]int, error) {
 	out := map[string]int{}
 	for _, t := range runtimeTables {
 		var n int
-		if err := x.db.QueryRow(`SELECT COUNT(*) FROM ` + t).Scan(&n); err != nil {
+		if err := x.conn().QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t).Scan(&n); err != nil {
 			return nil, err
 		}
 		out[t] = n
@@ -134,18 +176,18 @@ func (x *Index) RuntimeRows() (map[string]int, error) {
 
 // Digest returns a hash over every durable table in a fixed order, so two
 // indexes built from the same records compare equal.
-func (x *Index) Digest() (string, error) {
+func (x *Index) Digest(ctx context.Context) (string, error) {
 	h := sha256.New()
 	for _, t := range durableTables {
-		if err := dumpTable(x.db, t, h); err != nil {
+		if err := dumpTable(ctx, x.conn(), t, h); err != nil {
 			return "", err
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func dumpTable(db *sql.DB, table string, w io.Writer) error {
-	rows, err := db.QueryContext(context.Background(), `SELECT * FROM `+table+` ORDER BY 1, 2`) //nolint:gosec // table is from durableTables
+func dumpTable(ctx context.Context, db *sql.DB, table string, w io.Writer) error {
+	rows, err := db.QueryContext(ctx, `SELECT * FROM `+table+` ORDER BY 1, 2`) //nolint:gosec // table is from durableTables
 	if err != nil {
 		return err
 	}
@@ -175,10 +217,10 @@ func dumpTable(db *sql.DB, table string, w io.Writer) error {
 // Reset clears derived state in-place. Replacing the database inode would
 // strand other open processes on an obsolete copy despite the store lock.
 func (x *Index) Reset(ctx context.Context) error {
-	if err := x.Refresh(); err != nil {
+	if _, err := x.Refresh(); err != nil {
 		return err
 	}
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.conn().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -191,23 +233,21 @@ func (x *Index) Reset(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// Refresh reconnects after an external deletion/replacement of index.db.
-// Call it under the RecordStore lock before writing or rebuilding.
-func (x *Index) Refresh() error {
+// Refresh reconnects after an external deletion/replacement of index.db and
+// reports whether it did, in which case the index must be rebuilt. Call it
+// under the RecordStore lock before writing or rebuilding.
+func (x *Index) Refresh() (reconnected bool, err error) {
 	fi, err := os.Stat(x.path)
 	if err == nil && os.SameFile(fi, x.file) {
-		return nil
+		return false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return false, err
 	}
-	if err := x.db.Close(); err != nil {
-		return err
-	}
-	fresh, err := Open(x.path)
+	db, file, err := connect(x.path)
 	if err != nil {
-		return err
+		return false, err
 	}
-	*x = *fresh
-	return nil
+	x.file = file
+	return true, x.db.Swap(db).Close()
 }

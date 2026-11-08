@@ -21,6 +21,26 @@
     },
     "expires_at": {
       "$ref": "../common.json#/$defs/timestamp"
+    },
+    "allow": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "deny": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "may_add_dependencies": {
+      "type": "boolean"
     }
   },
   "required": [],

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/index"
@@ -30,6 +31,8 @@ type Report struct {
 	AddedToRef int `json:"added_to_ref"`
 	// InvalidInRef lists ref entries that failed verification.
 	InvalidInRef []string `json:"invalid_in_ref"`
+	// Imported counts object files an import newly wrote.
+	Imported int `json:"imported,omitempty"`
 	// Indexed counts groups newly indexed.
 	Indexed int `json:"indexed"`
 	// Unverifiable lists records that are intact but cannot be accepted:
@@ -64,7 +67,7 @@ type Conflict struct {
 // complete group. It never deletes records or overwrites external ref
 // changes.
 func (s *Store) Recover(ctx context.Context) (*Report, error) {
-	unlock, err := lockFile(filepath.Join(s.Dir, "lock"))
+	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
 	}
@@ -72,16 +75,16 @@ func (s *Store) Recover(ctx context.Context) (*Report, error) {
 	return s.recoverLocked(ctx)
 }
 
-// Reindex deletes the index and rebuilds it from the record files. Runtime
+// Reindex clears the index in place and rebuilds it from the record files. Runtime
 // state (notifications, leases, observations) cannot be rebuilt and is
 // reported as discarded.
 func (s *Store) Reindex(ctx context.Context) (*Report, error) {
-	unlock, err := lockFile(filepath.Join(s.Dir, "lock"))
+	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	discarded, err := s.Index.RuntimeRows()
+	discarded, err := s.Index.RuntimeRows(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -98,25 +101,15 @@ func (s *Store) Reindex(ctx context.Context) (*Report, error) {
 }
 
 func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
-	if err := s.Index.Refresh(); err != nil {
+	if _, err := s.Index.Refresh(); err != nil {
 		return nil, err
 	}
-	if err := s.completeJournals(ctx); err != nil {
+	// After the index is rebuilt, a journal's signing keys may come only
+	// from groups not yet indexed; those journals finish after indexAll.
+	if err := s.completeJournals(ctx, true); err != nil {
 		return nil, err
 	}
 	r := &Report{}
-	journals, err := filepath.Glob(filepath.Join(s.Dir, "journal", "*.json"))
-	if err != nil {
-		return nil, err
-	}
-	for _, path := range journals {
-		hash := strings.TrimSuffix(filepath.Base(path), ".json")
-		if done, err := s.Index.HasReceipt(ctx, hash); err != nil {
-			return nil, err
-		} else if done {
-			r.CleanupPending = append(r.CleanupPending, hash)
-		}
-	}
 	hashes, err := s.listObjects()
 	if err != nil {
 		return nil, err
@@ -137,6 +130,21 @@ func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
 	r.Materialized, r.AddedToRef, r.InvalidInRef = len(sync.Materialized), sync.Added, sync.Invalid
 	if err := s.indexAll(ctx, r); err != nil {
 		return nil, err
+	}
+	if err := s.completeJournals(ctx, false); err != nil {
+		return nil, err
+	}
+	journals, err := filepath.Glob(filepath.Join(s.Dir, "journal", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range journals {
+		hash := strings.TrimSuffix(filepath.Base(path), ".json")
+		if done, err := s.Index.HasReceipt(ctx, hash); err != nil {
+			return nil, err
+		} else if done {
+			r.CleanupPending = append(r.CleanupPending, hash)
+		}
 	}
 	return r, s.conflicts(ctx, r)
 }
@@ -163,7 +171,7 @@ func (s *Store) quarantine(path, hash string) error {
 			if err := os.Rename(path, dst); err != nil {
 				return err
 			}
-			return syncDir(dir)
+			return atomicfile.SyncDir(dir)
 		} else if err != nil {
 			return err
 		}

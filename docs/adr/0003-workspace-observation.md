@@ -12,7 +12,7 @@ Agents edit workspace files with their own tools, so `ledgerd` must observe each
 **The write set is computed with a persistent private index per workspace**, stored under `.ledger/runtime/`:
 
 1. On first use, `GIT_INDEX_FILE=<private> git read-tree <base>`.
-2. On each observation, `GIT_INDEX_FILE=<private> git add -A`, then `git diff-index --cached --no-renames --name-status -z <base>`.
+2. On each observation, `GIT_INDEX_FILE=<private> git add -A`, then `git write-tree` and `git diff --raw --no-renames -z <base> <tree>`. This is the same comparison as `git diff-index --cached`, and it also yields the tree a proposal would sign.
 
 The index persists between observations, so Git's stat cache means only changed files are re-hashed. `git status` is supplementary information and is never the source of the write set.
 
