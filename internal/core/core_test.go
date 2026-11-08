@@ -87,7 +87,7 @@ func call(t *testing.T, s *Service, r api.Request) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := schema.ValidateAPI(r.Operation+".output", wire); err != nil {
+	if err := api.ValidateResponse(r.Operation, wire); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := canon.Marshal(result)

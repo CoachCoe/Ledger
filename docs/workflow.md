@@ -136,6 +136,11 @@ Losing worktrees are removed after the run ends unless they hold edits beyond th
 
 ## Export, import and verify
 
+For MCP stdio setup, the complete tool inventory, checked text editing and
+portable history/live coordination queries, see the [agent integration
+contract](contracts/agents.md). `ledger history why|attempts|dependents` and
+`ledger coordination nearby` expose the same query inputs through the CLI.
+
 `ledger export --out FILE [--manifest HASH]... [--intent ID]... [--allow-partial]` writes a versioned bundle (an uncompressed tar: `bundle.json` inventory, `records/<aa>/<hash>.json`, and a self-contained `git/objects.bundle` with no prerequisites). The default exports every committed group; `--manifest` and `--intent` export a closure (author and verifier sessions with their capability chains, root and session public keys, workspace, bindings and lifecycle events, intent, check definitions, receipts, evidence and selections). A missing dependency fails with `export_incomplete`; `--allow-partial` writes a bundle whose inventory says `complete: false`. Private keys, trust lists, journals, runtime state, SQLite and uncommitted records are never exported.
 
 `ledger verify [--bundle FILE] [--trust FINGERPRINT]... [--trust-file PATH] [--strict]` reports integrity (`verified`, `invalid`, `unavailable`) separately from trust (`trusted`, `untrusted`, `unknown`). Without `--bundle` it verifies this repository's `refs/ledger/records`. Trust comes only from the local list (default `$XDG_CONFIG_HOME/ledger/trusted-roots.json`, else `~/.config/ledger/trusted-roots.json`, format `{"version":1,"roots":[{"fingerprint":"<hex>","label":"..."}]}`) and `--trust`; keys inside a bundle never add trust. `export`, `verify` and `reindex` need neither the daemon nor SQLite. `--strict` returns `verification_failed` unless integrity is `verified`.

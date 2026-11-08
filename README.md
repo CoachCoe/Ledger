@@ -17,16 +17,18 @@ make check     # everything CI runs
 
 ## Commands
 
-Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"error":{"code":...,"message":...}}` with exit status 1.
+Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"error":{"code":...,"message":...}}` with exit status 1. `ledger mcp` instead serves the MCP stdio protocol.
 
 | Command | Effect |
 |---|---|
 | `ledger init` | Create `.ledger/` in the current repository, exclude it from Git, create the root key in `~/.config/ledger/keys/` if needed, and record its public key. Safe to repeat. |
 | `ledger session …` | Create, end, or recover a signing session. |
+| `ledger mcp` | Serve every versioned core operation as an MCP tool over stdio. |
+| `ledger history …` | Query portable symbol history, attempts and selected dependents. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
 | `ledger coordination …` | Inspect advisory symbols, poll/acknowledge notifications, and create/list/release advisory leases. |
 | `ledger intent …` | Create, inspect, or close an intent. |
-| `ledger workspace …` | Fork, inspect, propose, rework, or close a workspace. |
+| `ledger workspace …` | Fork, inspect, write regular text files, propose, rework, or close a workspace. |
 | `ledger evidence …` | Resolve a proposal's frozen binding, run a pinned check in a fresh verification worktree, record a judgment, or ask whether evidence is independent. |
 | `ledger intent criteriaStatus` | Report each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |
 | `ledger speculation …` | Start a run of several attempts for one intent, submit frozen candidates, evaluate them against the intent's checks and a scorer, and inspect, score, resume or cancel the run. The selected candidate is not merged. |
@@ -52,6 +54,8 @@ The session, capability, coordination, intent, workspace, evidence, selection, s
 Records, together with the Git commits they bind, are portable: `ledger export` writes a single bundle that `ledger verify` checks in any directory, offline and without the source repository, and `ledger import` brings into another repository. Integrity is computed from the bundle; trust comes only from your local trusted-roots list. Share records with `git push origin refs/ledger/records` and fetch them with `git fetch origin refs/ledger/records:refs/ledger/records`; `ledger recover` then imports what arrived. Proposal revisions are kept at `refs/ledger/proposals/*` and shared the same way.
 
 ## Demos
+
+`demos/m6.sh` checks the MCP contracts, history/reindex and editing retries, then runs `demos/phase1.sh`: all nine engineering assertions on a polyglot fixture through real stdio and daemon processes. See the [agent contract](docs/contracts/agents.md) for MCP setup and the provider-free mock agent. Commercial evaluation B.1 and customer/release gates remain separate from engineering acceptance.
 
 `demos/m0.sh` exercises the record store in a temporary repository: idempotent init, stable hashing, multi-process writers, crash recovery, a concurrently moved ref, quarantine, racing transitions, imported conflicts, and reindex.
 

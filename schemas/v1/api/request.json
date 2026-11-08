@@ -7,6 +7,15 @@
     },
     "operation": {
       "enum": [
+        "bundle.import",
+        "bundle.export",
+        "bundle.verify",
+        "system.recover",
+        "system.reindex",
+        "history.why",
+        "history.attempts",
+        "history.dependents",
+        "coordination.nearby",
         "daemon.stop",
         "session.create",
         "session.end",
@@ -21,6 +30,7 @@
         "intent.criteriaStatus",
         "selection.record",
         "workspace.fork",
+        "workspace.write",
         "workspace.status",
         "workspace.propose",
         "workspace.rework",
@@ -74,6 +84,11 @@
           "operation": {
             "not": {
               "enum": [
+                "bundle.verify",
+                "history.why",
+                "history.attempts",
+                "history.dependents",
+                "coordination.nearby",
                 "evidence.resolve",
                 "evidence.isIndependent",
                 "intent.criteriaStatus",

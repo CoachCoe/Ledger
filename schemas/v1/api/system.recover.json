@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/api/system.recover.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "required": []
+}

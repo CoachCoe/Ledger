@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v1/runtime/recovery_report.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cleanup_pending": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "quarantined": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "materialized": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "added_to_ref": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "invalid_in_ref": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "imported": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "indexed": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "unverifiable": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash",
+          "code",
+          "error"
+        ]
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "object"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ]
+      }
+    },
+    "discarded_runtime": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "../common.json#/$defs/count"
+      }
+    }
+  },
+  "required": [
+    "quarantined",
+    "materialized",
+    "added_to_ref",
+    "invalid_in_ref",
+    "indexed",
+    "unverifiable",
+    "pending",
+    "conflicts"
+  ]
+}

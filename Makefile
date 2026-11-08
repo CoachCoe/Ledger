@@ -18,6 +18,7 @@ demo:
 	bash demos/m3.sh
 	bash demos/m4.sh
 	bash demos/m5.sh
+	bash demos/m6.sh
 	bash demos/governance.sh
 
 security:

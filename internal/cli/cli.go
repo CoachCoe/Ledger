@@ -24,6 +24,8 @@ type command struct {
 func commands() map[string]command {
 	return map[string]command{
 		"daemon":       {"serve the core API over the repository socket", cmdDaemon},
+		"mcp":          {"serve the versioned agent tools over MCP stdio", nil},
+		"history":      {"query portable manifests, attempts and selected dependencies", liveCommand("history")},
 		"capability":   {"issue or delegate scoped authority", liveCommand("capability")},
 		"coordination": {"inspect advisory symbols, poll/ack notifications, manage advisory leases", liveCommand("coordination")},
 		"session":      {"create, end or recover a signing session", liveCommand("session")},
@@ -46,6 +48,9 @@ func commands() map[string]command {
 
 // Main runs the command named by args[0] and returns the process exit status.
 func Main(args []string, stdout io.Writer) int {
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCP(args[1:])
+	}
 	cmds := commands()
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		return emit(stdout, usage(cmds), nil)

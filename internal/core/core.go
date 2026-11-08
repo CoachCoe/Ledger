@@ -52,6 +52,7 @@ type Service struct {
 
 	// evidenceHooks are test seams for evidence runs; nil in production.
 	evidenceHooks *evidence.Hooks
+	writeFault    func(string) error // test-only runtime editing interruption seam
 }
 
 // New opens the service over store, completing interrupted operations and
@@ -222,11 +223,23 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	if err := s.retryRecovery(ctx); err != nil {
 		return nil, err
 	}
+	if strings.HasPrefix(r.Operation, "bundle.") || r.Operation == "system.recover" || r.Operation == "system.reindex" {
+		return s.maintenance(ctx, r)
+	}
 	// Every API call by a session refreshes its bound active workspaces.
 	if r.SessionID != "" {
 		if err := s.observeSession(ctx, r.SessionID); err != nil {
 			return nil, err
 		}
+	}
+	if strings.HasPrefix(r.Operation, "history.") {
+		return s.history(ctx, r)
+	}
+	if r.Operation == "workspace.write" {
+		return s.writeText(ctx, r)
+	}
+	if r.Operation == "coordination.nearby" {
+		return s.nearby(ctx, r)
 	}
 	if r.Operation == "coordination.lease" || r.Operation == "coordination.release" || r.Operation == "coordination.leases" || r.Operation == "coordination.status" {
 		return s.coordination(ctx, r)

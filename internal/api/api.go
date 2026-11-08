@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strings"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -59,6 +60,12 @@ func (r Request) Digest() (string, error) {
 }
 
 func ReadOnly(op string) bool {
+	if op == "bundle.verify" {
+		return true
+	}
+	if strings.HasPrefix(op, "history.") || op == "coordination.nearby" {
+		return true
+	}
 	if op == "coordination.leases" || op == "coordination.status" || op == "speculation.status" {
 		return true
 	}

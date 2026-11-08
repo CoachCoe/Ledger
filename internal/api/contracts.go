@@ -1,0 +1,127 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"slices"
+	"strings"
+
+	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/schemas"
+)
+
+// Operations is the versioned protocol's authoritative operation list.
+func Operations() ([]string, error) {
+	b, err := schemas.FS.ReadFile("v1/api/request.json")
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Properties struct{ Operation struct{ Enum []string } }
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	slices.Sort(doc.Properties.Operation.Enum)
+	return doc.Properties.Operation.Enum, nil
+}
+
+// ToolSchemas packages Ledger's schemas without external fetches. A tool's
+// name supplies operation; api_version is fixed by this adapter. Retry and
+// session identities remain explicit, so reconnects cannot duplicate mutations.
+func ToolSchemas(op string) (json.RawMessage, json.RawMessage, error) {
+	in := map[string]any{"type": "object", "additionalProperties": false,
+		"properties": map[string]any{
+			"operation_id": map[string]any{"type": "string"},
+			"session_id":   map[string]any{"anyOf": []any{map[string]any{"const": ""}, map[string]any{"$ref": "../common.json#/$defs/session_id"}}},
+			"input":        map[string]any{"$ref": op + ".json"}},
+		"required": []string{"session_id", "input"}}
+	if !ReadOnly(op) {
+		in["required"] = []string{"operation_id", "session_id", "input"}
+		in["properties"].(map[string]any)["operation_id"] = map[string]any{"$ref": "../common.json#/$defs/operation_id"}
+	}
+	a, err := bundle(in, "v1/api/"+op+".tool.json")
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := bundle(map[string]any{"$ref": responseName(op) + ".json"}, "v1/api/"+op+".tool-output.json")
+	return a, b, err
+}
+
+func responseName(op string) string {
+	if strings.HasPrefix(op, "bundle.") {
+		return op + ".response"
+	}
+	return op + ".output"
+}
+
+// ValidateResponse checks the complete API envelope. The original standalone
+// bundle report schemas remain usable by offline verification clients.
+func ValidateResponse(op string, raw []byte) error { return schema.ValidateAPI(responseName(op), raw) }
+
+func bundle(root map[string]any, base string) (json.RawMessage, error) {
+	defs := map[string]any{}
+	var walk func(any, string) error
+	walk = func(v any, doc string) error {
+		switch node := v.(type) {
+		case map[string]any:
+			delete(node, "$id")
+			if ref, ok := node["$ref"].(string); ok {
+				u, err := url.Parse(doc)
+				if err != nil {
+					return err
+				}
+				r, err := url.Parse(ref)
+				if err != nil {
+					return err
+				}
+				target := u.ResolveReference(r)
+				if target.IsAbs() {
+					return fmt.Errorf("external schema reference %s", ref)
+				}
+				target.Path = strings.TrimPrefix(target.Path, "/")
+				key := strings.ReplaceAll(target.Path, "/", "_")
+				node["$ref"] = "#/$defs/" + key
+				if target.Fragment != "" {
+					node["$ref"] = node["$ref"].(string) + strings.TrimPrefix(target.Fragment, "#")
+				}
+				if _, loaded := defs[key]; !loaded {
+					raw, err := schemas.FS.ReadFile(target.Path)
+					if err != nil {
+						return err
+					}
+					var nested any
+					if err := json.Unmarshal(raw, &nested); err != nil {
+						return err
+					}
+					defs[key] = nested // register before walking recursive references
+					if err := walk(nested, target.Path); err != nil {
+						return err
+					}
+				}
+			}
+			for k, child := range node {
+				if k != "$ref" {
+					if err := walk(child, doc); err != nil {
+						return err
+					}
+				}
+			}
+		case []any:
+			for _, child := range node {
+				if err := walk(child, doc); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(root, base); err != nil {
+		return nil, err
+	}
+	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+	root["$id"] = "https://schemas.ledger.invalid/" + base
+	root["$defs"] = defs
+	return json.Marshal(root)
+}

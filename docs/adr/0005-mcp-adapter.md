@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-11-05
 
+M6 implementation refinement: [ADR 0024](0024-mcp-and-history.md) specifies
+self-contained reference bundling, identity wrappers and the API v1 envelope.
+
 ## Context
 
 MCP is one transport over Ledger's versioned core API. Tool inputs and outputs must use Ledger's own JSON Schemas, and failures must reach agents as structured, coded errors they can act on, not prose.
