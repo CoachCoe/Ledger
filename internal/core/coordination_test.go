@@ -121,7 +121,8 @@ func TestAC029_065_186_LeaseRecovery(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			s := fixture(t)
 			a, b := m4Session(t, s), m4Session(t, s)
-			wa, wb := m2Workspace(t, s, a), m2Workspace(t, s, b)
+			m2Workspace(t, s, a)
+			wb := m2Workspace(t, s, b)
 			sid := a["session_id"].(string)
 			r := request("coordination.lease", sid, map[string]any{"session_id": sid, "paths": []string{"a.ts"}, "symbols": []any{}, "reason": "refactor", "expires_at": schema.Timestamp(time.Now().Add(time.Hour))})
 			crash := errors.New("crash")
@@ -175,7 +176,6 @@ func TestAC029_065_186_LeaseRecovery(t *testing.T) {
 			if err != nil || len(leases) != 0 {
 				t.Fatal("lost session revived leases", leases, err)
 			}
-			_ = wa
 		})
 	}
 }

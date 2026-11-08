@@ -160,7 +160,7 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 	}
 	rep.Invalid = append(rep.Invalid, src.Problems...)
 	rep.Invalid = append(rep.Invalid, c.Problems...)
-	sigProblems, sigMissing := g.rawSignatures(c)
+	sigProblems, sigMissing := g.rawSignatures()
 	rep.Invalid = append(rep.Invalid, sigProblems...)
 	rep.Missing = append(rep.Missing, c.Missing...)
 	rep.Missing = append(rep.Missing, src.Missing...)

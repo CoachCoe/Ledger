@@ -100,7 +100,7 @@ const (
 // rawSignatures verifies the signature of every object against the key its
 // signer's records name, whatever group the object is in. A signer whose
 // key record is absent is unavailable; a signature that fails is invalid.
-func (g *graph) rawSignatures(c *Corpus) (problems []Problem, missing []string) {
+func (g *graph) rawSignatures() (problems []Problem, missing []string) {
 	need := map[string]bool{}
 	for _, h := range sortedKeys(g.objects) {
 		o := g.objects[h]
@@ -123,7 +123,6 @@ func (g *graph) rawSignatures(c *Corpus) (problems []Problem, missing []string) 
 		missing = append(missing, "key:"+s)
 	}
 	slices.Sort(missing)
-	_ = c
 	return problems, missing
 }
 

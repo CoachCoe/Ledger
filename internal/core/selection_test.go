@@ -272,7 +272,7 @@ func TestAC171_RejectsFabricatedAndCrossRevision(t *testing.T) {
 	if _, err := s.Handle(ctx, request("selection.record", "", f.selectIn([]string{strings.Repeat("ab", 32)}, nil))); !apierr.HasCode(err, "unknown_evidence") {
 		t.Fatalf("unknown evidence: %v", err)
 	}
-	other := newRival(t, s, f)
+	newRival(t, s, f)
 	if _, err := s.Handle(ctx, request("selection.record", "", f.selectIn([]string{rev1}, map[string]any{"commit": strings.Repeat("1", 40)}))); !apierr.HasCode(err, "binding_mismatch") {
 		t.Fatalf("wrong commit: %v", err)
 	}
@@ -287,7 +287,6 @@ func TestAC171_RejectsFabricatedAndCrossRevision(t *testing.T) {
 	if _, err := s.Handle(ctx, request("selection.record", "", f.selectIn([]string{rev1}, map[string]any{"competitors": []string{foreign.proposal["manifest"].(string)}}))); !apierr.HasCode(err, "invalid_competitor") {
 		t.Fatalf("competitor of another intent: %v", err)
 	}
-	_ = other
 
 	// The author cannot select its own change.
 	if _, err := s.Handle(ctx, request("selection.record", f.sid, f.selectIn([]string{rev1}, nil))); !apierr.HasCode(err, "unauthorized") {

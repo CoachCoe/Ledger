@@ -613,8 +613,7 @@ func FuzzBundleStage(f *testing.F) {
 			t.Fatal(err)
 		}
 		lim := verify.Limits{MaxEntries: 8, MaxRecordBytes: 1 << 16, MaxInventoryBytes: 1 << 16, MaxTotalBytes: 1 << 18, MaxGitBytes: 1 << 16}
-		st, _ := verify.Stage(context.Background(), file, dir, lim)
-		_ = st
+		_, _ = verify.Stage(context.Background(), file, dir, lim)
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)

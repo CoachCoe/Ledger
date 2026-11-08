@@ -111,11 +111,6 @@ func TestAC088_UnavailableNotInvalid(t *testing.T) {
 		"session": func(p *parts) { delete(p.Records, p.byKind(t, schema.KindSession)[0]) },
 		"receipt": func(p *parts) { delete(p.Records, receiptOf(p)) },
 		"commit": func(p *parts) {
-			out, err := gitx.Run(context.Background(), c.repo.Dir, nil, gitEnv, "bundle", "create", filepath.Join(t.TempDir(), "r.bundle"), record.RecordsRef)
-			_ = out
-			if err != nil {
-				t.Fatal(err)
-			}
 			tmp := filepath.Join(t.TempDir(), "only-records.bundle")
 			if _, err := gitx.Run(context.Background(), c.repo.Dir, nil, gitEnv, "bundle", "create", "-q", tmp, record.RecordsRef); err != nil {
 				t.Fatal(err)
