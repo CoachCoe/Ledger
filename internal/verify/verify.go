@@ -121,9 +121,13 @@ func (g *graph) manifest(hash string, trusted []string) Result {
 			if receipt != nil {
 				return fail(apierr.New("conflicting_receipt", "multiple manifest receipts"))
 			}
+			at, err := schema.ParseTimestamp(r.At)
+			if err != nil {
+				return fail(apierr.New("invalid_receipt", "receipt time %q: %v", r.At, err))
+			}
 			copyOf := o
 			receipt = &copyOf
-			g.at, _ = schema.ParseTimestamp(r.At)
+			g.at = at
 		}
 	}
 	if receipt == nil {
