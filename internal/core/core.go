@@ -232,47 +232,49 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 			return nil, err
 		}
 	}
-	if strings.HasPrefix(r.Operation, "history.") {
+	switch op := r.Operation; {
+	case strings.HasPrefix(op, "history."):
 		return s.history(ctx, r)
-	}
-	if r.Operation == "workspace.write" {
-		return s.writeText(ctx, r)
-	}
-	if r.Operation == "coordination.nearby" {
+	case op == "coordination.nearby":
 		return s.nearby(ctx, r)
-	}
-	if r.Operation == "coordination.lease" || r.Operation == "coordination.release" || r.Operation == "coordination.leases" || r.Operation == "coordination.status" {
+	case op == "workspace.write":
+		return s.writeText(ctx, r)
+	case op == "coordination.lease" || op == "coordination.release" || op == "coordination.leases" || op == "coordination.status":
 		return s.coordination(ctx, r)
-	}
-	if api.ReadOnly(r.Operation) {
+	case api.ReadOnly(op):
 		return s.read(ctx, r)
-	}
-	if r.Operation == "evidence.run" {
+	case op == "evidence.run":
 		return s.evidenceRun(ctx, r)
-	}
-	switch r.Operation {
-	case "evidence.judge":
+	case op == "evidence.judge":
 		return s.evidenceJudge(ctx, r)
-	case "speculation.evaluate":
+	case op == "speculation.evaluate":
 		return s.evaluateRun(ctx, r)
-	case "speculation.score":
+	case op == "speculation.score":
 		return s.scoreRun(ctx, r)
-	case "speculation.cancel":
-		res, err := s.mutate(ctx, r)
-		if err == nil {
-			// An in-process evaluation stops promptly; its evidence runs
-			// record cancelled attestations.
-			if in, e := decode[runRef](r.Input); e == nil {
-				s.mu.Lock()
-				if stop := s.evaluating[in.RunID]; stop != nil {
-					stop()
-				}
-				s.mu.Unlock()
-			}
-		}
-		return res, err
+	case op == "speculation.cancel":
+		return s.cancel(ctx, r)
 	}
 	return s.mutate(ctx, r)
+}
+
+// cancel ends a run, then stops its in-process evaluation, whose evidence
+// runs record cancelled attestations. A committed cancellation stops it even
+// when loser cleanup is still pending.
+func (s *Service) cancel(ctx context.Context, r api.Request) (any, error) {
+	res, err := s.mutate(ctx, r)
+	if err != nil && apierr.As(err).Details["committed"] != true {
+		return res, err
+	}
+	in, derr := decode[cancelInput](r.Input)
+	if derr != nil {
+		return nil, derr
+	}
+	s.mu.Lock()
+	if stop := s.evaluating[in.RunID]; stop != nil {
+		stop()
+	}
+	s.mu.Unlock()
+	return res, err
 }
 
 func (s *Service) retryRecovery(ctx context.Context) error {

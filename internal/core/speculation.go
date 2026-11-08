@@ -693,14 +693,16 @@ func (s *Service) resolve(ctx context.Context, r api.Request, digest, id string,
 
 // cancelRun cancels a run that has not ended: nothing is selected and every
 // attempt is closed with outcome cancelled.
+type cancelInput struct {
+	RunID  string `json:"run_id"`
+	Reason string `json:"reason"`
+}
+
 func (s *Service) cancelRun(ctx context.Context, c *invocation) (prepared, error) {
 	if err := requireRoot(c); err != nil {
 		return prepared{}, err
 	}
-	in, err := decode[struct {
-		RunID  string `json:"run_id"`
-		Reason string `json:"reason"`
-	}](c.Input)
+	in, err := decode[cancelInput](c.Input)
 	if err != nil {
 		return prepared{}, err
 	}

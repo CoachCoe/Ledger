@@ -957,7 +957,7 @@ func TestAC119_CancelStopsAnInFlightEvaluation(t *testing.T) {
 	}
 	time.Sleep(500 * time.Millisecond)
 	started := time.Now()
-	out := call(t, s, f.runReq("speculation.cancel"))
+	out := call(t, s, request("speculation.cancel", "", map[string]any{"run_id": f.runID, "reason": "superseded"}))
 	if out["state"] != "cancelled" || out["selection"] != nil {
 		t.Fatalf("cancel: %v", out)
 	}
