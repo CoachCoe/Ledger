@@ -226,6 +226,9 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 				continue
 			}
 			mr.Evidence = append(mr.Evidence, g.evidence(o, commits[att.Manifest]))
+			if _, ok := g.objects[att.CheckDefinition]; !ok {
+				rep.Missing = append(rep.Missing, att.CheckDefinition)
+			}
 		case schema.KindSelectionDecision:
 			d, err := decode[schema.SelectionDecision](o)
 			if err != nil {
@@ -237,7 +240,12 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 				rep.Missing = append(rep.Missing, "manifest:"+d.Manifest)
 				continue
 			}
-			mr.Selections = append(mr.Selections, g.selection(o))
+			mr.Selections = append(mr.Selections, g.selection(o, commits[d.Manifest]))
+			for _, h := range append(slices.Clone(d.Evidence), d.Competitors...) {
+				if _, ok := g.objects[h]; !ok {
+					rep.Missing = append(rep.Missing, h)
+				}
+			}
 		}
 	}
 	rep.Conflicts = append(rep.Conflicts, conflicts(c)...)

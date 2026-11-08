@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -207,8 +208,11 @@ func (g *graph) facts(o envelope.Object) (selection.Evidence, schema.ChangeManif
 		return selection.Evidence{}, schema.ChangeManifest{}, err
 	}
 	mobj, ok := g.objects[att.Manifest]
-	if !ok || mobj.Envelope.Kind != schema.KindChangeManifest {
+	if !ok {
 		return selection.Evidence{}, schema.ChangeManifest{}, apierr.New("dependency_unavailable", "missing manifest %s", att.Manifest)
+	}
+	if mobj.Envelope.Kind != schema.KindChangeManifest {
+		return selection.Evidence{}, schema.ChangeManifest{}, apierr.New("invalid_attestation", "manifest reference %s names a %s", att.Manifest, mobj.Envelope.Kind)
 	}
 	m, err := decode[schema.ChangeManifest](mobj)
 	if err != nil {
@@ -281,14 +285,46 @@ func (g *graph) evidence(o envelope.Object, commit string) EvidenceReport {
 		return fail(apierr.New("isolation_not_none", "unknown isolation %q", att.Isolation))
 	}
 	def, ok := g.objects[att.CheckDefinition]
-	if !ok || def.Envelope.Kind != schema.KindCheckDefinition {
+	if !ok {
 		return fail(apierr.New("dependency_unavailable", "missing check definition %s", att.CheckDefinition))
+	}
+	if def.Envelope.Kind != schema.KindCheckDefinition {
+		return fail(apierr.New("invalid_attestation", "check definition reference %s names a %s", att.CheckDefinition, def.Envelope.Kind))
+	}
+	d, err := decode[schema.CheckDefinition](def)
+	if err != nil {
+		return fail(err)
+	}
+	if d.Category != att.Category {
+		return fail(apierr.New("invalid_attestation", "attestation category differs from its check definition"))
+	}
+	iobj, err := g.entity(m.IntentID, schema.KindIntent)
+	if err != nil {
+		return fail(err)
+	}
+	intent, err := decode[schema.Intent](iobj)
+	if err != nil {
+		return fail(err)
+	}
+	for _, id := range att.Criteria {
+		i := slices.IndexFunc(intent.Criteria, func(c schema.Criterion) bool { return c.ID == id })
+		if i < 0 {
+			return fail(apierr.New("invalid_attestation", "intent has no criterion %q", id))
+		}
+		v := intent.Criteria[i].Verification
+		if att.Category == "judgment" {
+			if v.Kind != "judgment" || d.Name != "judgment" {
+				return fail(apierr.New("invalid_attestation", "judgment must reference a judgment criterion and definition"))
+			}
+		} else if v.Kind != "check" || v.DefinitionHash != att.CheckDefinition {
+			return fail(apierr.New("invalid_attestation", "criterion %q is not pinned to the attested check definition", id))
+		}
 	}
 	return r
 }
 
 // selection verifies one decision by recomputing its statuses.
-func (g *graph) selection(o envelope.Object) SelectionReport {
+func (g *graph) selection(o envelope.Object, commit string) SelectionReport {
 	r := SelectionReport{Hash: o.Hash, Integrity: Verified}
 	fail := func(err error) SelectionReport {
 		r.Integrity, r.Detail = stateOf(err), apierr.As(err).Message
@@ -309,8 +345,11 @@ func (g *graph) selection(o envelope.Object) SelectionReport {
 		return fail(apierr.New("unauthorized", "the selector is not the signer"))
 	}
 	mobj, ok := g.objects[d.Manifest]
-	if !ok || mobj.Envelope.Kind != schema.KindChangeManifest {
+	if !ok {
 		return fail(apierr.New("dependency_unavailable", "missing manifest %s", d.Manifest))
+	}
+	if mobj.Envelope.Kind != schema.KindChangeManifest {
+		return fail(apierr.New("invalid_selection", "manifest reference %s names a %s", d.Manifest, mobj.Envelope.Kind))
 	}
 	m, err := decode[schema.ChangeManifest](mobj)
 	if err != nil {
@@ -318,6 +357,37 @@ func (g *graph) selection(o envelope.Object) SelectionReport {
 	}
 	if o.Envelope.Signer == m.AuthorSession {
 		return fail(apierr.New("unauthorized", "the author cannot select its own manifest"))
+	}
+	if d.IntentID != m.IntentID {
+		return fail(apierr.New("invalid_selection", "the selected intent differs from the manifest's intent"))
+	}
+	if commit == "" {
+		return fail(apierr.New("dependency_unavailable", "the selected manifest's commit is unavailable"))
+	}
+	if d.Commit != commit {
+		return fail(apierr.New("binding_mismatch", "the selected commit differs from the manifest's retained commit"))
+	}
+	for i, h := range d.Competitors {
+		if h == d.Manifest || (i > 0 && h <= d.Competitors[i-1]) {
+			return fail(apierr.New("invalid_selection", "competitors must be sorted, unique and exclude the selected manifest"))
+		}
+		other, ok := g.objects[h]
+		if !ok {
+			return fail(apierr.New("dependency_unavailable", "missing competitor manifest %s", h))
+		}
+		if other.Envelope.Kind != schema.KindChangeManifest {
+			return fail(apierr.New("invalid_selection", "competitor reference %s names a %s", h, other.Envelope.Kind))
+		}
+		cm, err := decode[schema.ChangeManifest](other)
+		if err != nil {
+			return fail(err)
+		}
+		if cm.IntentID != m.IntentID {
+			return fail(apierr.New("invalid_selection", "competitor %s belongs to a different intent", h))
+		}
+	}
+	if !slices.IsSorted(d.Evidence) || len(slices.Compact(slices.Clone(d.Evidence))) != len(d.Evidence) {
+		return fail(apierr.New("invalid_selection", "evidence hashes must be sorted and unique"))
 	}
 	iobj, err := g.entity(m.IntentID, schema.KindIntent)
 	if err != nil {
@@ -328,6 +398,31 @@ func (g *graph) selection(o envelope.Object) SelectionReport {
 		return fail(err)
 	}
 	var set, known []selection.Evidence
+	// Contrary evidence is a snapshot of what was recorded when this choice
+	// was made. Later runs must remain visible without rewriting that history.
+	recordedAt := map[string]time.Time{}
+	for _, ro := range g.objects {
+		if ro.Envelope.Kind != schema.KindOperationReceipt {
+			continue
+		}
+		rc, err := decode[schema.OperationReceipt](ro)
+		if err != nil {
+			return fail(err)
+		}
+		at, err := schema.ParseTimestamp(rc.At)
+		if err != nil {
+			return fail(err)
+		}
+		for _, member := range rc.Members {
+			if prev, ok := recordedAt[member]; !ok || at.Before(prev) {
+				recordedAt[member] = at
+			}
+		}
+	}
+	selectedAt, recorded := recordedAt[o.Hash]
+	if !recorded {
+		return fail(apierr.New("dependency_unavailable", "missing selection receipt"))
+	}
 	for _, h := range sortedKeys(g.objects) {
 		eo := g.objects[h]
 		if eo.Envelope.Kind != schema.KindEvidenceAttestation {
@@ -340,7 +435,8 @@ func (g *graph) selection(o envelope.Object) SelectionReport {
 			}
 			continue
 		}
-		if e.Att.Manifest == d.Manifest {
+		at, recorded := recordedAt[h]
+		if e.Att.Manifest == d.Manifest && recorded && !at.After(selectedAt) {
 			known = append(known, e)
 		}
 		if slices.Contains(d.Evidence, h) {
@@ -349,6 +445,9 @@ func (g *graph) selection(o envelope.Object) SelectionReport {
 	}
 	for _, h := range d.Evidence {
 		if !slices.ContainsFunc(set, func(e selection.Evidence) bool { return e.Hash == h }) {
+			if object, ok := g.objects[h]; ok && object.Envelope.Kind != schema.KindEvidenceAttestation {
+				return fail(apierr.New("invalid_selection", "evidence reference %s names a %s", h, object.Envelope.Kind))
+			}
 			return fail(apierr.New("dependency_unavailable", "missing evidence %s", h))
 		}
 	}

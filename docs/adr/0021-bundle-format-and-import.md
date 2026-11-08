@@ -14,6 +14,8 @@ Status: accepted (M3.6; final at M3.7). Extends ADR 0013.
 8. **Versions.** Unknown `bundle_version` fails `unsupported_bundle_version`; unknown envelope `schema_version` fails `unsupported_schema_version`.
 9. **Foreign roots (risk in plan decision 15).** Confirmed by `TestAC115_ForeignRootImport`: replay accepts groups signed by a root other than the importing repository's, which stays history only; local operations remain signed by the local root. No relaxation of replay was needed.
 10. **Publisher interface.** `verify` cannot import `record`, so `verify.Import` takes a `Publisher`; the CLI adapts `ImportRecords`.
+11. **Semantic claims.** Offline verification checks attestation categories and criteria against the pinned definitions and intent. A selection must name the manifest's retained commit and intent, with unique sorted evidence and competitors from that intent. Its contrary-evidence list is a historical snapshot: recomputation uses evidence receipted at or before the decision's receipt time. Later contrary evidence remains in the report without invalidating an earlier choice. Timestamps describe this snapshot; they do not resolve conflicting histories.
+12. **Reference types.** An absent dependency is unavailable; an existing record of the wrong kind is invalid. A signed record cannot substitute a manifest for evidence or a check definition and pass import as merely unavailable.
 
 ## Deviation
 Verification of manifests reports authority via the existing `graph` code (refactored into `newGraph`/`manifest` without changing `Manifest`). Attestations and selections are additionally recomputed; a failed check is an evidence result, not an integrity failure.
