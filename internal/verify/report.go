@@ -125,6 +125,7 @@ type Report struct {
 	Complete      bool             `json:"complete"`
 	Roots         []RootTrust      `json:"roots"`
 	Manifests     []ManifestReport `json:"manifests"`
+	Runs          []RunReport      `json:"runs"`
 	Conflicts     []Conflict       `json:"conflicts"`
 	Missing       []string         `json:"missing"`
 	Invalid       []Problem        `json:"invalid"`
@@ -154,7 +155,7 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 		return nil, err
 	}
 	rep := &Report{
-		BundleVersion: src.BundleVersion, Source: src.Name, Roots: []RootTrust{}, Manifests: []ManifestReport{},
+		BundleVersion: src.BundleVersion, Source: src.Name, Roots: []RootTrust{}, Manifests: []ManifestReport{}, Runs: []RunReport{},
 		Conflicts: []Conflict{}, Missing: []string{}, Invalid: []Problem{}, Pending: nilToEmpty(c.Pending), Unattached: []string{}, Size: src.Size,
 	}
 	rep.Invalid = append(rep.Invalid, src.Problems...)
@@ -248,6 +249,7 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 			}
 		}
 	}
+	rep.Runs = g.runs()
 	rep.Conflicts = append(rep.Conflicts, conflicts(c)...)
 	if src.Inventory != nil && src.Repo != nil {
 		for _, ic := range src.Inventory.Git.Commits {
@@ -271,6 +273,9 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 			mr.Trust = trustOf(trusts[mr.Hash])
 		}
 		integrity = append(integrity, mr.Integrity)
+	}
+	for _, r := range rep.Runs {
+		integrity = append(integrity, r.Integrity)
 	}
 	slices.Sort(rep.Missing)
 	rep.Missing = slices.Compact(rep.Missing)

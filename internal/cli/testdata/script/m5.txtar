@@ -1,0 +1,109 @@
+# M5 speculation through the shipped binary: start a run, submit frozen
+# candidates from the attempt sessions, evaluate them against the pinned
+# check, score with a submission scorer, and verify the run offline.
+fixture polyglot repo
+cd repo
+exec git init -q
+exec git add -A
+exec git commit -qm base
+exec ledger init
+jsonvar FP result.root_fingerprint
+cp $WORK/checks.json .ledger/checks.json
+# A run needs at least one mechanical check criterion.
+exec ledger intent create '{"description":"judgment only","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"human"}}]}'
+jsonvar JINT result.result.intent_id
+! exec ledger speculation start {"intent_id":"$JINT","strategies":[{"name":"a","spec":"x"}],"scorer":{"kind":"submission"},"deadline_seconds":600}
+stdout '"code": "no_check_criterion"'
+exec ledger intent create '{"description":"M5 speculation","criteria":[{"id":"ok","statement":"ok.txt exists","verification":{"kind":"check","check":"unit"}}]}'
+jsonvar INT result.result.intent_id
+! exec ledger speculation start {"intent_id":"$INT","strategies":[{"name":"a","spec":"x"}],"scorer":{"kind":"command"},"deadline_seconds":600}
+stdout '"code": "invalid_scorer"'
+exec ledger speculation start {"intent_id":"$INT","n":3,"strategies":[{"name":"a","spec":"write-ok.txt"}],"scorer":{"kind":"submission"},"deadline_seconds":600}
+stdout '"state": "collecting"'
+jsonvar RUN result.result.run_id
+jsonvar W0 result.result.attempts.0.workspace_id
+jsonvar S0 result.result.attempts.0.session_id
+jsonvar P0 result.result.attempts.0.path
+jsonvar W1 result.result.attempts.1.workspace_id
+jsonvar S1 result.result.attempts.1.session_id
+jsonvar P1 result.result.attempts.1.path
+jsonvar W2 result.result.attempts.2.workspace_id
+jsonvar S2 result.result.attempts.2.session_id
+# Two attempts satisfy the check; the third forgets it.
+cp $WORK/short.txt $P0/ok.txt
+cp $WORK/long.txt $P1/ok.txt
+# Only the attempt's own session may submit it, and only once.
+! exec ledger speculation submit --session $S1 {"run_id":"$RUN","workspace_id":"$W0"}
+stdout '"code": "unauthorized"'
+exec ledger speculation submit --session $S0 {"run_id":"$RUN","workspace_id":"$W0"}
+jsonvar M0 result.result.manifest
+jsonvar C0 result.result.commit
+! exec ledger speculation submit --session $S0 {"run_id":"$RUN","workspace_id":"$W0"}
+stdout '"code": "already_submitted"'
+exec ledger speculation submit --session $S1 {"run_id":"$RUN","workspace_id":"$W1"}
+jsonvar M1 result.result.manifest
+exec ledger speculation submit --session $S2 {"run_id":"$RUN","workspace_id":"$W2"}
+# A run workspace cannot be selected outside the run.
+! exec ledger selection record {"manifest":"$M0","commit":"$C0","evidence":[]}
+stdout '"code": "run_active"'
+# Evaluation runs the pinned check on every candidate, then waits for scores
+# from the submission scorer for the eligible ones only.
+exec ledger speculation evaluate {"run_id":"$RUN"}
+stdout '"awaiting_scores": true'
+stdout '"state": "evaluating"'
+! exec ledger speculation submit --session $S2 {"run_id":"$RUN","workspace_id":"$W2"}
+stdout '"code"'
+# Malformed scores interrupt the run without a winner; resuming re-enters
+# evaluation with the same frozen candidates.
+! exec ledger speculation score {"run_id":"$RUN","scores":{"$M0":1}}
+stdout '"code": "invalid_scores"'
+stdout '"interrupted": true'
+exec ledger speculation status {"run_id":"$RUN"}
+stdout '"state": "interrupted"'
+stdout '"resume": "evaluating"'
+exec ledger speculation resume {"run_id":"$RUN"}
+stdout '"state": "evaluating"'
+exec ledger speculation evaluate {"run_id":"$RUN"}
+stdout '"awaiting_scores": true'
+exec ledger speculation score {"run_id":"$RUN","scores":{"$M0":1,"$M1":5}}
+stdout '"state": "resolved"'
+stdout '"outcome": "selected"'
+stdout '"outcome": "lost_tiebreaker"'
+stdout '"outcome": "failed_criteria"'
+stdout '"accepted": false'
+stdout '"merged": false'
+jsonvar WINNER result.result.winner.manifest
+jsonvar BRANCH result.result.winner.branch
+exec test $WINNER = $M1
+exec ledger speculation status {"run_id":"$RUN"}
+stdout '"state": "resolved"'
+stdout '"workspace_state": "selected"'
+stdout '"workspace_state": "closed"'
+# The selection is a choice, not a merge: no merge commit exists.
+exec git rev-parse --verify $BRANCH
+exec git rev-list --merges --all
+! stdout .
+# A second run is cancelled before anything is submitted.
+exec ledger speculation start {"intent_id":"$INT","strategies":[{"name":"a","spec":"x"}],"scorer":{"kind":"submission"},"deadline_seconds":600}
+jsonvar RUN2 result.result.run_id
+exec ledger speculation cancel {"run_id":"$RUN2","reason":"superseded"}
+stdout '"state": "cancelled"'
+stdout '"winner": null'
+! exec ledger speculation resume {"run_id":"$RUN2"}
+stdout '"code"'
+# Export and verify the runs without the daemon or the index.
+exec ledger daemon stop
+exec ledger export --out $WORK/m5.ledger
+stdout '"complete": true'
+exec ledger verify --bundle $WORK/m5.ledger --strict --trust $FP
+stdout '"integrity": "verified"'
+stdout '"trust": "trusted"'
+stdout '"id": "'$RUN'"'
+stdout '"state": "resolved"'
+stdout '"state": "cancelled"'
+-- checks.json --
+[{"name":"unit","category":"mechanical","setup":null,"command":"test -f ok.txt","working_directory":".","env_allowlist":[],"timeout_seconds":30,"output_limit_bytes":1024}]
+-- short.txt --
+a
+-- long.txt --
+a much longer answer

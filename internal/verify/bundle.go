@@ -261,7 +261,7 @@ func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportRe
 				inv.Keys = append(inv.Keys, InvKey{Fingerprint: identity.Fingerprint(k), PublicKey: s.PublicKey, Role: "session", SessionID: s.ID})
 			}
 			setID(inv.IDs, s.ID, h)
-		case schema.KindCapability, schema.KindWorkspace, schema.KindIntent:
+		case schema.KindCapability, schema.KindWorkspace, schema.KindIntent, schema.KindSpeculationRun:
 			var p struct {
 				ID string `json:"id"`
 			}
@@ -482,12 +482,18 @@ type exporter struct {
 	bindOf    map[string][]string // workspace id -> bindings
 	evidence  map[string][]string // manifest -> attestations
 	selection map[string][]string // manifest -> decisions
+	attempts  map[string][]string // run id and manifest -> attempt records
+	runOf     map[string][]string // workspace id -> runs binding it
+	runSel    map[string][]string // run id -> its selections
+	intentRun map[string][]string // intent id -> runs
+	manifests map[string][]string // workspace id -> manifests
 }
 
 func newExporter(g *graph, c *Corpus) *exporter {
 	e := &exporter{g: g, c: c, set: map[string]bool{}, missing: map[string]bool{},
 		memberOf: map[string][]string{}, eventsOf: map[string][]string{}, bindOf: map[string][]string{},
-		evidence: map[string][]string{}, selection: map[string][]string{}}
+		evidence: map[string][]string{}, selection: map[string][]string{}, attempts: map[string][]string{},
+		runOf: map[string][]string{}, runSel: map[string][]string{}, intentRun: map[string][]string{}, manifests: map[string][]string{}}
 	for _, h := range sortedKeys(c.Objects) {
 		o := c.Objects[h]
 		switch o.Envelope.Kind {
@@ -512,6 +518,27 @@ func newExporter(g *graph, c *Corpus) *exporter {
 		case schema.KindSelectionDecision:
 			if d, err := decode[schema.SelectionDecision](o); err == nil {
 				e.selection[d.Manifest] = append(e.selection[d.Manifest], h)
+				if d.Selector.Kind == "speculation_run" {
+					e.runSel[d.Selector.ID] = append(e.runSel[d.Selector.ID], h)
+				}
+			}
+		case schema.KindChangeManifest:
+			if m, err := decode[schema.ChangeManifest](o); err == nil {
+				e.manifests[m.WorkspaceID] = append(e.manifests[m.WorkspaceID], h)
+			}
+		case schema.KindAttemptRecord:
+			if a, err := decode[schema.AttemptRecord](o); err == nil {
+				e.attempts[a.RunID] = append(e.attempts[a.RunID], h)
+				if a.Manifest != nil {
+					e.attempts[*a.Manifest] = append(e.attempts[*a.Manifest], h)
+				}
+			}
+		case schema.KindSpeculationRun:
+			if r, err := decode[schema.SpeculationRun](o); err == nil {
+				for _, a := range r.Attempts {
+					e.runOf[a.WorkspaceID] = append(e.runOf[a.WorkspaceID], r.ID)
+				}
+				e.intentRun[r.IntentID] = append(e.intentRun[r.IntentID], h)
 			}
 		}
 	}
@@ -529,6 +556,12 @@ func (e *exporter) starts(manifests, intents []string) ([]string, error) {
 	}
 	for _, id := range intents {
 		found := false
+		for _, h := range e.intentRun[id] {
+			if e.c.Committed[h] {
+				out = append(out, h)
+				found = true
+			}
+		}
 		for _, h := range sortedKeys(e.c.Objects) {
 			o := e.c.Objects[h]
 			if o.Envelope.Kind != schema.KindChangeManifest || !e.c.Committed[h] {
@@ -616,8 +649,14 @@ func (e *exporter) deps(o envelope.Object) {
 			e.entity(m.AuthorSession)
 			e.entity(m.WorkspaceID)
 			e.entity(m.IntentID)
+			for _, run := range e.runOf[m.WorkspaceID] {
+				e.entity(run)
+			}
 		}
 		for _, h := range e.evidence[o.Hash] {
+			e.include(h)
+		}
+		for _, h := range e.attempts[o.Hash] {
 			e.include(h)
 		}
 		for _, h := range e.selection[o.Hash] {
@@ -682,6 +721,39 @@ func (e *exporter) deps(o envelope.Object) {
 				e.include(h)
 			}
 			e.entity(d.IntentID)
+			if d.Selector.Kind == "speculation_run" {
+				e.entity(d.Selector.ID)
+			}
+		}
+	case schema.KindSpeculationRun:
+		if r, err := decode[schema.SpeculationRun](o); err == nil {
+			e.entity(r.IntentID)
+			for _, h := range r.Checks {
+				e.include(h)
+			}
+			for _, a := range r.Attempts {
+				e.entity(a.WorkspaceID)
+				for _, h := range e.manifests[a.WorkspaceID] {
+					e.include(h)
+				}
+			}
+			for _, h := range e.attempts[r.ID] {
+				e.include(h)
+			}
+			for _, h := range e.runSel[r.ID] {
+				e.include(h)
+			}
+		}
+	case schema.KindAttemptRecord:
+		if a, err := decode[schema.AttemptRecord](o); err == nil {
+			e.entity(a.RunID)
+			e.entity(a.WorkspaceID)
+			if a.Manifest != nil {
+				e.include(*a.Manifest)
+			}
+			for _, h := range a.Evidence {
+				e.include(h)
+			}
 		}
 	}
 }

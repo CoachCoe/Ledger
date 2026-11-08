@@ -124,6 +124,14 @@ this tree on this machine", signed by a session that is not the author. It is no
 that the check was tamper-proof, or that the code under test could not influence the
 machine that ran it.
 
+## Speculation scorers are not isolated
+
+A `command` scorer runs exactly like a check: `/bin/sh -c` as the daemon's user, with no network, filesystem or process isolation. Its scratch directory, timeout, process-group termination and reduced environment (`LEDGER_SCORER_INPUT`, `LEDGER_SCORER_OUTPUT`, `LEDGER_REPOSITORY`, `LEDGER_RUN_ID` and the definition's allowlist) bound it, but do not contain it. `LEDGER_REPOSITORY` lets it read candidate commits; it could equally write to the repository. Treat a scorer as code you trust as much as your checks. A `submission` scorer is whoever holds a root-authenticated connection to the daemon.
+
+The run's scorer hash pins the definition, not the program the command invokes: editing `score.py` between runs changes scores without changing the hash. Scores are recorded in the run's selection, so a later reader sees what was scored, not why.
+
+Each attempt gets its own session and capability, with the path scope given to `speculation.start` (`allow`, `deny`, `may_add_dependencies`), expiring ten minutes after the deadline. Only that session may submit its workspace. A run's records are signed by the root that started it; the run id is a selecting context, never a signer.
+
 ## Bundles, trust and import
 A bundle is untrusted input. Its integrity (`verified`, `invalid`, `unavailable`)
 is computed from its bytes alone; its trust (`trusted`, `untrusted`, `unknown`)

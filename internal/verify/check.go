@@ -337,12 +337,14 @@ func (g *graph) selection(o envelope.Object, commit string) SelectionReport {
 	if err := g.signature(o); err != nil {
 		return fail(err)
 	}
-	wantKind := "root"
-	if strings.HasPrefix(o.Envelope.Signer, schema.PrefixSession) {
-		wantKind = "session"
-	}
-	if d.Selector.Kind != wantKind || d.Selector.ID != o.Envelope.Signer {
-		return fail(apierr.New("unauthorized", "the selector is not the signer"))
+	if d.Selector.Kind != "speculation_run" {
+		wantKind := "root"
+		if strings.HasPrefix(o.Envelope.Signer, schema.PrefixSession) {
+			wantKind = "session"
+		}
+		if d.Selector.Kind != wantKind || d.Selector.ID != o.Envelope.Signer {
+			return fail(apierr.New("unauthorized", "the selector is not the signer"))
+		}
 	}
 	mobj, ok := g.objects[d.Manifest]
 	if !ok {
@@ -461,6 +463,11 @@ func (g *graph) selection(o envelope.Object, commit string) SelectionReport {
 	if !selection.SameStatuses(res.Criteria, d.Criteria) || !slices.Equal(res.Contrary, d.ContraryEvidence) {
 		return fail(apierr.New("status_mismatch", "recorded criteria differ from a recomputation of the evidence"))
 	}
+	if d.Selector.Kind == "speculation_run" {
+		if err := g.runSelection(o, d, m, intent); err != nil {
+			return fail(err)
+		}
+	}
 	return r
 }
 
@@ -479,7 +486,7 @@ func conflicts(c *Corpus) []Conflict {
 		}
 		o := c.Objects[h]
 		switch o.Envelope.Kind {
-		case schema.KindSession, schema.KindCapability, schema.KindWorkspace, schema.KindIntent:
+		case schema.KindSession, schema.KindCapability, schema.KindWorkspace, schema.KindIntent, schema.KindSpeculationRun:
 			var p struct {
 				ID string `json:"id"`
 			}

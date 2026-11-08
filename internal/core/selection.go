@@ -47,6 +47,9 @@ func (s *Service) recordSelection(ctx context.Context, c *invocation) (prepared,
 	if err != nil {
 		return prepared{}, err
 	}
+	if err := s.notInRun(ctx, ws.ID); err != nil {
+		return prepared{}, err
+	}
 	if ws.State != "proposed" {
 		return prepared{}, apierr.New("invalid_state", "workspace %s is %s, not proposed", ws.ID, ws.State)
 	}

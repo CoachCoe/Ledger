@@ -142,7 +142,7 @@ func lastProposal(ctx context.Context, q querier, id string) (Proposal, error) {
 			return Proposal{}, err
 		}
 		if event.ToState == "proposed" {
-			rows, err := q.QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation='workspace.propose'`, head)
+			rows, err := q.QueryContext(ctx, `SELECT o.result FROM operations o JOIN members m ON m.receipt=o.receipt WHERE m.hash=? AND o.operation IN ('workspace.propose','speculation.submit')`, head)
 			if err != nil {
 				return Proposal{}, err
 			}
@@ -188,7 +188,7 @@ func (x *Index) ManifestCommit(ctx context.Context, manifest string) (string, er
 
 func manifestCommit(ctx context.Context, q querier, manifest string) (string, error) {
 	rows, err := q.QueryContext(ctx, `SELECT DISTINCT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt
- WHERE m.hash=? AND op.operation='workspace.propose' AND json_extract(op.result,'$.manifest')=?`, manifest, manifest)
+ WHERE m.hash=? AND op.operation IN ('workspace.propose','speculation.submit') AND json_extract(op.result,'$.manifest')=?`, manifest, manifest)
 	if err != nil {
 		return "", err
 	}

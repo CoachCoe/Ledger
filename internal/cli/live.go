@@ -68,8 +68,10 @@ func liveCommand(group string) func([]string) (any, error) {
 		// A check may legitimately run for hours (its own timeout bounds it), so
 		// evidence.run has no client deadline; Ctrl-C disconnects, which
 		// cancels the run on the daemon and records a failed attestation.
+		// speculation.evaluate runs checks and the scorer and has no deadline
+		// either, but a disconnect leaves it running; speculation cancel stops it.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		if operation == "evidence.run" {
+		if operation == "evidence.run" || operation == "speculation.evaluate" {
 			cancel()
 			ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		}

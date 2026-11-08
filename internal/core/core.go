@@ -47,6 +47,9 @@ type Service struct {
 	symbolEngine   symbols.Engine
 	coordPublished map[string]string
 
+	// evaluating cancels the in-process evaluation of a run, by run id.
+	evaluating map[string]context.CancelFunc
+
 	// evidenceHooks are test seams for evidence runs; nil in production.
 	evidenceHooks *evidence.Hooks
 }
@@ -56,7 +59,7 @@ type Service struct {
 func New(ctx context.Context, store *record.Store, keys identity.IdentityProvider) (*Service, error) {
 	p := workspace.GitProvider{Repo: store.Repo}
 	store.SetEffectHandler(p.Apply)
-	s := &Service{Store: store, Keys: keys, Provider: p, signers: map[string]identity.Signer{}, caseSensitive: true}
+	s := &Service{Store: store, Keys: keys, Provider: p, signers: map[string]identity.Signer{}, evaluating: map[string]context.CancelFunc{}, caseSensitive: true}
 	var config struct {
 		Root          string `json:"root_fingerprint"`
 		CaseSensitive bool   `json:"case_sensitive"`
@@ -91,6 +94,9 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.reconcile(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.interruptEvaluations(ctx); err != nil {
 		return nil, err
 	}
 	// Every local session key was lost on restart, even when the missing root
@@ -231,8 +237,27 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	if r.Operation == "evidence.run" {
 		return s.evidenceRun(ctx, r)
 	}
-	if r.Operation == "evidence.judge" {
+	switch r.Operation {
+	case "evidence.judge":
 		return s.evidenceJudge(ctx, r)
+	case "speculation.evaluate":
+		return s.evaluateRun(ctx, r)
+	case "speculation.score":
+		return s.scoreRun(ctx, r)
+	case "speculation.cancel":
+		res, err := s.mutate(ctx, r)
+		if err == nil {
+			// An in-process evaluation stops promptly; its evidence runs
+			// record cancelled attestations.
+			if in, e := decode[runRef](r.Input); e == nil {
+				s.mu.Lock()
+				if stop := s.evaluating[in.RunID]; stop != nil {
+					stop()
+				}
+				s.mu.Unlock()
+			}
+		}
+		return res, err
 	}
 	return s.mutate(ctx, r)
 }
@@ -310,6 +335,12 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 			return nil, err
 		}
 		return s.workspaceStatus(ctx, in.WorkspaceID)
+	case "speculation.status":
+		in, err := decode[runRef](r.Input)
+		if err != nil {
+			return nil, err
+		}
+		return s.runStatus(ctx, in.RunID)
 	}
 	return nil, apierr.New("unknown_operation", "%s", r.Operation)
 }
@@ -318,8 +349,8 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 type invocation struct {
 	api.Request
 	signer identity.Signer
-	// key is a new session key, held only once the operation commits.
-	key identity.Signer
+	// keys are new session keys, held only once the operation commits.
+	keys []identity.Signer
 }
 
 // prepared is what a mutation publishes as one operation group.
@@ -341,6 +372,10 @@ var mutations = map[string]mutation{
 	"intent.create":       (*Service).createIntent,
 	"intent.close":        (*Service).closeIntent,
 	"selection.record":    (*Service).recordSelection,
+	"speculation.start":   (*Service).startRun,
+	"speculation.submit":  (*Service).submit,
+	"speculation.resume":  (*Service).resumeRun,
+	"speculation.cancel":  (*Service).cancelRun,
 	"workspace.fork":      (*Service).fork,
 	"workspace.propose":   (*Service).propose,
 	"workspace.rework":    (*Service).rework,
@@ -383,16 +418,25 @@ func (s *Service) mutate(ctx context.Context, r api.Request) (any, error) {
 		p, err := run(s, ctx, c)
 		return p.result, p.records, p.effects, err
 	})
-	if c.key != nil {
-		if err == nil {
-			s.signers[c.key.ID()] = c.key
-		} else {
-			// The session may have committed before the failure; without
-			// its key it must be ended like any other lost session.
-			s.recoveryPending = true
-		}
-	}
+	s.holdKeys(c, err)
 	return result, err
+}
+
+// holdKeys keeps the session keys an operation staged once it committed.
+// Callers hold mu.
+func (s *Service) holdKeys(c *invocation, err error) {
+	if len(c.keys) == 0 {
+		return
+	}
+	if err != nil {
+		// The sessions may have committed before the failure; without their
+		// keys they must be ended like any other lost session.
+		s.recoveryPending = true
+		return
+	}
+	for _, k := range c.keys {
+		s.signers[k.ID()] = k
+	}
 }
 
 // publish commits one operation group under the RecordStore lock and then
@@ -519,7 +563,7 @@ func (s *Service) newSession(c *invocation, in sessionInput) (map[string]string,
 	if err != nil {
 		return nil, nil, err
 	}
-	c.key = key
+	c.keys = append(c.keys, key)
 	result := map[string]string{"session_id": sid, "capability_id": cid, "session_hash": session.Hash, "capability_hash": capability.Hash}
 	return result, []envelope.Object{capability, session}, nil
 }
@@ -639,16 +683,27 @@ type workspaceInput struct {
 // manifest trailers. Authority is checked again after the capture so an
 // expiry during a slow snapshot cannot sign it.
 func (s *Service) propose(ctx context.Context, c *invocation) (prepared, error) {
-	in, err := decode[struct {
-		WorkspaceID string   `json:"workspace_id"`
-		Plan        *string  `json:"plan"`
-		ContextRefs []string `json:"context_refs"`
-	}](c.Input)
+	in, err := decode[proposeInput](c.Input)
 	if err != nil {
 		return prepared{}, err
 	}
+	return s.proposeIn(ctx, c, in)
+}
+
+type proposeInput struct {
+	WorkspaceID string   `json:"workspace_id"`
+	Plan        *string  `json:"plan"`
+	ContextRefs []string `json:"context_refs"`
+}
+
+// proposeIn proposes a workspace. For a run workspace this is its one
+// submission: the run must be collecting and its deadline not passed.
+func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput) (prepared, error) {
 	sub, w, capability, err := s.boundWorkspace(ctx, in.WorkspaceID, c.SessionID)
 	if err != nil {
+		return prepared{}, err
+	}
+	if err := s.submittable(ctx, sub); err != nil {
 		return prepared{}, err
 	}
 	if sub.State != "open" {
@@ -774,6 +829,9 @@ func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, 
 func (s *Service) transitionWorkspace(ctx context.Context, c *invocation, id, to string, reason *string, effects []record.Effect) (prepared, error) {
 	sub, _, _, err := s.boundWorkspace(ctx, id, c.SessionID)
 	if err != nil {
+		return prepared{}, err
+	}
+	if err := s.notInRun(ctx, id); err != nil {
 		return prepared{}, err
 	}
 	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, to, reason, c.signer.ID()), c.signer)

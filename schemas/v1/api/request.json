@@ -33,7 +33,14 @@
         "coordination.lease",
         "coordination.release",
         "coordination.leases",
-        "coordination.status"
+        "coordination.status",
+        "speculation.start",
+        "speculation.submit",
+        "speculation.status",
+        "speculation.evaluate",
+        "speculation.score",
+        "speculation.resume",
+        "speculation.cancel"
       ]
     },
     "operation_id": {
@@ -76,7 +83,8 @@
                 "coordination.notifications",
                 "coordination.ack",
                 "coordination.leases",
-                "coordination.status"
+                "coordination.status",
+                "speculation.status"
               ]
             }
           }

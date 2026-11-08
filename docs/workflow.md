@@ -98,7 +98,7 @@ Enforcement is cooperative: direct disk writes are observed, not prevented, and 
 ## Criteria, judgment and selection
 After evidence runs, `ledger intent criteriaStatus '{"manifest":"…","commit":"…"}'` evaluates every criterion against the evidence for that exact manifest, commit and tree. A check criterion is satisfied only by an independent attestation of its pinned definition; a judgment criterion only by an independent judgment of the stated reviewer kind (`ledger evidence judge`, signed by a root-provisioned `human` session when root calls it). All-pass is `satisfied`, any fail is `failed` (mixed results list the `conflicting` attestations), and nothing applicable is `outstanding`. Failing evidence is never hidden: it is listed under `contrary_evidence` even when an explicit `evidence` set leaves it out. Evidence for another revision is rejected with `cross_revision_evidence`.
 `ledger selection record '{"manifest":"…","commit":"…","evidence":["…"]}'` signs a decision recording the evidence set, recomputed per-criterion statuses, outstanding criteria and contrary evidence. The input has no status members, so a caller cannot claim a criterion is satisfied, and the index re-derives every decision when it is published.
-Selection is not acceptance. A decision is one signed record: it moves no branch, tag, proposal ref or `HEAD`, creates no commit, merges nothing, and leaves the intent and workspace states unchanged (`selected` lifecycle transitions arrive with speculation in M5). Merging remains an ordinary Git action taken by a person or another tool.
+Selection is not acceptance. A decision is one signed record: it moves no branch, tag, proposal ref or `HEAD`, creates no commit, merges nothing, and leaves the intent and workspace states unchanged (only a speculation run moves a workspace to `selected`). Merging remains an ordinary Git action taken by a person or another tool.
 ## Scoped capabilities and warnings
 
 Session creation and recovery now accept path scopes. Capability issuance, delegation, polling and acknowledgment are available through the CLI and versioned socket API. See [security-model.md](security-model.md) for inputs, matching rules, dependency filenames, recovery semantics and limitations.
@@ -114,6 +114,25 @@ Active workspace observers emit symmetric `overlap` notifications for write/writ
 `ledger coordination lease --session SESSION '{"session_id":"…","paths":["src/api.ts"],"symbols":[],"reason":"review signature","expires_at":"…"}'` creates a runtime advisory lease. Paths are literal repository-relative paths within the holder's capability; symbol scopes use the same locator objects as manifests. Supply a stable `--operation-id` for retries. Expiry must be in the next 24 hours. `coordination leases '{}'` lists current leases; `coordination release --session SESSION '{"session_id":"…","lease_id":"…"}'` releases one, idempotently. Writes to another session's leased code warn both parties and still allow proposal publication. Reads alone do not conflict with a lease. Expiry, capability/session loss, daemon restart and reindex remove stale leases; exported history never restores them.
 
 Status and lease responses contain `runtime: true`, `observed_at` and a canonical `snapshot_digest` computed before adding that digest field. These cite a local unsigned observation. Notifications, analyses, edges and leases are excluded from portable bundles; only the manifest's signed symbol locators travel with its provenance.
+
+## Speculation runs
+
+A speculation run asks several attempts to satisfy one intent and selects among them by score. Ledger hands out the attempts and never launches an agent. The intent must have at least one check criterion.
+
+```sh
+ledger speculation start '{"intent_id":"…","strategies":[{"name":"careful","spec":"…"},{"name":"quick","spec":"…"}],"scorer":{"kind":"command","command":"python3 /path/score.py","timeout_seconds":60,"env_allowlist":["PATH"]},"deadline_seconds":3600}'
+ledger speculation submit --session ATTEMPT_SESSION '{"run_id":"…","workspace_id":"…"}'
+ledger speculation evaluate '{"run_id":"…"}'
+ledger speculation status '{"run_id":"…"}'
+```
+
+`start` returns each attempt's workspace path, session, capability, strategy and spec. `n` (default: one attempt per strategy) assigns strategies round-robin. Give exactly one of `deadline` and `deadline_seconds`. Each attempt's agent edits its worktree and submits once, from its own session, before the deadline; the submitted manifest is the frozen candidate and the workspace cannot be reworked, closed or selected by hand until the run ends.
+
+`evaluate` closes collection, runs every pinned check on every candidate in a fresh verification worktree, and scores the candidates that satisfy every check criterion. A `command` scorer reads the candidate document from `$LEDGER_SCORER_INPUT` and writes `{"scores":{"<manifest>":<integer>,…}}` to `$LEDGER_SCORER_OUTPUT`; it also gets `LEDGER_REPOSITORY`, `LEDGER_RUN_ID` and its allowlisted variables, and nothing else. With a `submission` scorer, `evaluate` returns `awaiting_scores: true` and the candidates, and the run waits for `ledger speculation score '{"run_id":"…","scores":{…}}'`. The highest score wins; ties go to the lowest manifest hash. Evaluation keeps running if the client disconnects.
+
+The run ends in one signed group: the winner's selection and `selected` transition, and for every other attempt an attempt record (`failed_criteria`, `lost_tiebreaker`, `timeout`, `not_proposed` or `cancelled`) and a `closed` transition. If no candidate is eligible, the run resolves with no winner. `ledger speculation cancel '{"run_id":"…","reason":"…"}'` ends a run with no winner, stopping an evaluation in progress. A scorer failure, timeout or malformed scores interrupt the run with no winner; `ledger speculation resume '{"run_id":"…"}'` returns it to evaluation with the same frozen inputs. A daemon restart interrupts a run that was evaluating; a collecting run keeps collecting, and `session.recover` replaces a lost attempt session.
+
+Losing worktrees are removed after the run ends unless they hold edits beyond the submitted candidate, in which case they are kept and the call reports `cleanup_pending` with `committed: true`. Nothing is merged. See [ADR 0023](adr/0023-speculation-runs.md).
 
 ## Export, import and verify
 

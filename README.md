@@ -29,6 +29,7 @@ Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":fa
 | `ledger workspace …` | Fork, inspect, propose, rework, or close a workspace. |
 | `ledger evidence …` | Resolve a proposal's frozen binding, run a pinned check in a fresh verification worktree, record a judgment, or ask whether evidence is independent. |
 | `ledger intent criteriaStatus` | Report each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |
+| `ledger speculation …` | Start a run of several attempts for one intent, submit frozen candidates, evaluate them against the intent's checks and a scorer, and inspect, score, resume or cancel the run. The selected candidate is not merged. |
 | `ledger selection record` | Sign a selection decision with recomputed criterion statuses. Selection is not acceptance and never merges. |
 | `ledger export --out FILE` | Write a portable bundle of records and the Git objects they bind, without the daemon or SQLite. |
 | `ledger verify [--bundle FILE]` | Report integrity and trust separately for a bundle or this repository's records; `--trust`, `--trust-file`, `--strict`. |
@@ -40,7 +41,7 @@ Every command prints one JSON document: `{"ok":true,"result":...}`, or `{"ok":fa
 | `ledger reindex` | Rebuild the index from the record files in one database transaction. |
 | `ledger version` | Print the version. |
 
-The session, capability, coordination, intent, workspace, evidence, selection, system, and daemon-stop commands go through the daemon, which the CLI starts on demand. [`docs/workflow.md`](docs/workflow.md) walks through a complete session and describes every operation, observation, proposals, recovery, and the socket protocol.
+The session, capability, coordination, intent, workspace, evidence, selection, speculation, system, and daemon-stop commands go through the daemon, which the CLI starts on demand. [`docs/workflow.md`](docs/workflow.md) walks through a complete session and describes every operation, observation, proposals, recovery, and the socket protocol.
 
 ## Storage
 
@@ -61,6 +62,7 @@ Records, together with the Git commits they bind, are portable: `ledger export` 
 `demos/m2.sh` exercises scoped authority, delegation, unsafe symlinks, dependency-file denial, historical signature chains, queue recovery, and the public CLI. See [`docs/security-model.md`](docs/security-model.md) for the cooperative enforcement boundary.
 `demos/m3.sh` runs every M3 acceptance and recovery test, then, with the real binary, exports a bundle, makes the source unreadable, verifies it in a fresh directory with the network disabled (integrity verified, trust untrusted, then trusted with `--trust`), detects tampering, and imports it twice into a fresh repository.
 `demos/m4.sh` checks JS/TS/TSX/Python symbol analysis, symmetric watcher notifications within five seconds, queue and lease recovery, and a real CLI flow with frozen symbol provenance and advisory leases. Symbol analysis is incomplete; missing dependency edges do not establish safety.
+`demos/m5.sh` runs the M5 acceptance tests, then drives speculation through the real binary: three scripted attempts where one fails the check, one loses on score and one is selected; an all-fail run; cancellation; a deadline timeout with a late edit preserved; a scorer outage that interrupts and resumes; and offline verification of every run. Nothing is merged.
 `demos/governance.sh` tells the M0–M3 story on a fixture repository: a root-scoped session, a denied out-of-scope proposal, independent evidence for the exact revision including a failing run and its contrary evidence, a human judgment, a selection that is not acceptance, and offline verification and import. The demos need `git`, `jq` and `python3`.
 
 ## Design

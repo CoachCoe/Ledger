@@ -165,13 +165,7 @@ func (s *Service) provisionSession(ctx context.Context, r api.Request, root iden
 		created = result
 		return result, records, err
 	})
-	if c.key != nil {
-		if err == nil {
-			s.signers[c.key.ID()] = c.key
-		} else {
-			s.recoveryPending = true
-		}
-	}
+	s.holdKeys(c, err)
 	if err != nil {
 		return "", err
 	}

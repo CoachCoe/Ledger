@@ -12,7 +12,7 @@
     "complete": { "type": "boolean" },
     "ids": {
       "type": "object",
-      "propertyNames": { "pattern": "^(int|ses|cap|wsp)_[0-9a-v]{26}$" },
+      "propertyNames": { "pattern": "^(int|ses|cap|wsp|run)_[0-9a-v]{26}$" },
       "additionalProperties": { "$ref": "common.json#/$defs/hash" }
     },
     "objects": {

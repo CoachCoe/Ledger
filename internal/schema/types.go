@@ -306,13 +306,32 @@ type Strategy struct {
 	Spec string `json:"spec"`
 }
 
+// CandidateBinding names one attempt workspace of a speculation run.
+type CandidateBinding struct {
+	WorkspaceID string `json:"workspace_id"`
+	Strategy    string `json:"strategy"`
+}
+
+// ScorerDefinition is a run's pinned tiebreaker. A command scorer runs
+// Command; a submission scorer waits for scores through the API.
+type ScorerDefinition struct {
+	Kind           string   `json:"kind"`
+	Command        *string  `json:"command"`
+	EnvAllowlist   []string `json:"env_allowlist"`
+	TimeoutSeconds *int64   `json:"timeout_seconds"`
+}
+
 type SpeculationRun struct {
-	ID         string     `json:"id"`
-	IntentID   string     `json:"intent_id"`
-	Strategies []Strategy `json:"strategies"`
-	Scorer     string     `json:"scorer"`
-	Deadline   string     `json:"deadline"`
-	CreatedAt  string     `json:"created_at"`
+	ID               string             `json:"id"`
+	IntentID         string             `json:"intent_id"`
+	Strategies       []Strategy         `json:"strategies"`
+	Attempts         []CandidateBinding `json:"attempts"`
+	Checks           []string           `json:"checks"`
+	Scorer           string             `json:"scorer"`
+	ScorerDefinition ScorerDefinition   `json:"scorer_definition"`
+	BaseCommit       string             `json:"base_commit"`
+	Deadline         string             `json:"deadline"`
+	CreatedAt        string             `json:"created_at"`
 }
 
 type OperationReceipt struct {

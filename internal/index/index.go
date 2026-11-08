@@ -42,6 +42,12 @@ CREATE INDEX IF NOT EXISTS objects_evidence_manifest ON objects (json_extract(pa
 	WHERE kind = 'evidence_attestation';
 CREATE INDEX IF NOT EXISTS objects_selection_manifest ON objects (json_extract(payload, '$.manifest'))
 	WHERE kind = 'selection_decision';
+CREATE INDEX IF NOT EXISTS objects_manifest_workspace ON objects (json_extract(payload, '$.workspace_id'))
+	WHERE kind = 'change_manifest';
+CREATE INDEX IF NOT EXISTS objects_attempt_run ON objects (json_extract(payload, '$.run_id'))
+	WHERE kind = 'attempt_record';
+CREATE INDEX IF NOT EXISTS objects_selection_selector ON objects (json_extract(payload, '$.selector.id'))
+	WHERE kind = 'selection_decision';
 CREATE TABLE IF NOT EXISTS members (
 	receipt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (receipt, hash));
 CREATE INDEX IF NOT EXISTS members_hash ON members (hash);

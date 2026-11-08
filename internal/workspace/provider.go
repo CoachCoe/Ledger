@@ -117,7 +117,13 @@ func (p GitProvider) Apply(ctx context.Context, e record.Effect) error {
 		if len(ignored) > 0 {
 			return apierr.New("workspace_dirty", "ignored files remain in %s; cleanup preserves them", e.Path)
 		}
-		_, err = gitx.Run(ctx, p.Repo.MainDir, nil, nil, "worktree", "remove", e.Path)
+		args := []string{"worktree", "remove", e.Path}
+		if retained, err := p.retained(ctx, path, e); err != nil {
+			return err
+		} else if retained {
+			args = []string{"worktree", "remove", "--force", e.Path}
+		}
+		_, err = gitx.Run(ctx, p.Repo.MainDir, nil, nil, args...)
 		return err
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -130,6 +136,30 @@ func (p GitProvider) Apply(ctx context.Context, e record.Effect) error {
 	}
 	_, err = gitx.Run(ctx, p.Repo.MainDir, nil, nil, "worktree", "add", "--detach", e.Path, e.Base)
 	return err
+}
+
+// retained reports whether the worktree at path holds exactly the retained
+// tree of e on its base: its uncommitted content is then preserved in Git
+// and removing it loses nothing. Anything else is left to the ordinary,
+// edit-preserving removal.
+func (p GitProvider) retained(ctx context.Context, path string, e record.Effect) (bool, error) {
+	if e.Tree == "" || e.Base == "" {
+		return false, nil
+	}
+	head, err := gitx.Run(ctx, path, nil, nil, "rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(string(head)) != e.Base {
+		return false, nil //nolint:nilerr // an unreadable or moved HEAD is not removed by force
+	}
+	scratch, err := os.MkdirTemp(filepath.Join(p.Repo.MainDir, ".ledger", "runtime"), "cleanup-")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(scratch)
+	snap, err := Capture(ctx, path, e.Base, filepath.Join(scratch, "index"))
+	if err != nil {
+		return false, nil //nolint:nilerr // content that cannot be captured is preserved
+	}
+	return snap.Tree == e.Tree, nil
 }
 
 // Snapshot verifies that the workspace still belongs to this repository,

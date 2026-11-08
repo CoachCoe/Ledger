@@ -124,8 +124,10 @@ func (v *validator) check(o envelope.Object) error {
 		if w.BaseCommit != p.BaseCommit || w.ChangeID != p.ChangeID || w.IntentID != p.IntentID {
 			return unauthorized("manifest workspace binding differs")
 		}
-		_, err = v.subjectIn(p.IntentID, lifecycle.Intent, "open")
-		return err
+		if _, err := v.subjectIn(p.IntentID, lifecycle.Intent, "open"); err != nil {
+			return err
+		}
+		return v.checkSubmission(p.WorkspaceID)
 	case schema.KindEvidenceAttestation:
 		var p schema.EvidenceAttestation
 		if err := o.Decode(&p); err != nil {
@@ -143,8 +145,13 @@ func (v *validator) check(o envelope.Object) error {
 		if err := o.Decode(&p); err != nil {
 			return err
 		}
-		_, err := v.subjectIn(p.IntentID, lifecycle.Intent, "open")
-		return err
+		return v.checkRun(&p, signer)
+	case schema.KindAttemptRecord:
+		var p schema.AttemptRecord
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkAttempt(&p, signer)
 	case schema.KindLifecycleEvent:
 		var e schema.LifecycleEvent
 		if err := o.Decode(&e); err != nil {
@@ -452,6 +459,21 @@ func (v *validator) checkEvent(hash string, e *schema.LifecycleEvent, signer str
 	if isSession(signer) && s.Owner != signer {
 		return unauthorized("%s does not own %s", signer, e.SubjectID)
 	}
+	switch e.SubjectKind {
+	case lifecycle.Workspace:
+		if err := v.checkRunWorkspaceEvent(e); err != nil {
+			return err
+		}
+	case lifecycle.SpeculationRun:
+		if signer != s.Owner {
+			return unauthorized("only the creator of run %s may transition it", e.SubjectID)
+		}
+		if terminalRun[e.ToState] {
+			if err := v.checkRunEnding(e.SubjectID, e.ToState); err != nil {
+				return err
+			}
+		}
+	}
 	if e.ToState == "interrupted" {
 		s.Resume = s.State
 	}
@@ -575,16 +597,27 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 // The recorded criteria and contrary evidence must equal a fresh evaluation
 // of that set: a caller-supplied status that disagrees is status_mismatch.
 func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) error {
-	wantKind := "root"
-	if isSession(signer) {
-		wantKind = "session"
-	}
-	if p.Selector.Kind != wantKind || p.Selector.ID != signer {
-		return unauthorized("the selector must be the signer %s", signer)
-	}
 	m, err := manifestIn(v.ctx, v.q, p.Manifest)
 	if err != nil {
 		return err
+	}
+	if p.Selector.Kind == "speculation_run" {
+		if err := v.checkRunSelection(p, m, signer); err != nil {
+			return err
+		}
+	} else {
+		wantKind := "root"
+		if isSession(signer) {
+			wantKind = "session"
+		}
+		if p.Selector.Kind != wantKind || p.Selector.ID != signer {
+			return unauthorized("the selector must be the signer %s", signer)
+		}
+		if r, err := v.runFor(m.WorkspaceID); err != nil {
+			return err
+		} else if r != nil {
+			return apierr.New("run_active", "manifest %s is a candidate of speculation run %s; only the run selects it", p.Manifest, r.ID).With("run_id", r.ID)
+		}
 	}
 	if signer == m.AuthorSession {
 		return unauthorized("the author of manifest %s cannot select it", p.Manifest)

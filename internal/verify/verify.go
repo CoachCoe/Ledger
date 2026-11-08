@@ -78,7 +78,7 @@ func newGraph(records []envelope.Object, sensitive bool) (*graph, error) {
 		switch o.Envelope.Kind {
 		case schema.KindRootKey:
 			id = o.Envelope.Signer
-		case schema.KindSession, schema.KindCapability, schema.KindWorkspace, schema.KindIntent:
+		case schema.KindSession, schema.KindCapability, schema.KindWorkspace, schema.KindIntent, schema.KindSpeculationRun:
 			var p struct {
 				ID string `json:"id"`
 			}

@@ -14,10 +14,30 @@
         "spec": "Use a module"
       }
     ],
-    "scorer": "9999999999999999999999999999999999999999999999999999999999999999",
+    "attempts": [
+      {
+        "workspace_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "strategy": "inline"
+      },
+      {
+        "workspace_id": "wsp_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "strategy": "module"
+      }
+    ],
+    "checks": [
+      "7777777777777777777777777777777777777777777777777777777777777777"
+    ],
+    "scorer": "3a1229173bae5bb71d828f139cced5c31f9335173af8b338c04abe7c076809f4",
+    "scorer_definition": {
+      "kind": "command",
+      "command": "python3 score.py",
+      "env_allowlist": [],
+      "timeout_seconds": 60
+    },
+    "base_commit": "1111111111111111111111111111111111111111",
     "deadline": "2026-11-05T13:00:00.000Z",
     "created_at": "2026-11-05T12:00:00.000Z"
   },
   "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
-  "signature": "a07feBKDFGh1lN2cNRgbf4ZX3sNgmTZ77IWIb2JG4fHdM8Yi7McnKhehxLAzVQ_QQCpnclp5e-BhCPVFpfk6Dw"
+  "signature": "CYOIHVJWp_7lHZ7_aZaw_2K4QJcb2qrpBIdRE5snhkPS3aLzZLhh2dEdLCLesSqqfTm4AJZPiQ4eFrXs9CQpCQ"
 }

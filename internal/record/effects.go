@@ -25,7 +25,10 @@ type Effect struct {
 	Ref         string `json:"ref,omitempty"`
 	Old         string `json:"old,omitempty"`
 	New         string `json:"new,omitempty"`
-	After       bool   `json:"after"`
+	// Tree, on a worktree removal, is a retained tree (a submitted
+	// candidate) whose exact content may be removed even though uncommitted.
+	Tree  string `json:"tree,omitempty"`
+	After bool   `json:"after"`
 }
 
 // EffectsFunc is a BuildFunc that also returns the operation's effects.

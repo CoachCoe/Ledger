@@ -318,6 +318,82 @@
         "records",
         "commits"
       ]
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "integrity": {
+            "enum": [
+              "verified",
+              "invalid",
+              "unavailable"
+            ]
+          },
+          "selections": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/hash"
+            }
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "$ref": "../common.json#/$defs/hash"
+                },
+                "workspace_id": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "integrity": {
+                  "enum": [
+                    "verified",
+                    "invalid",
+                    "unavailable"
+                  ]
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "hash",
+                "workspace_id",
+                "outcome",
+                "integrity"
+              ]
+            }
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "intent_id",
+          "state",
+          "integrity",
+          "selections",
+          "attempts"
+        ]
+      }
     }
   },
   "required": [
@@ -328,6 +404,7 @@
     "complete",
     "roots",
     "manifests",
+    "runs",
     "conflicts",
     "missing",
     "invalid",
