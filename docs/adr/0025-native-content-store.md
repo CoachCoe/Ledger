@@ -41,7 +41,7 @@ objects.** The store has four object kinds:
 | `blob` | Exact file bytes, no normalization | SHA-256 of the bytes |
 | `chunked_blob` | Ordered chunk list for files over 4 MiB, cut by content-defined chunking | SHA-256 of its canonical chunk list |
 | `tree` | Sorted directory entries: name, entry type (`file`, `executable`, `symlink`, `tree`, `gitlink`), object id | SHA-256 of its canonical encoding |
-| `symbol_map` | For one blob and one analyzer version: declarations with locator, byte range and span hash, static references, fallback reasons | SHA-256 of its canonical encoding |
+| `symbol_map` | For one blob at one path and one analyzer version: declarations with locator, byte range and span hash, static references, fallback reasons | SHA-256 of its canonical encoding |
 
 - **Hashing.** Object id = SHA-256 over the prefix `ledger-object-v2\n`, the
   kind and the canonical bytes. Ids are lowercase hex, as in Phase 1. The
