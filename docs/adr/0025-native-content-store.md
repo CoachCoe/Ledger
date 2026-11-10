@@ -1,6 +1,6 @@
 # ADR 0025: Native content store
 
-- Status: Proposed
+- Status: Accepted (P2-M0 go decision, 2026-11-10)
 - Date: 2026-11-10
 
 ## Context
@@ -59,10 +59,21 @@ objects.** The store has four object kinds:
   two hashes, not a reparse.
 - **Unsupported files have no map.** They are versioned exactly and use the
   file-level fallbacks Phase 1 already labels.
-- **Layout.** Loose objects at `.ledger/store/objects/<aa>/<hash>`, written
-  with `internal/atomicfile` (temporary file, fsync, rename, directory fsync).
-  Pack files are deferred until measurement shows they are needed. SQLite
-  stays an index that `ledger reindex` can rebuild.
+- **Layout.** Loose objects at `.ledger/store/objects/<aa>/<hash>`, each
+  written to a temporary file in its fan-out directory and renamed into
+  place. Objects are stored uncompressed. Pack files are deferred until
+  measurement shows they are needed. SQLite stays an index that
+  `ledger reindex` can rebuild.
+- **Durability is batched.** Each object gets a write-out-only flush (plain
+  `fsync(2)` on darwin, `sync_file_range` on Linux), the touched directories
+  are flushed the same way, and one full barrier (`F_FULLFSYNC`, `syncfs`)
+  makes the whole batch durable before any record or operation log entry
+  that names those objects is committed. This is Git's
+  `core.fsyncMethod=batch`. A per-object full sync, as `internal/atomicfile`
+  does for records, costs about 46 times as much on APFS (see Evidence). A
+  crash before the barrier can leave unreferenced or truncated objects but
+  no committed record that names them; reads check every object against its
+  id, and recovery removes one that fails so the next write recreates it.
 - **Retention replaces refs.** An object reachable from any signed record or
   any live operation log head is never collected. This replaces
   `refs/ledger/proposals/*` as the way evidence stays resolvable.
@@ -72,10 +83,9 @@ objects.** The store has four object kinds:
 - **Git's object database as the backend, native everything else.** This is
   how Jujutsu began, and it is the lower-risk path. Rejected as the target
   because records would keep binding SHA-1 Git hashes, symbol maps would be
-  opaque blobs to Git, and the bridge must translate anyway. It remains the
-  fallback if the store spike shows the native store far slower than Git on
-  the NestJS tree; the operation log and v2 records would then sit on Git's
-  object database and store both hashes.
+  opaque blobs to Git, and the bridge must translate anyway. It was kept as
+  the fallback in case the P2-M0 spike showed the native store far slower
+  than Git on the NestJS tree; the spike showed the opposite.
 - **Store parsed syntax trees instead of text.** Rejected: lossy for
   formatting and comments, tied to grammar versions, and useless for
   unsupported files.
@@ -95,3 +105,40 @@ objects.** The store has four object kinds:
   region only.
 - **P2-AC-005:** a symbol map recomputed by the pinned analyzer equals the
   stored one, byte for byte.
+
+## Evidence (P2-M0 spike)
+
+The spike stores the NestJS fixture from the observer benchmark (commit
+`6e83cc8`, 2,743 tracked files, 8.3 MiB, 751 trees, 2,292 distinct blobs)
+with this ADR's object format, using a copy of `internal/canon` for tree
+encoding, and compares it with `git add -A` into a private index plus
+`git write-tree` into an empty object directory. Times are medians of five
+runs with a warm page cache. macOS is an M1 Max with 10 CPUs on APFS and
+Git 2.54. Linux is arm64 in Docker on the same host, on overlayfs, with Git
+2.39; the virtual disk makes its sync timings optimistic.
+
+| Cold write of the whole tree | macOS | Linux |
+|---|---:|---:|
+| Native, full sync per object and directory | 31.9 s | 1.8 s |
+| Native, batched (10 workers) | 0.69 s | 0.13 s |
+| Native, no sync (10 workers) | 0.60 s | 0.10 s |
+| Git, `core.fsync=loose-object`, `core.fsyncMethod=batch` | 4.31 s | 0.34 s |
+| Git default (loose objects are not synced) | 2.35 s | 0.28 s |
+| Git, `core.fsync=loose-object`, `core.fsyncMethod=fsync` | 31.1 s | 2.4 s |
+
+- At equal durability the native store writes the tree about six times
+  faster than Git on macOS and about two and a half times faster on Linux.
+  Git also spends time on zlib compression; the uncompressed native store is
+  8.8 MB against Git's 2.7 MB of loose objects.
+- Every file round-trips byte for byte with its executable bit, and the root
+  tree id is the same for every durability mode and worker count.
+- After a one-file edit, a stat-cache snapshot (walk, rehash one blob,
+  rewrite five trees) takes 60 ms at the median and 75 ms at p95 on macOS
+  (Git: 98 ms), and 22 ms on Linux (Git: 14 ms).
+- P2-AC-004: storing a 50 MiB file with content-defined chunking (minimum
+  16 KiB, average 64 KiB, maximum 256 KiB) gives 699 chunks; a one-line edit
+  in the middle stores one new chunk of 95 KB.
+
+Not measured by the spike: a cold page cache, symbol-map persistence
+(P2-AC-005), and rejection of colliding names (P2-AC-002). They are P2-M1
+acceptance.
