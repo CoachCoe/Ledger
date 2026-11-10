@@ -29,13 +29,13 @@ func TestIgnoredDependencyFilterInvalidatesOnRulesAndKeepsTrackedFiles(t *testin
 		t.Fatal(err)
 	}
 	for range 2 {
-		if !filter.ignored(ctx, path) {
+		if !filter.Ignored(ctx, path) {
 			t.Fatal("ignored dependency event was not filtered")
 		}
 	}
 	os.WriteFile(filepath.Join(root, ".gitignore"), nil, 0600)
-	filter.ignored(ctx, filepath.Join(root, ".gitignore"))
-	if filter.ignored(ctx, path) {
+	filter.Ignored(ctx, filepath.Join(root, ".gitignore"))
+	if filter.Ignored(ctx, path) {
 		t.Fatal("changed ignore rules were cached forever")
 	}
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("node_modules/\n"), 0600)
@@ -44,7 +44,7 @@ func TestIgnoredDependencyFilterInvalidatesOnRulesAndKeepsTrackedFiles(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filter.ignored(ctx, path) {
+	if filter.Ignored(ctx, path) {
 		t.Fatal("tracked ignored file event was dropped")
 	}
 }

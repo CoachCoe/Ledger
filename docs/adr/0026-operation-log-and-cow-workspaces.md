@@ -49,13 +49,22 @@ freezes its head.**
   `.ledger/runtime/deps/<key>`, where the key is the hash of the blob ids of
   the dependency manifests and lock files that produced it (the files
   `capability.Dependency` recognizes), with write permission removed.
-  Workspaces whose base has the same key link to it, so creating a
-  workspace costs only the tracked tree. The first capture comes from the
-  default workspace when its manifests match the base. A workspace that
-  changes a dependency manifest, which already requires
-  `may_add_dependencies` (ADR 0019), has its link replaced with a private
-  clone before the change, so no workspace can alter another's
-  dependencies.
+  A workspace's own `node_modules` is a private, writable directory whose
+  packages (and `.bin`) are links into that copy and whose other hidden
+  entries are private copies, because tools such as Vite write caches and
+  temporary files directly inside `node_modules`. Node still resolves each
+  package's dependencies through the shared copy's real path. The directory
+  is prepared once per key and cloned per workspace, so creating a
+  workspace costs about the tracked tree. The first capture comes from the
+  default workspace when its manifests match the base. Dependency
+  directories are never part of a snapshot. Changing a dependency manifest already requires
+  `may_add_dependencies` (ADR 0019); a workspace that does so gets a
+  private, writable clone in place of its link, so no workspace can alter
+  another's dependencies. The clone is made before an API write to a
+  manifest, on the first snapshot that observes a manifest changed by the
+  agent's own tools, or when the agent asks with `workspace.deps.detach`.
+  An install that races an observed change fails on the read-only tree and
+  succeeds when retried.
 - **The human's directory is a workspace too.** It is the repository's default
   workspace, observed the same way, with entries attributed to a
   root-provisioned human session. People get `ledger describe` instead of
@@ -95,10 +104,12 @@ as structured conflict data for Phase 3's structured merge.
 - **P2-AC-015:** a line refuses an advance whose base is not its head, and a
   rebase across a both-sides change returns conflict data instead of a result.
 - **P2-AC-016:** 50 workspaces of the NestJS fixture with `node_modules`
-  installed are created in under 5 seconds on APFS and on ext4, the fixture's
-  build and tests pass in each, a write into the shared tree fails, and
-  changing `package.json` in one workspace leaves every other workspace's
-  dependencies unchanged.
+  installed are created in under 5 seconds on APFS, and on a filesystem
+  without reflinks each uses under 10% of the disk a copied `node_modules`
+  would; the fixture's build and tests pass in each, a write into the
+  shared tree fails, and changing `package.json` in one workspace leaves
+  every other workspace's dependencies unchanged. The read-only protection
+  does not bind a process running as root.
 
 ## Evidence (P2-M0 spike)
 
@@ -129,3 +140,25 @@ on the same NestJS fixture with its 1,621-package, 548 MB, 50,652-file
   make 50-attempt speculation on ext4 a 30 GB operation. Dependency trees
   are therefore shared read-only rather than cloned, and btrfs or XFS is not
   required for large runs.
+
+## Evidence (P2-M1 benchmark)
+
+`tools/workspacebench` on the same fixture and hosts, with dependencies
+shared as described above. On Linux it ran as an unprivileged user, since
+root ignores the read-only modes.
+
+| | macOS (APFS) | Linux (overlayfs, full copy) |
+|---|---:|---:|
+| 50 workspaces, one at a time | 3.05 s, p95 78 ms each | 9.6 s, p95 240 ms each |
+| 50 workspaces, ten at a time | | 6.7 s |
+| Disk for 50 workspaces | about 83 MB | about 1.4 GB |
+| First workspace: materialize base, capture `node_modules` | 9.5 s | 4.4 s |
+| Edit detection, ten watched workspaces (P2-AC-010) | p95 1.2 s | p95 1.0 s |
+| Restore to an earlier entry (P2-AC-012) | 0.40 s | 0.28 s |
+
+- Sharing cuts a Linux workspace from about 583 MB and 4.8 s to about 28 MB
+  and 190 ms; what remains is the full copy of the tracked tree.
+- The fixture's TypeScript build and `vitest` run pass in workspaces on the
+  shared tree. Linking all of `node_modules` to the read-only copy failed:
+  Vite writes `node_modules/.vite-temp`, which is why the directory itself
+  is private.

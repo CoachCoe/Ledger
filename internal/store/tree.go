@@ -205,20 +205,8 @@ func (s *Store) Materialize(id, dst string) error {
 			if err := s.Materialize(e.ID, p); err != nil {
 				return err
 			}
-		case TypeSymlink:
-			target, err := s.getKind(e.ID, KindBlob)
-			if err != nil {
-				return err
-			}
-			if err := os.Symlink(string(target), p); err != nil {
-				return err
-			}
-		case TypeFile, TypeExecutable:
-			mode := fs.FileMode(0o644)
-			if e.Type == TypeExecutable {
-				mode = 0o755
-			}
-			if err := s.materializeFile(e.ID, p, mode); err != nil {
+		case TypeSymlink, TypeFile, TypeExecutable:
+			if err := s.Checkout(e.Type, e.ID, p); err != nil {
 				return err
 			}
 		default:
@@ -228,14 +216,54 @@ func (s *Store) Materialize(id, dst string) error {
 	return nil
 }
 
-func (s *Store) materializeFile(id, p string, mode fs.FileMode) error {
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-	if err != nil {
+// Checkout writes one file, executable or symlink entry to p, which must
+// not exist.
+func (s *Store) Checkout(typ, id, p string) error {
+	switch typ {
+	case TypeSymlink:
+		target, err := s.getKind(id, KindBlob)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(string(target), p)
+	case TypeFile, TypeExecutable:
+		mode := fs.FileMode(0o644)
+		if typ == TypeExecutable {
+			mode = 0o755
+		}
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err != nil {
+			return err
+		}
+		err = s.WriteFile(id, f)
+		if e := f.Close(); err == nil {
+			err = e
+		}
 		return err
 	}
-	err = s.WriteFile(id, f)
-	if e := f.Close(); err == nil {
-		err = e
+	return apierr.New("unsupported_submodule", "a %s entry cannot be checked out at %s", typ, p)
+}
+
+// Files lists every non-tree entry under tree id with its full path.
+func (s *Store) Files(id string) ([]File, error) {
+	var out []File
+	var walk func(id, prefix string) error
+	walk = func(id, prefix string) error {
+		t, err := s.ReadTree(id)
+		if err != nil {
+			return err
+		}
+		for _, e := range t.Entries {
+			p := path.Join(prefix, e.Name)
+			if e.Type == TypeTree {
+				if err := walk(e.ID, p); err != nil {
+					return err
+				}
+				continue
+			}
+			out = append(out, File{Path: p, Type: e.Type, ID: e.ID})
+		}
+		return nil
 	}
-	return err
+	return out, walk(id, "")
 }

@@ -309,6 +309,10 @@ func TestCorruptObjectsAreDetectedAndRecovered(t *testing.T) {
 	if err := os.WriteFile(s.path(good), []byte("blob\ntampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// A later process finds the damaged copy on its first write of it.
+	if s, err = Open(s.dir, true); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Batch().PutFile([]byte("good")); err != nil {
 		t.Fatal(err)
 	}

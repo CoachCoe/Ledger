@@ -13,6 +13,12 @@ import (
 )
 
 type WorkspaceObserver interface{ Close() error }
+
+// Filter decides which event paths under a workspace root are ignored.
+type Filter interface {
+	Ignored(ctx context.Context, path string) bool
+}
+
 type Manager struct {
 	mu       sync.Mutex
 	watches  map[string]WorkspaceObserver
@@ -20,10 +26,18 @@ type Manager struct {
 	Notify   func()
 	Errors   chan error
 	Disabled bool
+	// Filter returns the ignore filter for a workspace root; it defaults
+	// to Git's rules.
+	Filter func(root string) (Filter, error)
 }
 
 func New(disabled bool, notify func()) *Manager {
-	return &Manager{watches: map[string]WorkspaceObserver{}, paths: map[string]string{}, Notify: notify, Errors: make(chan error, 1), Disabled: disabled}
+	return &Manager{watches: map[string]WorkspaceObserver{}, paths: map[string]string{}, Notify: notify, Errors: make(chan error, 1), Disabled: disabled, Filter: GitFilter}
+}
+
+// Watch starts one watcher on root, outside any Manager.
+func Watch(root string, filter Filter, notify func(), report func(error)) (WorkspaceObserver, error) {
+	return start(root, filter, notify, report)
 }
 
 func (m *Manager) Sync(paths map[string]string) error {
@@ -45,7 +59,11 @@ func (m *Manager) Sync(paths map[string]string) error {
 		if m.watches[id] != nil {
 			continue
 		}
-		w, err := start(path, m.Notify, func(err error) {
+		filter, err := m.Filter(path)
+		if err != nil {
+			return err
+		}
+		w, err := start(path, filter, m.Notify, func(err error) {
 			select {
 			case m.Errors <- err:
 			default:
@@ -93,6 +111,29 @@ type filter struct {
 	tracked    map[string]bool
 }
 
+// WatchDirs lists root and every directory holding a tracked or
+// unignored file, with one Git call.
+func (f *filter) WatchDirs(ctx context.Context) ([]string, error) {
+	out, err := gitx.Run(ctx, f.root, nil, nil, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{f.root: true}
+	dirs := []string{f.root}
+	for _, p := range strings.Split(string(out), "\x00") {
+		for d := filepath.Dir(p); d != "." && d != ""; d = filepath.Dir(d) {
+			if full := filepath.Join(f.root, d); !seen[full] {
+				seen[full] = true
+				dirs = append(dirs, full)
+			}
+		}
+	}
+	return dirs, nil
+}
+
+// GitFilter returns a Filter that follows Git's ignore rules for root.
+func GitFilter(root string) (Filter, error) { return newFilter(root) }
+
 func newFilter(root string) (*filter, error) {
 	out, err := gitx.Run(context.Background(), root, nil, nil, "ls-files", "--cached", "-z")
 	if err != nil {
@@ -106,7 +147,7 @@ func newFilter(root string) (*filter, error) {
 	return f, nil
 }
 
-func (f *filter) ignored(ctx context.Context, path string) bool {
+func (f *filter) Ignored(ctx context.Context, path string) bool {
 	rel, err := filepath.Rel(f.root, path)
 	if err != nil {
 		return true

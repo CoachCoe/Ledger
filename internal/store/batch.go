@@ -15,7 +15,8 @@ type Batch struct {
 	s     *Store
 	mu    sync.Mutex
 	dirty map[string]bool // directories whose entries need writing out
-	// Written counts objects this batch created.
+	ids   []string        // objects to record as durable at Commit
+	// written counts objects this batch created.
 	written int
 }
 
@@ -28,11 +29,14 @@ func (b *Batch) Written() int {
 	return b.written
 }
 
-func (b *Batch) mark(dirs ...string) {
+func (b *Batch) mark(id string, dirs ...string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, d := range dirs {
 		b.dirty[d] = true
+	}
+	if id != "" {
+		b.ids = append(b.ids, id)
 	}
 }
 
@@ -40,17 +44,20 @@ func (b *Batch) mark(dirs ...string) {
 // kept only if it verifies; a copy truncated by an earlier crash is replaced.
 func (b *Batch) Put(kind string, data []byte) (string, error) {
 	id := ID(kind, data)
+	if _, ok := b.s.durable.Load(id); ok {
+		return id, nil
+	}
 	p := b.s.path(id)
 	fan := filepath.Dir(p)
 	if ok, err := b.s.Has(id); err != nil {
 		return "", err
 	} else if ok {
 		// Another batch may have renamed it into place without its barrier.
-		b.mark(fan)
+		b.mark(id, fan)
 		return id, nil
 	}
 	if err := os.Mkdir(fan, 0o700); err == nil {
-		b.mark(b.s.dir)
+		b.mark("", b.s.dir)
 	} else if !errors.Is(err, fs.ErrExist) {
 		return "", err
 	}
@@ -76,7 +83,7 @@ func (b *Batch) Put(kind string, data []byte) (string, error) {
 	if err := os.Rename(tmp, p); err != nil {
 		return "", err
 	}
-	b.mark(fan)
+	b.mark(id, fan)
 	b.mu.Lock()
 	b.written++
 	b.mu.Unlock()
@@ -84,14 +91,20 @@ func (b *Batch) Put(kind string, data []byte) (string, error) {
 }
 
 // Commit writes out every touched directory and issues one barrier, after
-// which every object the batch put is durable.
+// which every object the batch put is durable. A batch that found every
+// object already durable needs no barrier.
 func (b *Batch) Commit() error {
 	b.mu.Lock()
 	dirs := make([]string, 0, len(b.dirty))
 	for d := range b.dirty {
 		dirs = append(dirs, d)
 	}
+	ids := b.ids
+	b.ids = nil
 	b.mu.Unlock()
+	if len(dirs) == 0 {
+		return nil
+	}
 	for _, d := range dirs {
 		f, err := os.Open(d)
 		if err != nil {
@@ -111,5 +124,8 @@ func (b *Batch) Commit() error {
 		delete(b.dirty, d)
 	}
 	b.mu.Unlock()
+	for _, id := range ids {
+		b.s.durable.Store(id, true)
+	}
 	return nil
 }

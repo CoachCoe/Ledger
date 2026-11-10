@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 )
@@ -31,6 +32,9 @@ type Store struct {
 	dir string
 	// sensitive is the repository's case policy, detected at init.
 	sensitive bool
+	// durable holds ids a committed batch made durable in this process,
+	// so writing them again costs neither a read nor a barrier.
+	durable sync.Map
 }
 
 // Open returns the store in dir, creating it if needed.

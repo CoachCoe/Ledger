@@ -44,6 +44,22 @@ func (b *Batch) PutFile(data []byte) (string, error) {
 	return b.Put(KindChunkedBlob, raw)
 }
 
+// FileID returns the id PutFile would give data, without storing it.
+func FileID(data []byte) (string, error) {
+	if len(data) <= ChunkThreshold {
+		return ID(KindBlob, data), nil
+	}
+	list := chunkList{Size: int64(len(data))}
+	for _, c := range chunks(data) {
+		list.Chunks = append(list.Chunks, ID(KindBlob, c))
+	}
+	raw, err := canon.Marshal(list)
+	if err != nil {
+		return "", err
+	}
+	return ID(KindChunkedBlob, raw), nil
+}
+
 // WriteFile streams the bytes of a blob or chunked_blob to w.
 func (s *Store) WriteFile(id string, w io.Writer) error {
 	kind, data, err := s.Get(id)
