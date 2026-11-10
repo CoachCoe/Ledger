@@ -1,11 +1,14 @@
 // Package mcp adapts Ledger's versioned core protocol to the official MCP SDK.
 // It owns no state or signing keys; production calls use the repository daemon.
+// Each server is bound to one session and signs nothing as root.
 package mcp
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"regexp"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -17,7 +20,18 @@ import (
 
 type Caller func(context.Context, api.Request) (any, error)
 
-func New(call Caller) (*mcp.Server, error) {
+var sessionID = regexp.MustCompile(`^ses_[0-9a-v]{26}$`)
+
+// New serves every operation as a tool acting as session. An empty session
+// is refused: the daemon treats it as the local root.
+func New(session string, call Caller) (*mcp.Server, error) {
+	if !sessionID.MatchString(session) {
+		return nil, apierr.New("usage", "ledger mcp requires --session with a session id; create one with ledger session create")
+	}
+	sid, err := json.Marshal(session)
+	if err != nil {
+		return nil, err
+	}
 	ops, err := api.Operations()
 	if err != nil {
 		return nil, err
@@ -41,7 +55,7 @@ func New(call Caller) (*mcp.Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.AddTool(&mcp.Tool{Name: op, Description: "Ledger API v1: " + op + ". Empty session_id acts as local root. Mutations require a stable operation_id for retries.", InputSchema: in, OutputSchema: out}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		s.AddTool(&mcp.Tool{Name: op, Description: fmt.Sprintf("Ledger API v1: %s, acting as session %s. Mutations require a stable operation_id for retries.", op, session), InputSchema: in, OutputSchema: out}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			raw, err := canon.Canonical(req.Params.Arguments)
 			if err != nil {
 				err = apierr.New("invalid_json", "%v", err)
@@ -65,6 +79,7 @@ func New(call Caller) (*mcp.Server, error) {
 				// Preserve unknown members for core request validation.
 				args["api_version"] = json.RawMessage("1")
 				args["operation"], _ = json.Marshal(op)
+				args["session_id"] = sid
 				if _, ok := args["operation_id"]; !ok && api.ReadOnly(op) {
 					args["operation_id"] = json.RawMessage(`""`)
 				}

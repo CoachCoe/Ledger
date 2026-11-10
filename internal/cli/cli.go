@@ -24,7 +24,7 @@ type command struct {
 func commands() map[string]command {
 	return map[string]command{
 		"daemon":       {"serve the core API over the repository socket", cmdDaemon},
-		"mcp":          {"serve the versioned agent tools over MCP stdio", nil},
+		"mcp":          {"serve the versioned agent tools over MCP stdio as one session (--session)", nil},
 		"history":      {"query portable manifests, attempts and selected dependencies", liveCommand("history")},
 		"capability":   {"issue or delegate scoped authority", liveCommand("capability")},
 		"coordination": {"inspect advisory symbols, poll/ack notifications, manage advisory leases", liveCommand("coordination")},

@@ -53,7 +53,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 | `ledger selection record` | Sign a selection decision with recomputed criterion statuses. Selection is not acceptance and never merges. |
 | `ledger speculation …` | Start a run of several attempts for one intent, submit frozen candidates, evaluate them against the intent's checks and a scorer, and inspect, score, resume, or cancel the run. The selected candidate is not merged. |
 | `ledger history …` | Query portable symbol history, attempts, and selected dependents. |
-| `ledger mcp` | Serve every versioned core operation as an MCP tool over stdio. |
+| `ledger mcp --session ID` | Serve every versioned core operation as an MCP tool over stdio, acting as that session. There is no root mode over MCP. |
 | `ledger system status` | Report the daemon's view of every subject and any pending session recovery. |
 | `ledger daemon` | Run the per-repository daemon in the foreground; `ledger daemon stop` stops it. |
 | `ledger export --out FILE` | Write a portable bundle of records and the Git objects they bind, without the daemon or SQLite. |

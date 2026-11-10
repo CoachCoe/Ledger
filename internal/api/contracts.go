@@ -58,17 +58,17 @@ func Operations() ([]string, error) {
 }
 
 // ToolSchemas packages Ledger's schemas without external fetches. A tool's
-// name supplies operation; api_version is fixed by this adapter. Retry and
-// session identities remain explicit, so reconnects cannot duplicate mutations.
+// name supplies operation; api_version is fixed by this adapter. Retry
+// identities remain explicit, so reconnects cannot duplicate mutations. The
+// session is not an argument: the adapter supplies the one it is bound to.
 func ToolSchemas(op string) (json.RawMessage, json.RawMessage, error) {
 	in := map[string]any{"type": "object", "additionalProperties": false,
 		"properties": map[string]any{
 			"operation_id": map[string]any{"type": "string"},
-			"session_id":   map[string]any{"anyOf": []any{map[string]any{"const": ""}, map[string]any{"$ref": "../common.json#/$defs/session_id"}}},
 			"input":        map[string]any{"$ref": op + ".json"}},
-		"required": []string{"session_id", "input"}}
+		"required": []string{"input"}}
 	if !ReadOnly(op) {
-		in["required"] = []string{"operation_id", "session_id", "input"}
+		in["required"] = []string{"operation_id", "input"}
 		in["properties"].(map[string]any)["operation_id"] = map[string]any{"$ref": "../common.json#/$defs/operation_id"}
 	}
 	a, err := bundle(in, "v1/api/"+op+".tool.json")
