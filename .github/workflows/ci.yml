@@ -1,9 +1,8 @@
 name: ci
 
+# Manual only: every run is billed to a personal account until the
+# repository moves to its organization.
 on:
-  push:
-    branches: [main, dev]
-  pull_request:
   workflow_dispatch:
     inputs:
       macos:
@@ -19,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS minutes cost ten times Linux ones: run there only on request.
+        # macOS minutes cost ten times Linux ones.
         os: ${{ fromJSON(inputs.macos && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
