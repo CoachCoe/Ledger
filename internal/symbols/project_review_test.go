@@ -33,7 +33,7 @@ func TestNormalizedPathAliasesFallBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	var engine Engine
-	project, err := engine.load(ctx, repo, tree)
+	project, err := engine.load(ctx, GitSource{Repo: repo}, tree)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestOversizeSourceKeepsOtherFilesAnalyzable(t *testing.T) {
 		t.Fatal(err)
 	}
 	var engine Engine
-	project, err := engine.load(ctx, repo, tree)
+	project, err := engine.load(ctx, GitSource{Repo: repo}, tree)
 	if err != nil {
 		t.Fatal(err)
 	}

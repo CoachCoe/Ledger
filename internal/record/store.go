@@ -70,6 +70,15 @@ type Store struct {
 	log   *headLog
 }
 
+// Version is the schema_version this store writes: 2 for a native store
+// (ADR 0027), 1 for a Phase 1 one.
+func (s *Store) Version() int {
+	if s.Repo == nil {
+		return 2
+	}
+	return 1
+}
+
 // Open opens the RecordStore of repo, which must have been initialized.
 // It does not run recovery; call Recover when a full reconciliation is
 // wanted (daemon start, reindex).
@@ -200,7 +209,7 @@ func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, erro
 		hashes = append(hashes, m.Hash)
 	}
 	slices.Sort(hashes)
-	receipt, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{
+	receipt, err := envelope.SealVersion(s.Version(), schema.KindOperationReceipt, schema.OperationReceipt{
 		OperationID:   op.ID,
 		Operation:     op.Name,
 		RequestDigest: op.Digest,

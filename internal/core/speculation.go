@@ -158,7 +158,7 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 		}
 		wid := schema.NewID(schema.PrefixWorkspace)
 		path := s.Provider.Path(wid)
-		w, err := envelope.Seal(schema.KindWorkspace, schema.Workspace{ID: wid, IntentID: in.IntentID, SessionID: session["session_id"], CapabilityID: session["capability_id"], ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: created}, c.signer)
+		w, err := s.seal(schema.KindWorkspace, schema.Workspace{ID: wid, IntentID: in.IntentID, SessionID: session["session_id"], CapabilityID: session["capability_id"], ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: created}, c.signer)
 		if err != nil {
 			return prepared{}, err
 		}
@@ -172,12 +172,12 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 	}
 	run := schema.SpeculationRun{ID: runID, IntentID: in.IntentID, Strategies: in.Strategies, Attempts: bindings, Checks: checks,
 		Scorer: scorerHash, ScorerDefinition: scorer, BaseCommit: base, Deadline: deadline, CreatedAt: created}
-	ro, err := envelope.Seal(schema.KindSpeculationRun, run, c.signer)
+	ro, err := s.seal(schema.KindSpeculationRun, run, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
 	sub := index.Subject{ID: runID, Kind: lifecycle.SpeculationRun, Creation: ro.Hash, State: "created"}
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, transition(sub, "collecting", nil, c.signer.ID()), c.signer)
+	ev, err := s.seal(schema.KindLifecycleEvent, transition(sub, "collecting", nil, c.signer.ID()), c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -298,7 +298,7 @@ func (s *Service) transitionRun(ctx context.Context, rs *runState, to, reason st
 	if reason != "" {
 		why = &reason
 	}
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, transition(*rs.sub, to, why, root.ID()), root)
+	ev, err := s.seal(schema.KindLifecycleEvent, transition(*rs.sub, to, why, root.ID()), root)
 	if err != nil {
 		return err
 	}
@@ -754,7 +754,7 @@ func (s *Service) committedCandidates(ctx context.Context, rs *runState) (map[st
 // other attempt, ended attempt sessions, and worktree removal for closed
 // attempts after publication.
 func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer, to, reason string, cands map[string]*candidate, scores map[string]int64) (prepared, error) {
-	seal := func(kind schema.Kind, p any) (envelope.Object, error) { return envelope.Seal(kind, p, root) }
+	seal := func(kind schema.Kind, p any) (envelope.Object, error) { return s.seal(kind, p, root) }
 	ev, err := seal(schema.KindLifecycleEvent, transition(*rs.sub, to, &reason, root.ID()))
 	if err != nil {
 		return prepared{}, err
@@ -924,7 +924,7 @@ func (s *Service) resumeRun(ctx context.Context, c *invocation) (prepared, error
 		return prepared{}, apierr.New("invalid_state", "run %s is %s, not interrupted", in.RunID, rs.sub.State).With("run_id", in.RunID)
 	}
 	reason := "resumed"
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, transition(*rs.sub, rs.sub.Resume, &reason, c.signer.ID()), c.signer)
+	ev, err := s.seal(schema.KindLifecycleEvent, transition(*rs.sub, rs.sub.Resume, &reason, c.signer.ID()), c.signer)
 	return prepared{result: map[string]string{"run_id": in.RunID, "state": rs.sub.Resume}, records: []envelope.Object{ev}}, err
 }
 

@@ -68,6 +68,6 @@ func (s *Service) issueCapability(ctx context.Context, c *invocation) (prepared,
 	if !expires.After(time.Now()) {
 		return prepared{}, apierr.New("capability_expired", "capability expired")
 	}
-	o, err := envelope.Seal(schema.KindCapability, grant, c.signer)
+	o, err := s.seal(schema.KindCapability, grant, c.signer)
 	return prepared{result: map[string]string{"session_id": in.SessionID, "capability_id": grant.ID, "capability_hash": o.Hash}, records: []envelope.Object{o}}, err
 }

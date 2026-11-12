@@ -44,8 +44,13 @@ func Seal(kind schema.Kind, payload any, s identity.Signer) (Object, error) {
 	return SealVersion(schema.Current, kind, payload, s)
 }
 
-// SealVersion is Seal at an explicit schema_version.
+// SealVersion is Seal at an explicit schema_version. payload may be the
+// kind's Go type or its wire struct at version; see schema.Wire.
 func SealVersion(version int, kind schema.Kind, payload any, s identity.Signer) (Object, error) {
+	payload, err := schema.Wire(version, kind, payload)
+	if err != nil {
+		return Object{}, err
+	}
 	p, err := canon.Marshal(payload)
 	if err != nil {
 		return Object{}, err

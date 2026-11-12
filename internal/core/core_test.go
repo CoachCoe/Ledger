@@ -83,11 +83,11 @@ func call(t *testing.T, s *Service, r api.Request) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire, err := canon.Marshal(api.Reply(result, nil))
+	wire, err := canon.Marshal(api.ReplyVersion(r.Version, result, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := api.ValidateResponse(r.Operation, wire); err != nil {
+	if err := api.ValidateResponseVersion(r.Version, r.Operation, wire); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := canon.Marshal(result)

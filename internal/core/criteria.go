@@ -212,7 +212,7 @@ func (s *Service) evidenceJudge(ctx context.Context, r api.Request) (any, error)
 		return nil, err
 	}
 	def := schema.CheckDefinition{Name: "judgment", Category: "judgment", Command: "judgment", WorkingDirectory: ".", EnvAllowlist: []string{}, TimeoutSeconds: 1}
-	defRecord, err := envelope.Seal(schema.KindCheckDefinition, def, signer)
+	defRecord, err := s.seal(schema.KindCheckDefinition, def, signer)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func (s *Service) evidenceJudge(ctx context.Context, r api.Request) (any, error)
 		Result: in.Result, Reason: in.Reason, EnvironmentHash: envHash, Environment: env,
 		VerifierSession: reviewer, StartedAt: at, EndedAt: at, OutputDigest: canon.Hash(nil), Isolation: "none",
 	}
-	o, err := envelope.Seal(schema.KindEvidenceAttestation, att, signer)
+	o, err := s.seal(schema.KindEvidenceAttestation, att, signer)
 	if err != nil {
 		return nil, err
 	}

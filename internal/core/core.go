@@ -18,12 +18,14 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/capability"
+	"github.com/CoachCoe/Ledger/internal/cow"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/evidence"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/store"
 	"github.com/CoachCoe/Ledger/internal/symbols"
 	"github.com/CoachCoe/Ledger/internal/workspace"
 )
@@ -35,6 +37,8 @@ type Service struct {
 	Store    *record.Store
 	Keys     identity.IdentityProvider
 	Provider workspace.WorkspaceProvider
+	// Objects is the content store of a native repository, nil in Phase 1.
+	Objects *store.Store
 
 	mu              sync.Mutex
 	signers         map[string]identity.Signer
@@ -57,15 +61,13 @@ type Service struct {
 
 // New opens the service over store, completing interrupted operations and
 // ending sessions whose keys did not survive a restart.
-func New(ctx context.Context, store *record.Store, keys identity.IdentityProvider) (*Service, error) {
-	p := workspace.GitProvider{Repo: store.Repo}
-	store.SetEffectHandler(p.Apply)
-	s := &Service{Store: store, Keys: keys, Provider: p, signers: map[string]identity.Signer{}, evaluating: map[string]context.CancelFunc{}, caseSensitive: true}
+func New(ctx context.Context, records *record.Store, keys identity.IdentityProvider) (*Service, error) {
+	s := &Service{Store: records, Keys: keys, signers: map[string]identity.Signer{}, evaluating: map[string]context.CancelFunc{}, caseSensitive: true}
 	var config struct {
 		Root          string `json:"root_fingerprint"`
 		CaseSensitive bool   `json:"case_sensitive"`
 	}
-	if b, err := os.ReadFile(filepath.Join(store.Dir, "config.json")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(records.Dir, "config.json")); err == nil {
 		if err := json.Unmarshal(b, &config); err != nil {
 			return nil, err
 		}
@@ -74,6 +76,22 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
+	if s.native() {
+		objects, err := store.Open(filepath.Join(records.Dir, "store", "objects"), s.caseSensitive)
+		if err != nil {
+			return nil, err
+		}
+		workspaces, err := cow.New(cow.Config{Store: objects, Runtime: s.runtimeDir(), Logs: filepath.Join(records.Dir, "oplog"),
+			CaseSensitive: s.caseSensitive, Human: filepath.Dir(records.Dir)})
+		if err != nil {
+			return nil, err
+		}
+		s.Objects = objects
+		s.Provider = workspace.NativeProvider{Workspaces: workspaces, Store: objects}
+	} else {
+		s.Provider = workspace.GitProvider{Repo: records.Repo}
+	}
+	records.SetEffectHandler(s.Provider.Apply)
 	stale, err := filepath.Glob(filepath.Join(s.runtimeDir(), "observe-*.index.lock"))
 	if err != nil {
 		return nil, err
@@ -83,10 +101,10 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 			return nil, err
 		}
 	}
-	if _, err := store.Recover(ctx); err != nil {
+	if _, err := records.Recover(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := evidence.Reconcile(ctx, store.Repo, s.runtimeDir()); err != nil {
+	if _, err := evidence.Reconcile(ctx, records.Repo, s.runtimeDir()); err != nil {
 		return nil, err
 	}
 	if err := s.settleRuns(ctx); err != nil {
@@ -102,12 +120,12 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	}
 	// Every local session key was lost on restart, even when the missing root
 	// prevents publishing session-end events. No advisory lease may revive it.
-	leases, err := store.Index.Leases(ctx)
+	leases, err := records.Index.Leases(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, lease := range leases {
-		if err := store.Index.DeleteLease(ctx, lease.ID); err != nil {
+		if err := records.Index.DeleteLease(ctx, lease.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -123,6 +141,19 @@ func workspaceBase(w schema.Workspace) string { return cmp.Or(w.BaseTree, w.Base
 // native reports whether the service runs over a native store (ADR 0025)
 // rather than a Phase 1 Git repository.
 func (s *Service) native() bool { return s.Store.Repo == nil }
+
+// symbolSource reads the trees symbols are compared over.
+func (s *Service) symbolSource() symbols.Source {
+	if s.native() {
+		return symbols.StoreSource{Store: s.Objects}
+	}
+	return symbols.GitSource{Repo: s.Store.Repo}
+}
+
+// seal signs a record at the schema_version this repository writes.
+func (s *Service) seal(kind schema.Kind, payload any, signer identity.Signer) (envelope.Object, error) {
+	return envelope.SealVersion(s.Store.Version(), kind, payload, signer)
+}
 
 // apiVersion is the api_version this repository answers: 2 for a native
 // store, whose records bind store trees, and 1 for a Phase 1 repository.
@@ -163,7 +194,7 @@ func (s *Service) reconcile(ctx context.Context) error {
 			return nil //nolint:nilerr // a missing root key is reported as recovery_pending, not as a failure
 		}
 		reason := "daemon_restart"
-		event, err := envelope.Seal(schema.KindLifecycleEvent, transition(sub, "ended", &reason, root.ID()), root)
+		event, err := s.seal(schema.KindLifecycleEvent, transition(sub, "ended", &reason, root.ID()), root)
 		if err != nil {
 			return err
 		}
@@ -548,7 +579,7 @@ func (s *Service) recoverSession(ctx context.Context, c *invocation) (prepared, 
 	if err != nil {
 		return prepared{}, err
 	}
-	binding, err := envelope.Seal(schema.KindWorkspaceBinding, schema.WorkspaceBinding{WorkspaceID: sub.ID, Previous: sub.BindingHead, SessionID: result["session_id"], CapabilityID: result["capability_id"], Actor: c.signer.ID(), Reason: "explicit_recovery", At: now()}, c.signer)
+	binding, err := s.seal(schema.KindWorkspaceBinding, schema.WorkspaceBinding{WorkspaceID: sub.ID, Previous: sub.BindingHead, SessionID: result["session_id"], CapabilityID: result["capability_id"], Actor: c.signer.ID(), Reason: "explicit_recovery", At: now()}, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -590,11 +621,11 @@ func (s *Service) newSession(c *invocation, in sessionInput) (map[string]string,
 	if err := capability.Validate(grant, s.caseSensitive); err != nil {
 		return nil, nil, err
 	}
-	capability, err := envelope.Seal(schema.KindCapability, grant, c.signer)
+	capability, err := s.seal(schema.KindCapability, grant, c.signer)
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := envelope.Seal(schema.KindSession, schema.Session{ID: sid, CapabilityID: cid, PublicKey: identity.EncodePublicKey(key.PublicKey()), ParticipantKind: cmp.Or(in.ParticipantKind, "agent"), AgentName: optional(in.AgentName), Model: optional(in.Model), StartedAt: schema.Timestamp(start)}, c.signer)
+	session, err := s.seal(schema.KindSession, schema.Session{ID: sid, CapabilityID: cid, PublicKey: identity.EncodePublicKey(key.PublicKey()), ParticipantKind: cmp.Or(in.ParticipantKind, "agent"), AgentName: optional(in.AgentName), Model: optional(in.Model), StartedAt: schema.Timestamp(start)}, c.signer)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -618,7 +649,7 @@ func (s *Service) endSession(ctx context.Context, c *invocation) (prepared, erro
 		return prepared{}, err
 	}
 	reason := "session_end"
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, "ended", &reason, c.signer.ID()), c.signer)
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, "ended", &reason, c.signer.ID()), c.signer)
 	return prepared{result: map[string]string{"session_id": in.SessionID}, records: []envelope.Object{event}}, err
 }
 
@@ -651,7 +682,7 @@ func (s *Service) createIntent(ctx context.Context, c *invocation) (prepared, er
 		return prepared{}, err
 	}
 	id := schema.NewID(schema.PrefixIntent)
-	o, err := envelope.Seal(schema.KindIntent, schema.Intent{ID: id, ParentID: in.ParentID, Description: in.Description, Criteria: criteria, Source: source, Owner: c.signer.ID(), CreatedAt: now()}, c.signer)
+	o, err := s.seal(schema.KindIntent, schema.Intent{ID: id, ParentID: in.ParentID, Description: in.Description, Criteria: criteria, Source: source, Owner: c.signer.ID(), CreatedAt: now()}, c.signer)
 	return prepared{result: map[string]string{"intent_id": id, "object_hash": o.Hash}, records: append(definitions, o)}, err
 }
 
@@ -670,7 +701,7 @@ func (s *Service) closeIntent(ctx context.Context, c *invocation) (prepared, err
 	}
 	event := transition(*sub, "closed", &in.Reason, c.signer.ID())
 	event.ReplacementID = in.ReplacementID
-	o, err := envelope.Seal(schema.KindLifecycleEvent, event, c.signer)
+	o, err := s.seal(schema.KindLifecycleEvent, event, c.signer)
 	return prepared{result: map[string]string{"intent_id": sub.ID}, records: []envelope.Object{o}}, err
 }
 
@@ -679,6 +710,7 @@ func (s *Service) fork(ctx context.Context, c *invocation) (prepared, error) {
 		IntentID     string `json:"intent_id"`
 		CapabilityID string `json:"capability_id"`
 		BaseCommit   string `json:"base_commit"`
+		BaseTree     string `json:"base_tree"`
 	}](c.Input)
 	if err != nil {
 		return prepared{}, err
@@ -692,6 +724,9 @@ func (s *Service) fork(ctx context.Context, c *invocation) (prepared, error) {
 	if err := s.authority(ctx, c.SessionID, in.CapabilityID); err != nil {
 		return prepared{}, err
 	}
+	if s.native() {
+		return s.forkNative(ctx, c, in.IntentID, in.CapabilityID, in.BaseTree)
+	}
 	base, err := s.Store.Repo.ResolveRef(ctx, cmp.Or(in.BaseCommit, "HEAD"))
 	if err != nil {
 		return prepared{}, err
@@ -701,11 +736,35 @@ func (s *Service) fork(ctx context.Context, c *invocation) (prepared, error) {
 	}
 	id := schema.NewID(schema.PrefixWorkspace)
 	path := s.Provider.Path(id)
-	o, err := envelope.Seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: c.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: now()}, c.signer)
+	o, err := s.seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: c.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: now()}, c.signer)
 	return prepared{
 		result:  map[string]string{"workspace_id": id, "path": path, "base_commit": base, "object_hash": o.Hash},
 		records: []envelope.Object{o},
 		effects: []record.Effect{{Kind: record.EffectWorktreeAdd, WorkspaceID: id, Path: path, Base: base}},
+	}, err
+}
+
+// forkNative creates a copy-on-write workspace on baseTree, or on the head
+// of line main when baseTree is empty, binding the advance it starts from.
+func (s *Service) forkNative(ctx context.Context, c *invocation, intentID, capabilityID, baseTree string) (prepared, error) {
+	var advance *string
+	if baseTree == "" {
+		head, err := s.Store.Index.LineHead(ctx, "main")
+		if err != nil {
+			return prepared{}, err
+		}
+		baseTree, advance = head.Tree, head.Advance
+	} else if _, err := s.Objects.ReadTree(baseTree); err != nil {
+		return prepared{}, apierr.New("base_unavailable", "base tree %s is not in the store", baseTree)
+	}
+	id := schema.NewID(schema.PrefixWorkspace)
+	path := s.Provider.Path(id)
+	o, err := s.seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: intentID, SessionID: c.SessionID,
+		CapabilityID: capabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseTree: baseTree, BaseLineAdvance: advance, CreatedAt: now()}, c.signer)
+	return prepared{
+		result:  map[string]string{"workspace_id": id, "path": path, "base_tree": baseTree, "object_hash": o.Hash},
+		records: []envelope.Object{o},
+		effects: []record.Effect{{Kind: record.EffectWorkspaceCreate, WorkspaceID: id, Path: path, Base: baseTree, Session: c.SessionID}},
 	}, err
 }
 
@@ -780,11 +839,11 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err != nil {
 		return prepared{}, err
 	}
-	analysis, err := s.symbolEngine.Compare(ctx, s.Store.Repo, w.BaseCommit, snap.Tree, snap.Files, in.ContextRefs)
+	analysis, err := s.symbolEngine.Compare(ctx, s.symbolSource(), workspaceBase(w), snap.Tree, snap.Files, in.ContextRefs)
 	if err != nil {
 		return prepared{}, err
 	}
-	manifest, err := envelope.Seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: recordFiles, SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written}, c.signer)
+	manifest, err := s.seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: recordFiles, SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written}, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -815,7 +874,7 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 			return prepared{}, err
 		}
 	}
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, "proposed", nil, c.signer.ID()), c.signer)
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, "proposed", nil, c.signer.ID()), c.signer)
 	return prepared{
 		result:  map[string]string{"workspace_id": w.ID, "change_id": w.ChangeID, "manifest": manifest.Hash, "commit": commit, "tree": snap.Tree, "branch": strings.TrimPrefix(branch, "refs/heads/")},
 		records: []envelope.Object{manifest, event},
@@ -882,7 +941,7 @@ func (s *Service) transitionWorkspace(ctx context.Context, c *invocation, id, to
 	if err := s.notInRun(ctx, id); err != nil {
 		return prepared{}, err
 	}
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, to, reason, c.signer.ID()), c.signer)
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, to, reason, c.signer.ID()), c.signer)
 	return prepared{result: map[string]string{"workspace_id": id, "state": to}, records: []envelope.Object{event}, effects: effects}, err
 }
 
@@ -991,7 +1050,7 @@ func (s *Service) pinChecks(criteria []schema.Criterion, signer identity.Signer)
 			if err := evidence.ValidateDefinition(def); err != nil {
 				return nil, nil, apierr.New("invalid_checks", "check %s: %v", name, err)
 			}
-			o, err := envelope.Seal(schema.KindCheckDefinition, def, signer)
+			o, err := s.seal(schema.KindCheckDefinition, def, signer)
 			if err != nil {
 				return nil, nil, err
 			}

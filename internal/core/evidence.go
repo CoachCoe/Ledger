@@ -196,7 +196,7 @@ func (s *Service) finishRun(ctx context.Context, r api.Request, digest string, p
 	}
 	att := out.Attestation
 	att.VerifierSession = plan.VerifierSession
-	o, err := envelope.Seal(schema.KindEvidenceAttestation, att, verifier)
+	o, err := s.seal(schema.KindEvidenceAttestation, att, verifier)
 	if err != nil {
 		_ = evidence.SetState(rt, plan.RunID, evidence.StateInterrupted, "signing_failed")
 		return nil, err
@@ -245,7 +245,7 @@ func (s *Service) endVerifier(ctx context.Context, sid string) {
 		return
 	}
 	reason := "evidence_run_complete"
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, "ended", &reason, root.ID()), root)
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, "ended", &reason, root.ID()), root)
 	if err != nil {
 		return
 	}

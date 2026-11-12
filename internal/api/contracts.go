@@ -88,7 +88,12 @@ func responseName(op string) string {
 
 // ValidateResponse checks the complete API envelope. The original standalone
 // bundle report schemas remain usable by offline verification clients.
-func ValidateResponse(op string, raw []byte) error { return schema.ValidateAPI(responseName(op), raw) }
+func ValidateResponse(op string, raw []byte) error { return ValidateResponseVersion(1, op, raw) }
+
+// ValidateResponseVersion is ValidateResponse for a reply of api_version.
+func ValidateResponseVersion(version int, op string, raw []byte) error {
+	return schema.ValidateAPIVersion(version, responseName(op), raw)
+}
 
 func bundle(root map[string]any, base string) (json.RawMessage, error) {
 	defs := map[string]any{}

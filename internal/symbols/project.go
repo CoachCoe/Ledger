@@ -1,11 +1,7 @@
 package symbols
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"fmt"
-	"io"
 	"path"
 	"slices"
 	"strconv"
@@ -14,7 +10,6 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
@@ -45,13 +40,13 @@ type Engine struct {
 	cache map[string]Analysis
 }
 
-func (e *Engine) load(ctx context.Context, repo *gitx.Repo, tree string) (map[string]Analysis, error) {
-	entries, err := repo.ListTreeDetails(ctx, tree)
+func (e *Engine) load(ctx context.Context, src Source, tree string) (map[string]Analysis, error) {
+	entries, err := src.Entries(ctx, tree)
 	if err != nil {
 		return nil, err
 	}
 	result := map[string]Analysis{}
-	pending := []gitx.TreeEntry{}
+	pending := []Entry{}
 	paths := map[string]int{}
 	for _, entry := range entries {
 		paths[norm.NFC.String(entry.Path)]++
@@ -66,7 +61,7 @@ func (e *Engine) load(ctx context.Context, repo *gitx.Repo, tree string) (map[st
 			result[p] = Analysis{Fallback: "ambiguous_path"}
 			continue
 		}
-		if entry.Mode != "100644" && entry.Mode != "100755" {
+		if !entry.Regular {
 			result[p] = Analysis{Fallback: "non_regular_file"}
 			continue
 		}
@@ -74,29 +69,26 @@ func (e *Engine) load(ctx context.Context, repo *gitx.Repo, tree string) (map[st
 			result[p] = Analysis{Fallback: "unsupported_file"}
 			continue
 		}
-		if entry.Size > 4<<20 {
+		if entry.Size > maxSource {
 			result[p] = Analysis{Fallback: "source_too_large"}
 			continue
 		}
-		if a, ok := e.cache[p+":"+entry.Blob]; ok {
+		if a, ok := e.cache[p+":"+entry.ID]; ok {
 			result[p] = a
 		} else {
 			pending = append(pending, entry)
 		}
 	}
 	e.mu.Unlock()
-	if len(pending) == 0 {
-		return result, nil
-	}
-	// Bound cat-file's buffered stdout too, not only each parser input.
+	// Bound each read's buffered output too, not only each parser input.
 	for start := 0; start < len(pending); {
 		end := start
 		var size int64
-		for end < len(pending) && end-start < 128 && size+pending[end].Size <= 8<<20 {
-			size += pending[end].Size
+		for end < len(pending) && end-start < 128 && size+max(pending[end].Size, 0) <= 8<<20 {
+			size += max(pending[end].Size, 0)
 			end++
 		}
-		if err := e.loadBatch(ctx, repo, pending[start:end], result); err != nil {
+		if err := e.loadBatch(ctx, src, pending[start:end], result); err != nil {
 			return nil, err
 		}
 		start = end
@@ -104,48 +96,25 @@ func (e *Engine) load(ctx context.Context, repo *gitx.Repo, tree string) (map[st
 	return result, nil
 }
 
-func (e *Engine) loadBatch(ctx context.Context, repo *gitx.Repo, entries []gitx.TreeEntry, result map[string]Analysis) error {
-	var input strings.Builder
-	for _, entry := range entries {
-		input.WriteString(entry.Blob + "\n")
-	}
-	raw, err := gitx.Run(ctx, repo.Dir, strings.NewReader(input.String()), nil, "cat-file", "--batch")
+func (e *Engine) loadBatch(ctx context.Context, src Source, entries []Entry, result map[string]Analysis) error {
+	contents, err := src.Read(ctx, entries)
 	if err != nil {
 		return err
 	}
-	r := bufio.NewReader(bytes.NewReader(raw))
-	for _, entry := range entries {
-		header, err := r.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		fields := strings.Fields(header)
-		if len(fields) != 3 || fields[1] != "blob" {
-			return fmt.Errorf("unavailable blob %s", entry.Blob)
-		}
-		n, err := strconv.Atoi(fields[2])
-		if err != nil || int64(n) != entry.Size {
-			return fmt.Errorf("invalid blob size")
-		}
+	for i, entry := range entries {
 		p := norm.NFC.String(entry.Path)
-		var a Analysis
-		b := make([]byte, n)
-		if _, err := io.ReadFull(r, b); err != nil {
-			return err
-		}
-		a, err = ForPath(p).Analyze(p, b)
-		if err != nil {
-			return err
-		}
-		if _, err := r.ReadByte(); err != nil {
-			return err
+		a := Analysis{Fallback: "source_too_large"}
+		if b := contents[i]; b != nil && len(b) <= maxSource {
+			if a, err = ForPath(p).Analyze(p, b); err != nil {
+				return err
+			}
 		}
 		result[p] = a
 		e.mu.Lock()
 		if len(e.cache) >= 4096 {
 			clear(e.cache)
 		}
-		e.cache[p+":"+entry.Blob] = a
+		e.cache[p+":"+entry.ID] = a
 		e.mu.Unlock()
 	}
 	return nil
@@ -153,12 +122,12 @@ func (e *Engine) loadBatch(ctx context.Context, repo *gitx.Repo, entries []gitx.
 
 // Compare uses the exact frozen trees, including deleted declarations. Context
 // references use path#lexical.name; an ambiguous/unrecognized reference is labeled.
-func (e *Engine) Compare(ctx context.Context, repo *gitx.Repo, base, candidate string, files, contexts []string) (Summary, error) {
-	before, err := e.load(ctx, repo, base)
+func (e *Engine) Compare(ctx context.Context, src Source, base, candidate string, files, contexts []string) (Summary, error) {
+	before, err := e.load(ctx, src, base)
 	if err != nil {
 		return Summary{}, err
 	}
-	after, err := e.load(ctx, repo, candidate)
+	after, err := e.load(ctx, src, candidate)
 	if err != nil {
 		return Summary{}, err
 	}

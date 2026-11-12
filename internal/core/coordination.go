@@ -83,7 +83,7 @@ func (s *Service) observeSymbols(ctx context.Context, w schema.Workspace, snap w
 			}
 			contexts = m.ContextRefs
 		}
-		a, err := s.symbolEngine.Compare(ctx, s.Store.Repo, w.BaseCommit, snap.Tree, snap.Files, contexts)
+		a, err := s.symbolEngine.Compare(ctx, s.symbolSource(), workspaceBase(w), snap.Tree, snap.Files, contexts)
 		if err != nil {
 			return err
 		}

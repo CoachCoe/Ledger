@@ -85,7 +85,7 @@ func (s *Service) recordSelection(ctx context.Context, c *invocation) (prepared,
 	if err != nil {
 		return prepared{}, err
 	}
-	o, err := envelope.Seal(schema.KindSelectionDecision, d, c.signer)
+	o, err := s.seal(schema.KindSelectionDecision, d, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
