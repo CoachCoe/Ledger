@@ -3,7 +3,6 @@ package index
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"slices"
 	"time"
@@ -59,6 +58,7 @@ type validator struct {
 	local     map[string]envelope.Object // creations in this group, by entity id
 	objects   map[string]envelope.Object // members of this group, by hash
 	sims      map[string]*Subject        // subjects as changed by this group
+	lines     map[string]LineHead        // lines as advanced by this group
 }
 
 func (v *validator) check(o envelope.Object) error {
@@ -164,6 +164,19 @@ func (v *validator) check(o envelope.Object) error {
 			return err
 		}
 		return v.checkBinding(o.Hash, &b, signer)
+
+	case schema.KindRepository:
+		var p schema.Repository
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkRepository(&p, signer)
+	case schema.KindLineAdvance:
+		var p schema.LineAdvance
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkLineAdvance(o.Hash, &p, signer)
 	}
 	return nil
 }
@@ -192,19 +205,9 @@ func (v *validator) signerActive(signer string) error {
 		return apierr.New("session_inactive", "session %s is %s", signer, s.State)
 	}
 
-	var session schema.Session
-	if o, ok := v.local[signer]; ok {
-		if err := o.Decode(&session); err != nil {
-			return err
-		}
-	} else {
-		cr, err := creation(v.ctx, v.q, signer)
-		if err != nil {
-			return err
-		}
-		if err := cr.Decode(&session); err != nil {
-			return err
-		}
+	session, err := v.session(signer)
+	if err != nil {
+		return err
 	}
 	c, err := v.capability(session.CapabilityID)
 	if err != nil {
@@ -232,6 +235,29 @@ func (v *validator) signerActive(signer string) error {
 		return err
 	}
 	return nil
+}
+
+// session returns the creation record of session id from this group or
+// the index.
+func (v *validator) session(id string) (schema.Session, error) {
+	var s schema.Session
+	if o, ok := v.local[id]; ok {
+		return s, o.Decode(&s)
+	}
+	cr, err := creation(v.ctx, v.q, id)
+	if err != nil {
+		return s, err
+	}
+	return s, cr.Decode(&s)
+}
+
+// sessionCapability returns the capability session id holds.
+func (v *validator) sessionCapability(id string) (*schema.Capability, error) {
+	s, err := v.session(id)
+	if err != nil {
+		return nil, err
+	}
+	return v.capability(s.CapabilityID)
 }
 
 func (v *validator) unique(id string) error {
@@ -371,14 +397,15 @@ func (v *validator) object(hash string, kind schema.Kind, out any) error {
 		return o.Decode(out)
 	}
 	var payload string
-	err := v.q.QueryRowContext(v.ctx, `SELECT payload FROM objects WHERE hash = ? AND kind = ?`, hash, kind).Scan(&payload)
+	var version int
+	err := v.q.QueryRowContext(v.ctx, `SELECT payload, version FROM objects WHERE hash = ? AND kind = ?`, hash, kind).Scan(&payload, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apierr.New("unknown_entity", "no %s %s", kind, hash)
 	}
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal([]byte(payload), out)
+	return schema.Decode(version, kind, []byte(payload), out)
 }
 
 func (v *validator) checkCapability(p *schema.Capability, signer string) error {
@@ -421,7 +448,7 @@ func (v *validator) checkWorkspace(p *schema.Workspace, signer string) error {
 	if c.SessionID != p.SessionID {
 		return unauthorized("capability %s is not held by %s", p.CapabilityID, p.SessionID)
 	}
-	return nil
+	return v.workspaceLine(p)
 }
 
 func (v *validator) checkEvent(hash string, e *schema.LifecycleEvent, signer string) error {

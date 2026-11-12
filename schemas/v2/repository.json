@@ -9,6 +9,7 @@
     "hash_algorithm",
     "case_policy",
     "analyzers",
+    "tree",
     "created_at"
   ],
   "properties": {
@@ -35,6 +36,9 @@
         ]
       },
       "uniqueItems": true
+    },
+    "tree": {
+      "$ref": "common.json#/$defs/object_id"
     },
     "created_at": {
       "$ref": "../v1/common.json#/$defs/timestamp"

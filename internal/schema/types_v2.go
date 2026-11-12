@@ -113,7 +113,10 @@ type Repository struct {
 	// under it for the repository's lifetime.
 	CasePolicy string   `json:"case_policy"`
 	Analyzers  []string `json:"analyzers"`
-	CreatedAt  string   `json:"created_at"`
+	// Tree is the content the repository was created with: the head of
+	// every line until its first advance.
+	Tree      string `json:"tree"`
+	CreatedAt string `json:"created_at"`
 }
 
 // LineAdvance accepts a selected manifest onto a line. Previous is the

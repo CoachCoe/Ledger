@@ -31,7 +31,7 @@ const sym = (path, name, revision) => ({ path, language: 'typescript', name, kin
 // schema_version 2 (ADR 0027): records bind native store trees.
 const payloadsV2 = [
   ['repository', { id: 'rep_' + 'a'.repeat(26), hash_algorithm: 'sha256', case_policy: 'insensitive',
-    analyzers: ['python', 'typescript'], created_at: T }],
+    analyzers: ['python', 'typescript'], tree: 'd'.repeat(64), created_at: T }],
   ['capability', { id: 'cap_' + 'a'.repeat(26), session_id: ses, issuer: { kind: 'root', fingerprint: fp },
     allow: ['src/**'], deny: [], may_add_dependencies: false, may_advance: ['main', 'release/1.x'],
     expires_at: T, created_at: T }],

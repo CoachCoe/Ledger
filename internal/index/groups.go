@@ -347,7 +347,7 @@ func entityID(o envelope.Object) (string, error) {
 	switch o.Envelope.Kind {
 	case schema.KindRootKey:
 		return o.Envelope.Signer, nil
-	case schema.KindIntent, schema.KindCapability, schema.KindSession, schema.KindWorkspace, schema.KindSpeculationRun:
+	case schema.KindIntent, schema.KindCapability, schema.KindSession, schema.KindWorkspace, schema.KindSpeculationRun, schema.KindRepository:
 		var p struct {
 			ID string `json:"id"`
 		}

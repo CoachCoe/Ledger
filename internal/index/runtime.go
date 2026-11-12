@@ -112,6 +112,8 @@ func (x *Index) Observation(ctx context.Context, id string) (map[string]string, 
 }
 
 // Proposal is the commit and branch a workspace's latest proposal published.
+// Proposal is a workspace's proposal binding. Commit and Branch are empty
+// for a v2 manifest, which binds a store tree.
 type Proposal struct {
 	Manifest string `json:"manifest"`
 	Commit   string `json:"commit"`
@@ -168,8 +170,17 @@ func lastProposal(ctx context.Context, q querier, id string) (Proposal, error) {
 			if err := rows.Err(); err != nil {
 				return Proposal{}, err
 			}
-			if count != 1 || result.WorkspaceID != id || result.Commit == "" {
+			if count != 1 || result.WorkspaceID != id || result.Manifest == "" {
 				return Proposal{}, apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
+			}
+			if result.Commit == "" {
+				m, err := manifestIn(ctx, q, result.Manifest)
+				if err != nil {
+					return Proposal{}, err
+				}
+				if m.BaseTree == "" {
+					return Proposal{}, apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
+				}
 			}
 			return result.Proposal, nil
 		}

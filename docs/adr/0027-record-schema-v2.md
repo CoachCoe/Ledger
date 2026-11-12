@@ -30,11 +30,17 @@ v1.
 New record kinds:
 
 - **`repository`:** the root-signed creation record, with repository id, hash
-  algorithm, case policy and analyzer set.
+  algorithm, case policy, analyzer set and initial tree. The initial tree is
+  the head of every line until its first `line_advance`, so a workspace
+  forked before any advance still has a signed base.
 - **`line_advance`:** `{line, previous, manifest, selection, actor, at}`,
   signed by root or a session holding a new `may_advance` capability for that
   line. This is the explicit acceptance record that Phase 1 left to Git
-  merges.
+  merges. An advance is admitted only from the line's current head
+  (`stale_line` otherwise) and only for a manifest based on that head's
+  tree (`stale_base`), so a line moves by fast-forward and never drops an
+  accepted change. A workspace's `base_line_advance`, when present, must
+  name the advance that accepted its `base_tree`.
 - **`bridge_mapping`:** `{native_tree, git_commit, git_tree, direction}`,
   signed by root (ADR 0028).
 - **`foreign_change`:** a change that arrived through the bridge, signed by

@@ -49,6 +49,8 @@ CREATE INDEX IF NOT EXISTS objects_attempt_run ON objects (json_extract(payload,
 	WHERE kind = 'attempt_record';
 CREATE INDEX IF NOT EXISTS objects_selection_selector ON objects (json_extract(payload, '$.selector.id'))
 	WHERE kind = 'selection_decision';
+CREATE INDEX IF NOT EXISTS objects_line_advance ON objects (json_extract(payload, '$.line'))
+	WHERE kind = 'line_advance';
 CREATE TABLE IF NOT EXISTS members (
 	receipt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (receipt, hash));
 CREATE INDEX IF NOT EXISTS members_hash ON members (hash);
