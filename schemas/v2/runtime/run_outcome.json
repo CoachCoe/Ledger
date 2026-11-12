@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/runtime/run_outcome.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "$ref": "../../v1/common.json#/$defs/run_id"
+    },
+    "state": {
+      "enum": [
+        "resolved",
+        "cancelled"
+      ]
+    },
+    "selection": {
+      "anyOf": [
+        {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "winner": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workspace_id": {
+              "$ref": "../../v1/common.json#/$defs/workspace_id"
+            },
+            "manifest": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "manifest"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "scores": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "$ref": "../../v1/common.json#/$defs/workspace_id"
+          },
+          "strategy": {
+            "$ref": "../../v1/common.json#/$defs/name"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "selected",
+              "failed_criteria",
+              "lost_tiebreaker",
+              "timeout",
+              "cancelled",
+              "interrupted",
+              "not_proposed"
+            ]
+          },
+          "attempt_record": {
+            "anyOf": [
+              {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selection": {
+            "$ref": "../../v1/common.json#/$defs/hash"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failed_criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "../../v1/common.json#/$defs/name"
+            }
+          }
+        },
+        "required": [
+          "workspace_id",
+          "strategy",
+          "manifest",
+          "outcome",
+          "attempt_record",
+          "score",
+          "failed_criteria"
+        ]
+      }
+    },
+    "accepted": {
+      "const": false
+    },
+    "merged": {
+      "const": false
+    }
+  },
+  "required": [
+    "run_id",
+    "state",
+    "selection",
+    "winner",
+    "scores",
+    "attempts",
+    "accepted",
+    "merged"
+  ],
+  "title": "Speculation run outcome"
+}

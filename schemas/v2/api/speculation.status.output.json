@@ -4,7 +4,7 @@
   "$ref": "response.json",
   "properties": {
     "result": {
-      "$ref": "../../v1/runtime/run_status.json"
+      "$ref": "../runtime/run_status.json"
     }
   }
 }

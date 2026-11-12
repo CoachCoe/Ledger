@@ -7,7 +7,7 @@
       "$ref": "response.json#/$defs/mutation_result",
       "properties": {
         "result": {
-          "$ref": "../../v1/runtime/run_handoff.json"
+          "$ref": "../runtime/run_handoff.json"
         }
       }
     }

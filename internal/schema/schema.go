@@ -75,8 +75,12 @@ func compileAll() (*schemaSet, error) {
 			s.bundle = sch
 		case strings.HasPrefix(rel, "api/"):
 			s.api[version][name] = sch
-		case strings.HasPrefix(rel, "runtime/") && version == 1:
-			s.runtime[name] = sch
+		case strings.HasPrefix(rel, "runtime/"):
+			// Version 2 runtime documents are reached only through the v2
+			// API schemas; the journals validated by name are version 1.
+			if version == 1 {
+				s.runtime[name] = sch
+			}
 		case rel != "common.json":
 			s.kinds[version][Kind(name)] = sch
 		}

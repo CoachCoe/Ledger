@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/runtime/run_status.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "$ref": "../../v1/common.json#/$defs/run_id"
+    },
+    "intent_id": {
+      "$ref": "../../v1/common.json#/$defs/intent_id"
+    },
+    "state": {
+      "enum": [
+        "created",
+        "collecting",
+        "evaluating",
+        "resolved",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "resume": {
+      "anyOf": [
+        {
+          "enum": [
+            "collecting",
+            "evaluating"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deadline": {
+      "$ref": "../../v1/common.json#/$defs/timestamp"
+    },
+    "deadline_passed": {
+      "type": "boolean"
+    },
+    "scorer": {
+      "$ref": "../../v1/common.json#/$defs/hash"
+    },
+    "scorer_kind": {
+      "enum": [
+        "command",
+        "submission"
+      ]
+    },
+    "checks": {
+      "$ref": "../../v1/common.json#/$defs/hashes"
+    },
+    "base_tree": {
+      "$ref": "../common.json#/$defs/object_id"
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "$ref": "../../v1/common.json#/$defs/workspace_id"
+          },
+          "strategy": {
+            "$ref": "../../v1/common.json#/$defs/name"
+          },
+          "workspace_state": {
+            "enum": [
+              "open",
+              "proposed",
+              "selected",
+              "closed"
+            ]
+          },
+          "session_id": {
+            "$ref": "../../v1/common.json#/$defs/session_id"
+          },
+          "submitted": {
+            "type": "boolean"
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt_record": {
+            "anyOf": [
+              {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "selected",
+                  "failed_criteria",
+                  "lost_tiebreaker",
+                  "timeout",
+                  "cancelled",
+                  "interrupted",
+                  "not_proposed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "workspace_id",
+          "strategy",
+          "workspace_state",
+          "session_id",
+          "submitted",
+          "manifest",
+          "attempt_record",
+          "outcome"
+        ]
+      }
+    },
+    "selection": {
+      "anyOf": [
+        {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "intent_id",
+    "state",
+    "resume",
+    "reason",
+    "deadline",
+    "deadline_passed",
+    "scorer",
+    "scorer_kind",
+    "checks",
+    "base_tree",
+    "attempts",
+    "selection"
+  ],
+  "title": "Speculation run status"
+}

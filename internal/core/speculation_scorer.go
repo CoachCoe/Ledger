@@ -41,7 +41,7 @@ func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, ids
 	if err := os.WriteFile(in, input, 0o600); err != nil {
 		return nil, err
 	}
-	env := []string{"LEDGER_SCORER_INPUT=" + in, "LEDGER_SCORER_OUTPUT=" + out, "LEDGER_REPOSITORY=" + s.Store.Repo.Dir, "LEDGER_RUN_ID=" + rs.run.ID}
+	env := []string{"LEDGER_SCORER_INPUT=" + in, "LEDGER_SCORER_OUTPUT=" + out, "LEDGER_REPOSITORY=" + s.repositoryDir(), "LEDGER_RUN_ID=" + rs.run.ID}
 	allowed := map[string]bool{}
 	for _, name := range def.EnvAllowlist {
 		allowed[name] = true

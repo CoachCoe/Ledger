@@ -24,6 +24,9 @@
             },
             "tree": {
               "$ref": "../common.json#/$defs/object_id"
+            },
+            "op_head": {
+              "$ref": "../../v1/common.json#/$defs/hash"
             }
           },
           "required": [
@@ -31,7 +34,8 @@
             "workspace_id",
             "change_id",
             "manifest",
-            "tree"
+            "tree",
+            "op_head"
           ]
         }
       }

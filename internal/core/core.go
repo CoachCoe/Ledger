@@ -56,6 +56,9 @@ type Service struct {
 
 	// checkouts makes the fresh checkouts evidence runs in.
 	checkouts evidence.Checkouts
+	// evidenceWorkers bounds the checks one speculation evaluation runs at
+	// once.
+	evidenceWorkers int
 
 	// evidenceHooks are test seams for evidence runs; nil in production.
 	evidenceHooks *evidence.Hooks
@@ -92,9 +95,11 @@ func New(ctx context.Context, records *record.Store, keys identity.IdentityProvi
 		s.Objects = objects
 		s.Provider = workspace.NativeProvider{Workspaces: workspaces, Store: objects}
 		s.checkouts = evidence.NativeCheckouts{Workspaces: workspaces}
+		s.evidenceWorkers = nativeEvidenceWorkers
 	} else {
 		s.Provider = workspace.GitProvider{Repo: records.Repo}
 		s.checkouts = evidence.GitCheckouts{Repo: records.Repo}
+		s.evidenceWorkers = 1
 	}
 	records.SetEffectHandler(s.Provider.Apply)
 	stale, err := filepath.Glob(filepath.Join(s.runtimeDir(), "observe-*.index.lock"))
@@ -153,6 +158,15 @@ func (s *Service) symbolSource() symbols.Source {
 		return symbols.StoreSource{Store: s.Objects}
 	}
 	return symbols.GitSource{Repo: s.Store.Repo}
+}
+
+// repositoryDir is the directory people work in: the Git worktree of a
+// Phase 1 repository, or the directory holding a native one's .ledger.
+func (s *Service) repositoryDir() string {
+	if s.native() {
+		return filepath.Dir(s.Store.Dir)
+	}
+	return s.Store.Repo.Dir
 }
 
 // seal signs a record at the schema_version this repository writes.
@@ -729,48 +743,76 @@ func (s *Service) fork(ctx context.Context, c *invocation) (prepared, error) {
 	if err := s.authority(ctx, c.SessionID, in.CapabilityID); err != nil {
 		return prepared{}, err
 	}
-	if s.native() {
-		return s.forkNative(ctx, c, in.IntentID, in.CapabilityID, in.BaseTree)
-	}
-	base, err := s.Store.Repo.ResolveRef(ctx, cmp.Or(in.BaseCommit, "HEAD"))
+	base, err := s.forkBase(ctx, in.BaseCommit, in.BaseTree)
 	if err != nil {
 		return prepared{}, err
 	}
-	if base == "" {
-		return prepared{}, apierr.New("base_unavailable", "workspace needs an existing base commit")
-	}
 	id := schema.NewID(schema.PrefixWorkspace)
 	path := s.Provider.Path(id)
-	o, err := s.seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: c.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: now()}, c.signer)
+	o, err := s.seal(schema.KindWorkspace, base.workspace(schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: c.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), CreatedAt: now()}), c.signer)
 	return prepared{
-		result:  map[string]string{"workspace_id": id, "path": path, "base_commit": base, "object_hash": o.Hash},
+		result:  base.result(map[string]any{"workspace_id": id, "path": path, "object_hash": o.Hash}),
 		records: []envelope.Object{o},
-		effects: []record.Effect{{Kind: record.EffectWorktreeAdd, WorkspaceID: id, Path: path, Base: base}},
+		effects: []record.Effect{base.create(id, path, c.SessionID)},
 	}, err
 }
 
-// forkNative creates a copy-on-write workspace on baseTree, or on the head
-// of line main when baseTree is empty, binding the advance it starts from.
-func (s *Service) forkNative(ctx context.Context, c *invocation, intentID, capabilityID, baseTree string) (prepared, error) {
-	var advance *string
-	if baseTree == "" {
-		head, err := s.Store.Index.LineHead(ctx, "main")
+// baseRef is the fixed base new workspaces start from: a Git commit in a
+// Phase 1 repository, a store tree and the advance that accepted it in a
+// native one.
+type baseRef struct {
+	commit  string
+	tree    string
+	advance *string
+}
+
+// forkBase resolves a requested base. Phase 1 defaults to HEAD; a native
+// repository defaults to the head of line main.
+func (s *Service) forkBase(ctx context.Context, commit, tree string) (baseRef, error) {
+	if !s.native() {
+		base, err := s.Store.Repo.ResolveRef(ctx, cmp.Or(commit, "HEAD"))
 		if err != nil {
-			return prepared{}, err
+			return baseRef{}, err
 		}
-		baseTree, advance = head.Tree, head.Advance
-	} else if _, err := s.Objects.ReadTree(baseTree); err != nil {
-		return prepared{}, apierr.New("base_unavailable", "base tree %s is not in the store", baseTree)
+		if base == "" {
+			return baseRef{}, apierr.New("base_unavailable", "workspace needs an existing base commit")
+		}
+		return baseRef{commit: base}, nil
 	}
-	id := schema.NewID(schema.PrefixWorkspace)
-	path := s.Provider.Path(id)
-	o, err := s.seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: intentID, SessionID: c.SessionID,
-		CapabilityID: capabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseTree: baseTree, BaseLineAdvance: advance, CreatedAt: now()}, c.signer)
-	return prepared{
-		result:  map[string]string{"workspace_id": id, "path": path, "base_tree": baseTree, "object_hash": o.Hash},
-		records: []envelope.Object{o},
-		effects: []record.Effect{{Kind: record.EffectWorkspaceCreate, WorkspaceID: id, Path: path, Base: baseTree, Session: c.SessionID}},
-	}, err
+	if tree != "" {
+		if _, err := s.Objects.ReadTree(tree); err != nil {
+			return baseRef{}, apierr.New("base_unavailable", "base tree %s is not in the store", tree)
+		}
+		return baseRef{tree: tree}, nil
+	}
+	head, err := s.Store.Index.LineHead(ctx, "main")
+	if err != nil {
+		return baseRef{}, err
+	}
+	return baseRef{tree: head.Tree, advance: head.Advance}, nil
+}
+
+func (b baseRef) workspace(w schema.Workspace) schema.Workspace {
+	w.BaseCommit, w.BaseTree, w.BaseLineAdvance = b.commit, b.tree, b.advance
+	return w
+}
+
+// result adds the base to an API result under its version's name.
+func (b baseRef) result(m map[string]any) map[string]any {
+	if b.commit != "" {
+		m["base_commit"] = b.commit
+	} else {
+		m["base_tree"] = b.tree
+	}
+	return m
+}
+
+// create is the effect that makes workspace id at path for session.
+func (b baseRef) create(id, path, session string) record.Effect {
+	if b.commit != "" {
+		return record.Effect{Kind: record.EffectWorktreeAdd, WorkspaceID: id, Path: path, Base: b.commit}
+	}
+	return record.Effect{Kind: record.EffectWorkspaceCreate, WorkspaceID: id, Path: path, Base: b.tree, Session: session}
 }
 
 type workspaceInput struct {

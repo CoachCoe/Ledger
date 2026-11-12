@@ -9,7 +9,7 @@
           "$ref": "response.json#/$defs/mutation_result",
           "properties": {
             "result": {
-              "$ref": "../../v1/runtime/run_outcome.json"
+              "$ref": "../runtime/run_outcome.json"
             }
           }
         },

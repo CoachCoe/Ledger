@@ -3,10 +3,13 @@ package core
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
@@ -306,5 +309,123 @@ func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
 	}
 	if !slices.ContainsFunc(d.Criteria, func(c schema.CriterionStatus) bool { return c.CriterionID == "tests" && c.Status == "satisfied" }) {
 		t.Fatalf("criteria %+v", d.Criteria)
+	}
+}
+
+// speculateNative runs five candidates against two checks that each take
+// half a second, and returns the evaluation and how long it took.
+func speculateNative(t *testing.T, workers int) (map[string]any, time.Duration) {
+	t.Helper()
+	_, out, _, took := speculateNativeRun(t, workers)
+	return out, took
+}
+
+// speculateNativeRun submits the five candidates and evaluates the run,
+// timing the evaluation.
+func speculateNativeRun(t *testing.T, workers int) (*Service, map[string]any, string, time.Duration) {
+	t.Helper()
+	s, base := nativeFixture(t)
+	s.evidenceWorkers = workers
+	slow := func(name, cond string) schema.CheckDefinition {
+		return schema.CheckDefinition{Name: name, Category: "mechanical", Command: cond + " && sleep 0.5", WorkingDirectory: ".",
+			EnvAllowlist: []string{"PATH"}, TimeoutSeconds: 20, OutputLimitBytes: 1024}
+	}
+	writeChecks(t, s, []schema.CheckDefinition{slow("ok", "test -f ok.txt"), slow("short", "test $(wc -c < ok.txt) -lt 10")})
+	intent := call(t, s, requestV2("intent.create", "", map[string]any{"description": "speculate", "criteria": []any{
+		map[string]any{"id": "ok", "statement": "ok.txt exists", "verification": map[string]any{"kind": "check", "check": "ok"}},
+		map[string]any{"id": "short", "statement": "ok.txt is short", "verification": map[string]any{"kind": "check", "check": "short"}},
+	}}))["intent_id"].(string)
+	strategies := []any{}
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		strategies = append(strategies, map[string]any{"name": name, "spec": "write ok.txt"})
+	}
+	start := call(t, s, requestV2("speculation.start", "", map[string]any{"intent_id": intent, "scorer": submissionScorer(),
+		"deadline_seconds": 600, "strategies": strategies}))
+	if start["base_tree"] != base {
+		t.Fatalf("run base %v, want %s", start["base_tree"], base)
+	}
+	runID := start["run_id"].(string)
+	for i, a := range start["attempts"].([]any) {
+		a := a.(map[string]any)
+		content := []string{"ok", "much too long to pass", "", "fine", "x"}[i]
+		if content != "" {
+			if err := os.WriteFile(filepath.Join(a["path"].(string), "ok.txt"), []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(filepath.Join(a["path"].(string), "other.txt"), []byte("no ok.txt"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		call(t, s, requestV2("speculation.submit", a["session_id"].(string), map[string]any{"run_id": runID, "workspace_id": a["workspace_id"]}))
+	}
+	began := time.Now()
+	out := call(t, s, requestV2("speculation.evaluate", "", map[string]any{"run_id": runID}))
+	return s, out, runID, time.Since(began)
+}
+
+// P2-AC-014: speculation with 5 candidates and 2 checks runs the checks in
+// parallel, with the same results as running them one at a time.
+func TestNativeSpeculationRunsChecksInParallel(t *testing.T) {
+	parallel, fast := speculateNative(t, nativeEvidenceWorkers)
+	serial, slow := speculateNative(t, 1)
+	// Each eligible candidate, by strategy, with its criteria statuses.
+	outcomes := func(res map[string]any) []string {
+		var got []string
+		for _, c := range res["candidates"].(map[string]any)["candidates"].([]any) {
+			c := c.(map[string]any)
+			var statuses []string
+			for _, st := range c["criteria"].([]any) {
+				st := st.(map[string]any)
+				statuses = append(statuses, fmt.Sprint(st["criterion_id"], "=", st["status"]))
+			}
+			got = append(got, fmt.Sprint(c["strategy"], " ", statuses))
+		}
+		slices.Sort(got)
+		return got
+	}
+	if p, q := outcomes(parallel), outcomes(serial); !slices.Equal(p, q) {
+		t.Fatalf("parallel %v, serial %v", p, q)
+	}
+	if fast > slow*6/10 {
+		t.Fatalf("parallel evaluation took %v, serial %v", fast, slow)
+	}
+	if got := outcomes(parallel); len(got) != 3 || !strings.HasPrefix(got[0], "a ") || !strings.HasPrefix(got[1], "d ") || !strings.HasPrefix(got[2], "e ") {
+		t.Fatalf("eligible %v, want a, d and e", got)
+	}
+	t.Logf("parallel %v, serial %v", fast, slow)
+}
+
+// A native run resolves to a v2 selection without a commit, and removes its
+// candidates' checkouts.
+func TestNativeSpeculationResolves(t *testing.T) {
+	s, evaluated, runID, _ := speculateNativeRun(t, nativeEvidenceWorkers)
+	scores := map[string]any{}
+	for i, id := range evaluated["eligible"].([]any) {
+		scores[id.(string)] = i + 1
+	}
+	out := call(t, s, requestV2("speculation.score", "", map[string]any{"run_id": runID, "scores": scores}))
+	if out["state"] != "resolved" {
+		t.Fatalf("outcome %v", out)
+	}
+	winner := out["winner"].(map[string]any)
+	o, err := s.Store.Read(out["selection"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d schema.SelectionDecision
+	if err := o.Decode(&d); err != nil || o.Envelope.SchemaVersion != 2 || d.Manifest != winner["manifest"] || d.Commit != "" {
+		t.Fatalf("selection v%d %+v, %v", o.Envelope.SchemaVersion, d, err)
+	}
+	for _, a := range out["attempts"].([]any) {
+		wid := a.(map[string]any)["workspace_id"].(string)
+		if wid == winner["workspace_id"] {
+			continue
+		}
+		if _, err := os.Stat(s.Provider.Path(wid)); !os.IsNotExist(err) {
+			t.Fatalf("losing checkout %s kept: %v", wid, err)
+		}
+	}
+	status := call(t, s, requestV2("speculation.status", "", map[string]any{"run_id": runID}))
+	if status["state"] != "resolved" || status["base_tree"] == nil {
+		t.Fatalf("status %v", status)
 	}
 }
