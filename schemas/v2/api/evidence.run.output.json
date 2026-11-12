@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/evidence.run.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "$ref": "response.json#/$defs/mutation_result",
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run_id": {
+              "$ref": "../../v1/common.json#/$defs/run_id"
+            },
+            "attestation": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "result": {
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "setup_failed",
+                    "setup_timeout",
+                    "check_failed",
+                    "check_timeout",
+                    "cancelled",
+                    "tracked_mutation"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "verifier_session": {
+              "$ref": "../../v1/common.json#/$defs/session_id"
+            },
+            "manifest": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "check_definition": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "setup": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "exit_status",
+                    "duration_ms",
+                    "timed_out"
+                  ],
+                  "properties": {
+                    "exit_status": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -255,
+                          "maximum": 255
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "duration_ms": {
+                      "$ref": "../../v1/common.json#/$defs/count"
+                    },
+                    "timed_out": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "check": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "exit_status",
+                    "duration_ms",
+                    "timed_out"
+                  ],
+                  "properties": {
+                    "exit_status": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -255,
+                          "maximum": 255
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "duration_ms": {
+                      "$ref": "../../v1/common.json#/$defs/count"
+                    },
+                    "timed_out": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kept_worktree": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "run_id",
+            "attestation",
+            "result",
+            "reason",
+            "verifier_session",
+            "manifest",
+            "check_definition",
+            "setup",
+            "check",
+            "kept_worktree"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "result": {},
+        "api_version": {
+          "const": 2
+        }
+      },
+      "required": [
+        "ok",
+        "result",
+        "api_version"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ]
+        },
+        "api_version": {
+          "const": 2
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "api_version"
+      ]
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/response.json",
+  "$defs": {
+    "mutation_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "$ref": "../../v1/common.json#/$defs/operation_id"
+        },
+        "receipt": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        "result": {},
+        "members": {
+          "$ref": "../../v1/common.json#/$defs/hashes"
+        },
+        "replayed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation_id",
+        "receipt",
+        "result",
+        "members",
+        "replayed"
+      ]
+    }
+  }
+}

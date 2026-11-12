@@ -116,6 +116,19 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 
 func (s *Service) runtimeDir() string { return filepath.Join(s.Store.Dir, "runtime") }
 
+// native reports whether the service runs over a native store (ADR 0025)
+// rather than a Phase 1 Git repository.
+func (s *Service) native() bool { return s.Store.Repo == nil }
+
+// apiVersion is the api_version this repository answers: 2 for a native
+// store, whose records bind store trees, and 1 for a Phase 1 repository.
+func (s *Service) apiVersion() int {
+	if s.native() {
+		return 2
+	}
+	return 1
+}
+
 func (s *Service) root() (identity.Signer, error) {
 	r, err := s.Keys.Root()
 	if err != nil {
@@ -219,6 +232,9 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	}
 	if _, err := api.Parse(raw); err != nil {
 		return nil, err
+	}
+	if want := s.apiVersion(); r.Version != want {
+		return nil, apierr.New("unsupported_api_version", "this repository answers api_version %d, not %d", want, r.Version).With("api_version", want)
 	}
 	if err := s.retryRecovery(ctx); err != nil {
 		return nil, err

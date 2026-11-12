@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/selection.record.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "$ref": "response.json#/$defs/mutation_result",
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selection": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "intent_id": {
+              "$ref": "../../v1/common.json#/$defs/intent_id"
+            },
+            "manifest": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "evidence": {
+              "$ref": "../../v1/common.json#/$defs/hashes"
+            },
+            "competitors": {
+              "$ref": "../../v1/common.json#/$defs/hashes"
+            },
+            "criteria": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "criterion_id": {
+                    "$ref": "../../v1/common.json#/$defs/name"
+                  },
+                  "status": {
+                    "enum": [
+                      "satisfied",
+                      "failed",
+                      "outstanding"
+                    ]
+                  },
+                  "deciding": {
+                    "$ref": "../../v1/common.json#/$defs/hashes"
+                  },
+                  "conflicting": {
+                    "$ref": "../../v1/common.json#/$defs/hashes"
+                  }
+                },
+                "required": [
+                  "criterion_id",
+                  "status",
+                  "deciding",
+                  "conflicting"
+                ]
+              }
+            },
+            "outstanding": {
+              "type": "array",
+              "items": {
+                "$ref": "../../v1/common.json#/$defs/name"
+              }
+            },
+            "contrary_evidence": {
+              "$ref": "../../v1/common.json#/$defs/hashes"
+            },
+            "accepted": {
+              "const": false
+            },
+            "selector": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "root",
+                    "session"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ]
+            }
+          },
+          "required": [
+            "selection",
+            "intent_id",
+            "manifest",
+            "evidence",
+            "competitors",
+            "criteria",
+            "outstanding",
+            "contrary_evidence",
+            "accepted",
+            "selector"
+          ]
+        }
+      }
+    }
+  }
+}

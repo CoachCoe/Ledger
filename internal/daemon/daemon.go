@@ -174,7 +174,7 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 				err = apierr.New("watcher_unavailable", "%v", e).With("committed_result", result)
 			}
 		}
-		b, e := json.Marshal(api.Reply(result, err))
+		b, e := json.Marshal(api.ReplyVersion(api.RequestVersion(raw), result, err))
 		if e != nil {
 			http.Error(w, "response encoding failed", http.StatusInternalServerError)
 			return

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/bundle.export.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "out": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifests": {
+      "$ref": "../../v1/common.json#/$defs/hashes"
+    },
+    "intents": {
+      "type": "array",
+      "items": {
+        "$ref": "../../v1/common.json#/$defs/intent_id"
+      }
+    },
+    "allow_partial": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "out",
+    "manifests",
+    "intents",
+    "allow_partial"
+  ]
+}

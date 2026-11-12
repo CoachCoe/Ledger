@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/system.status.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "creation": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "head": {
+                "type": "string"
+              },
+              "resume": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "binding_head": {
+                "type": "string"
+              },
+              "conflict": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "creation",
+              "state",
+              "head",
+              "resume",
+              "owner",
+              "binding_head",
+              "conflict",
+              "detail"
+            ]
+          }
+        },
+        "recovery_pending": {
+          "type": "boolean"
+        },
+        "interrupted_runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "run_id": {
+                "$ref": "../../v1/common.json#/$defs/run_id"
+              },
+              "manifest": {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "manifest",
+              "reason"
+            ]
+          }
+        },
+        "process_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "subjects",
+        "recovery_pending",
+        "interrupted_runs",
+        "process_id"
+      ]
+    }
+  }
+}

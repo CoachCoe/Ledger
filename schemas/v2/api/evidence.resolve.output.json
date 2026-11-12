@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/evidence.resolve.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        "tree": {
+          "$ref": "../common.json#/$defs/object_id"
+        },
+        "base_tree": {
+          "$ref": "../common.json#/$defs/object_id"
+        },
+        "change_id": {
+          "$ref": "../../v1/common.json#/$defs/change_id"
+        },
+        "intent_id": {
+          "$ref": "../../v1/common.json#/$defs/intent_id"
+        },
+        "workspace_id": {
+          "$ref": "../../v1/common.json#/$defs/workspace_id"
+        },
+        "author_session": {
+          "$ref": "../../v1/common.json#/$defs/session_id"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "definition_hash": {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              "name": {
+                "$ref": "../../v1/common.json#/$defs/name"
+              },
+              "category": {
+                "enum": [
+                  "mechanical",
+                  "behavioral",
+                  "judgment"
+                ]
+              },
+              "criteria": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "definition": {
+                "$ref": "../check_definition.json"
+              }
+            },
+            "required": [
+              "definition_hash",
+              "name",
+              "category",
+              "criteria",
+              "definition"
+            ]
+          }
+        },
+        "frozen": {
+          "const": true
+        }
+      },
+      "required": [
+        "manifest",
+        "tree",
+        "base_tree",
+        "change_id",
+        "intent_id",
+        "workspace_id",
+        "author_session",
+        "checks",
+        "frozen"
+      ]
+    }
+  }
+}

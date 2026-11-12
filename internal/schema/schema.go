@@ -30,7 +30,7 @@ type schemaSet struct {
 	envelope map[int]*jsonschema.Schema
 	kinds    map[int]map[Kind]*jsonschema.Schema
 	runtime  map[string]*jsonschema.Schema
-	api      map[string]*jsonschema.Schema
+	api      map[int]map[string]*jsonschema.Schema
 	bundle   *jsonschema.Schema
 }
 
@@ -56,7 +56,7 @@ func compileAll() (*schemaSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &schemaSet{envelope: map[int]*jsonschema.Schema{}, kinds: map[int]map[Kind]*jsonschema.Schema{1: {}, 2: {}}, runtime: map[string]*jsonschema.Schema{}, api: map[string]*jsonschema.Schema{}}
+	s := &schemaSet{envelope: map[int]*jsonschema.Schema{}, kinds: map[int]map[Kind]*jsonschema.Schema{1: {}, 2: {}}, runtime: map[string]*jsonschema.Schema{}, api: map[int]map[string]*jsonschema.Schema{1: {}, 2: {}}}
 	for _, u := range urls {
 		sch, err := c.Compile(u)
 		if err != nil {
@@ -74,8 +74,8 @@ func compileAll() (*schemaSet, error) {
 		case rel == "bundle_inventory.json":
 			s.bundle = sch
 		case strings.HasPrefix(rel, "api/"):
-			s.api[name] = sch
-		case strings.HasPrefix(rel, "runtime/"):
+			s.api[version][name] = sch
+		case strings.HasPrefix(rel, "runtime/") && version == 1:
 			s.runtime[name] = sch
 		case rel != "common.json":
 			s.kinds[version][Kind(name)] = sch
@@ -156,13 +156,23 @@ func invalid(what string, err error) error {
 	return apierr.New("schema_invalid", "%s: %v", what, err)
 }
 
-// ValidateAPI validates a versioned API request, response, or tool input.
-func ValidateAPI(name string, raw []byte) error {
+// APIVersions lists the api_version values this build serves.
+var APIVersions = []int{1, 2}
+
+// ValidateAPI validates an api_version 1 request, response, or tool input.
+func ValidateAPI(name string, raw []byte) error { return ValidateAPIVersion(1, name, raw) }
+
+// ValidateAPIVersion validates a request, response, or tool input of one
+// api_version.
+func ValidateAPIVersion(version int, name string, raw []byte) error {
 	s, err := compiled()
 	if err != nil {
 		return err
 	}
-	sch := s.api[name]
+	if s.api[version] == nil {
+		return apierr.New("unsupported_api_version", "api_version %d is not supported", version)
+	}
+	sch := s.api[version][name]
 	if sch == nil {
 		return apierr.New("unknown_operation", "no API operation %q", name)
 	}

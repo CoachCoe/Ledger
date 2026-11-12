@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/speculation.start.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intent_id": {
+      "$ref": "../../v1/common.json#/$defs/intent_id"
+    },
+    "n": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "strategies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "../../v1/common.json#/$defs/name"
+          },
+          "spec": {
+            "$ref": "../../v1/common.json#/$defs/text"
+          }
+        },
+        "required": [
+          "name",
+          "spec"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 64
+    },
+    "scorer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "command",
+            "submission"
+          ]
+        },
+        "command": {
+          "$ref": "../../v1/common.json#/$defs/text"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "env_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "deadline": {
+      "$ref": "../../v1/common.json#/$defs/timestamp"
+    },
+    "deadline_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2592000
+    },
+    "base_tree": {
+      "$ref": "../common.json#/$defs/object_id"
+    },
+    "allow": {
+      "type": "array",
+      "items": {
+        "$ref": "../../v1/common.json#/$defs/path"
+      },
+      "minItems": 1
+    },
+    "deny": {
+      "type": "array",
+      "items": {
+        "$ref": "../../v1/common.json#/$defs/path"
+      }
+    },
+    "may_add_dependencies": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "intent_id",
+    "strategies",
+    "scorer"
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "deadline"
+      ]
+    },
+    {
+      "required": [
+        "deadline_seconds"
+      ]
+    }
+  ]
+}
