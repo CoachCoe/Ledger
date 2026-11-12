@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/CoachCoe/Ledger/internal/api"
@@ -166,5 +168,96 @@ func TestNativeProposePinsTheOperationLog(t *testing.T) {
 		if sub := sub.(map[string]any); sub["id"] == wid && sub["state"] != "proposed" {
 			t.Fatalf("workspace %v", sub)
 		}
+	}
+}
+
+// Closing removes a native checkout after recording its tree, and keeps a
+// checkout that still holds ignored files.
+func TestNativeCloseRecordsThenRemoves(t *testing.T) {
+	s, _ := nativeFixture(t)
+	ctx := context.Background()
+	intent := call(t, s, requestV2("intent.create", "", judgment("close")))["intent_id"].(string)
+	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	sid := sess["session_id"].(string)
+	fork := func() (string, string) {
+		f := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+		return f["workspace_id"].(string), f["path"].(string)
+	}
+	closeWS := func(id string) error {
+		_, err := s.Handle(ctx, requestV2("workspace.close", sid, map[string]any{"workspace_id": id, "reason": "finished"}))
+		return err
+	}
+
+	edited, dir := fork()
+	if err := os.WriteFile(filepath.Join(dir, "a.ts"), []byte("export const x=3;\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeWS(edited); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("checkout kept: %v", err)
+	}
+	entries, err := s.Provider.(workspace.NativeProvider).Workspaces.Log(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := entries[len(entries)-1]
+	content, err := s.Objects.Files(last.Tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(content, func(f store.File) bool { return f.Path == "a.ts" })
+	if i < 0 {
+		t.Fatalf("closing tree %v has no a.ts", content)
+	}
+	var b bytes.Buffer
+	if err := s.Objects.WriteFile(content[i].ID, &b); err != nil || b.String() != "export const x=3;\n" {
+		t.Fatalf("closing tree lost the edit: %q, %v", b.String(), err)
+	}
+
+	kept, dir := fork()
+	if err := os.WriteFile(filepath.Join(dir, ".ledgerignore"), []byte("/"+record.DirName+"/\nsecret.env\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(dir, "secret.env")
+	if err := os.WriteFile(secret, []byte("preserve user data\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeWS(kept); !apierr.HasCode(err, "cleanup_pending") {
+		t.Fatalf("close with an ignored file: %v", err)
+	}
+	if _, err := os.ReadFile(secret); err != nil {
+		t.Fatal("ignored user data was deleted")
+	}
+	if st := call(t, s, requestV2("workspace.status", "", map[string]any{"workspace_id": kept})); st["state"] != "closed" {
+		t.Fatal(st)
+	}
+}
+
+// Status and API writes on a native workspace report against its base tree.
+func TestNativeStatusAndWrite(t *testing.T) {
+	s, base := nativeFixture(t)
+	intent := call(t, s, requestV2("intent.create", "", judgment("write")))["intent_id"].(string)
+	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	sid := sess["session_id"].(string)
+	wid := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))["workspace_id"].(string)
+	wrote := call(t, s, requestV2("workspace.write", sid, map[string]any{"workspace_id": wid, "path": "src/b.ts", "content": "export const y=2;\n", "expected_hash": nil}))
+	if wrote["content_hash"] == nil {
+		t.Fatalf("write %v", wrote)
+	}
+	st := call(t, s, requestV2("workspace.status", sid, map[string]any{"workspace_id": wid}))
+	if st["base_tree"] != base || st["state"] != "open" {
+		t.Fatalf("status %v", st)
+	}
+	if ws := anyStrings(st["write_set"]); len(ws) != 1 || ws[0] != "src/b.ts" {
+		t.Fatalf("write set %v", st["write_set"])
+	}
+	entries, err := s.Provider.(workspace.NativeProvider).Workspaces.Log(wid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(e oplog.Entry) bool { return e.Kind == "write" }) {
+		t.Fatalf("no write entry in %+v", entries)
 	}
 }

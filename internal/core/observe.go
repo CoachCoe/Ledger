@@ -22,6 +22,7 @@ type workspaceView struct {
 	State       string            `json:"state"`
 	Path        string            `json:"path"`
 	BaseCommit  string            `json:"base_commit,omitzero"`
+	BaseTree    string            `json:"base_tree,omitzero"`
 	WriteSet    []string          `json:"write_set,omitzero"`
 	Status      map[string]string `json:"status,omitzero"`
 	ObservedAt  string            `json:"observed_at,omitzero"`
@@ -112,7 +113,7 @@ func (s *Service) workspaceStatus(ctx context.Context, id string) (workspaceView
 	if sub.State == "closed" || sub.State == "selected" {
 		return view, nil
 	}
-	view.BaseCommit = w.BaseCommit
+	view.BaseCommit, view.BaseTree = w.BaseCommit, w.BaseTree
 	status, at, err := s.Store.Index.Observation(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		snap, at, err := s.observe(ctx, w)

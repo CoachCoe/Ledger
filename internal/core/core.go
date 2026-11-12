@@ -944,6 +944,8 @@ func (s *Service) rework(ctx context.Context, c *invocation) (prepared, error) {
 // worktree, so a cleanup failure never hides the committed close. A
 // worktree that still holds exactly its latest proposal loses nothing when
 // removed, because the proposal commit retains it.
+// A native workspace loses nothing either: removal records its tree in the
+// operation log first, and refuses while ignored files remain.
 func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, error) {
 	in, err := decode[struct {
 		WorkspaceID string `json:"workspace_id"`
@@ -951,6 +953,10 @@ func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, 
 	}](c.Input)
 	if err != nil {
 		return prepared{}, err
+	}
+	if s.native() {
+		remove := record.Effect{Kind: record.EffectWorkspaceRemove, WorkspaceID: in.WorkspaceID, Path: s.Provider.Path(in.WorkspaceID), After: true}
+		return s.transitionWorkspace(ctx, c, in.WorkspaceID, "closed", &in.Reason, []record.Effect{remove})
 	}
 	cleanup := record.Effect{Kind: record.EffectWorktreeRemove, WorkspaceID: in.WorkspaceID, Path: s.Provider.Path(in.WorkspaceID), After: true}
 	last, err := s.Store.Index.LastProposal(ctx, in.WorkspaceID)
