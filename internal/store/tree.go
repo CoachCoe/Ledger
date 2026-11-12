@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -266,4 +267,55 @@ func (s *Store) Files(id string) ([]File, error) {
 		return nil
 	}
 	return out, walk(id, "")
+}
+
+// Closure returns, sorted, every object that ids reach: the ids
+// themselves, the subtrees and file bytes of trees, and the chunks of
+// chunked blobs. Each object is checked against its id on the way, so a
+// complete closure is also an intact one.
+func (s *Store) Closure(ids ...string) ([]string, error) {
+	seen := map[string]bool{}
+	var visit func(id string) error
+	visit = func(id string) error {
+		if seen[id] {
+			return nil
+		}
+		kind, data, err := s.Get(id)
+		if err != nil {
+			return err
+		}
+		seen[id] = true
+		switch kind {
+		case KindTree:
+			var t Tree
+			if err := json.Unmarshal(data, &t); err != nil {
+				return apierr.New("object_corrupt", "tree %s is malformed", id).With("object", id)
+			}
+			for _, e := range t.Entries {
+				if e.Type == TypeGitlink {
+					continue
+				}
+				if err := visit(e.ID); err != nil {
+					return err
+				}
+			}
+		case KindChunkedBlob:
+			var list chunkList
+			if err := json.Unmarshal(data, &list); err != nil {
+				return apierr.New("object_corrupt", "chunk list %s is malformed", id).With("object", id)
+			}
+			for _, c := range list.Chunks {
+				if err := visit(c); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	for _, id := range ids {
+		if err := visit(id); err != nil {
+			return nil, err
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
 }

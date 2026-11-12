@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -318,5 +319,52 @@ func TestCorruptObjectsAreDetectedAndRecovered(t *testing.T) {
 	}
 	if got := read(t, s, good); string(got) != "good" {
 		t.Fatalf("rewrite kept the corrupt copy: %q", got)
+	}
+}
+
+func TestClosureReachesEveryObjectOnce(t *testing.T) {
+	s := open(t, true)
+	b := s.Batch()
+	big := text(ChunkThreshold+1, 7)
+	same, err := b.PutFile([]byte("same"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigID, err := b.PutFile(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := b.BuildTree([]File{
+		{Path: "a.txt", Type: TypeFile, ID: same},
+		{Path: "dir/b.txt", Type: TypeFile, ID: same},
+		{Path: "big.txt", Type: TypeFile, ID: bigID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.Closure(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, list, err := s.Get(bigID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chunked chunkList
+	if err := json.Unmarshal(list, &chunked); err != nil {
+		t.Fatal(err)
+	}
+	// The root tree, dir, one shared blob, the chunk list and its chunks.
+	if want := 4 + len(slices.Compact(slices.Sorted(slices.Values(chunked.Chunks)))); len(ids) != want || !slices.IsSorted(ids) {
+		t.Fatalf("closure has %d objects, want %d", len(ids), want)
+	}
+	if err := os.Remove(s.path(ID(KindBlob, []byte("same")))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Closure(tree); !apierr.HasCode(err, "object_missing") {
+		t.Fatalf("closure with a missing blob: %v", err)
 	}
 }

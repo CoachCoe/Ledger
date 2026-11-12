@@ -18,6 +18,8 @@ const (
 	StageImportGit     = "import_git"
 	StageImportRef     = "import_ref"
 	StageImportRecords = "import_records"
+	StageImportStore   = "import_store"
+	StageImportOpLogs  = "import_oplogs"
 )
 
 // PublishResult is what a Publisher reports.
@@ -63,6 +65,19 @@ type ImportReport struct {
 	Records        int           `json:"records"`
 	AlreadyPresent bool          `json:"already_present"`
 	Publish        PublishResult `json:"publish"`
+	// Objects counts store objects a v2 bundle added, and OpLogs reports
+	// each operation log it carried.
+	Objects int           `json:"objects,omitzero"`
+	OpLogs  []OpLogResult `json:"oplogs,omitzero"`
+}
+
+// OpLogResult is the outcome for one operation log. Status is "created",
+// "present" (the local log already starts with every bundled entry) or
+// "oplog_conflict", in which case the local log is left alone.
+type OpLogResult struct {
+	Workspace string `json:"workspace"`
+	Head      string `json:"head"`
+	Status    string `json:"status"`
 }
 
 func importFault(o ImportOptions, stage string) error {

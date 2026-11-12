@@ -50,6 +50,37 @@
         },
         "publish": {
           "type": "object"
+        },
+        "objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oplogs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "workspace",
+              "head",
+              "status"
+            ],
+            "properties": {
+              "workspace": {
+                "$ref": "../../v1/common.json#/$defs/workspace_id"
+              },
+              "head": {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              "status": {
+                "enum": [
+                  "created",
+                  "present",
+                  "oplog_conflict"
+                ]
+              }
+            }
+          }
         }
       },
       "required": [

@@ -2,13 +2,16 @@ package verify
 
 import (
 	"context"
+	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/store"
 )
 
 // Source is what Verify reads: a corpus of records and, if available, a
@@ -26,6 +29,12 @@ type Source struct {
 	Problems []Problem
 	Size     Size
 	Staged   *Staged
+	// Objects is the content store of a native repository or a v2 bundle,
+	// and OpLogs the directory of its workspace operation logs.
+	Objects *store.Store
+	OpLogs  string
+	// Insensitive marks a repository whose paths are case-insensitive.
+	Insensitive bool
 }
 
 // Close removes any staging directory.
@@ -75,6 +84,13 @@ func openStaged(ctx context.Context, path, dir string, lim Limits) (*Source, err
 	inv := st.Inventory
 	src := &Source{Name: path, Corpus: c, Repo: st.Repo, BundleVersion: inv.BundleVersion, Inventory: &inv, Strict: true,
 		Missing: st.Missing(), Problems: st.Problems, Size: st.Size, Staged: st}
+	if inv.BundleVersion == schema.BundleVersionNative {
+		if src.Objects, err = store.Open(filepath.Join(dir, "store"), inv.CaseSensitive); err != nil {
+			st.Remove()
+			return nil, err
+		}
+		src.OpLogs = filepath.Join(dir, "oplog")
+	}
 	if !inv.Complete {
 		src.Missing = append(src.Missing, inv.Missing...)
 		if len(inv.Missing) == 0 {
@@ -100,18 +116,23 @@ type RootTrust struct {
 
 // ManifestReport verifies one change manifest and everything attached to it.
 type ManifestReport struct {
-	Hash          string            `json:"hash"`
-	ChangeID      string            `json:"change_id"`
-	IntentID      string            `json:"intent_id"`
-	AuthorSession string            `json:"author_session"`
-	Commit        string            `json:"commit"`
-	Integrity     string            `json:"integrity"`
-	Trust         string            `json:"trust"`
-	Binding       Binding           `json:"binding"`
-	Evidence      []EvidenceReport  `json:"evidence"`
-	Selections    []SelectionReport `json:"selections"`
-	Components    map[string]string `json:"components"`
-	Detail        string            `json:"detail,omitempty"`
+	Hash          string `json:"hash"`
+	ChangeID      string `json:"change_id"`
+	IntentID      string `json:"intent_id"`
+	AuthorSession string `json:"author_session"`
+	// Commit and Binding describe a v1 manifest's retained commit.
+	Commit *string `json:"commit,omitzero"`
+	// BaseTree, Tree and OpHead are what a v2 manifest pins in their place.
+	BaseTree   string            `json:"base_tree,omitzero"`
+	Tree       string            `json:"tree,omitzero"`
+	OpHead     string            `json:"op_head,omitzero"`
+	Integrity  string            `json:"integrity"`
+	Trust      string            `json:"trust"`
+	Binding    *Binding          `json:"binding,omitzero"`
+	Evidence   []EvidenceReport  `json:"evidence"`
+	Selections []SelectionReport `json:"selections"`
+	Components map[string]string `json:"components"`
+	Detail     string            `json:"detail,omitempty"`
 }
 
 // Report separates integrity (do the records hold together and verify?)
@@ -149,7 +170,7 @@ func bindingState(v string) string {
 // fails loading.
 func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 	c := src.Corpus
-	sensitive := src.Inventory == nil || src.Inventory.CaseSensitive
+	sensitive := (src.Inventory == nil || src.Inventory.CaseSensitive) && !src.Insensitive
 	g, err := newGraph(valuesOf(c.Objects), sensitive)
 	if err != nil {
 		return nil, err
@@ -195,17 +216,27 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 			mr.Detail = res.Error.Message
 			mr.Components["authority"] = stateOf(res.Error)
 		}
+		if o.Envelope.SchemaVersion == 2 {
+			mr.BaseTree, mr.Tree, mr.OpHead = m.BaseTree, m.Tree, m.OpHead
+			n := src.native(h, m)
+			maps.Copy(mr.Components, n.components)
+			rep.Invalid = append(rep.Invalid, n.problems...)
+			rep.Missing = append(rep.Missing, n.missing...)
+			rep.Manifests = append(rep.Manifests, mr)
+			continue
+		}
 		commit, cerr := commitFor(ctx, src.Repo, h)
 		if cerr != nil {
 			return nil, cerr
 		}
-		mr.Commit = commit.SHA
+		mr.Commit = &commit.SHA
 		commits[h] = commit.SHA
-		mr.Binding = CheckBinding(commit, h, m)
+		binding := CheckBinding(commit, h, m)
+		mr.Binding = &binding
 		if commit.SHA == "" {
 			rep.Missing = append(rep.Missing, "commit:"+h)
 		}
-		mr.Components["trailer"], mr.Components["tree"], mr.Components["parent"] = bindingState(mr.Binding.Trailer), bindingState(mr.Binding.Tree), bindingState(mr.Binding.Parent)
+		mr.Components["trailer"], mr.Components["tree"], mr.Components["parent"] = bindingState(binding.Trailer), bindingState(binding.Tree), bindingState(binding.Parent)
 		rep.Manifests = append(rep.Manifests, mr)
 	}
 	byManifest := map[string]*ManifestReport{}

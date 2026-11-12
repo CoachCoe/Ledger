@@ -128,3 +128,35 @@ func TestTornTailIsCutOff(t *testing.T) {
 		t.Fatalf("reopen after torn tail: %v", err)
 	}
 }
+
+func TestPrefixStopsAtThePinnedHead(t *testing.T) {
+	l, err := Open(t.TempDir(), wsp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashes := appendAll(t, l,
+		Entry{Kind: Snapshot, Tree: tree('a'), Base: tree('0'), Trigger: "watch"},
+		Entry{Kind: Propose, Tree: tree('a'), Base: tree('0'), Trigger: "propose"},
+		Entry{Kind: Snapshot, Tree: tree('b'), Base: tree('0'), Trigger: "watch"},
+	)
+	entries := l.Entries()
+	got, err := Prefix(entries, hashes[1])
+	if err != nil || len(got) != 2 {
+		t.Fatalf("prefix %d entries, %v", len(got), err)
+	}
+	later := append([]Entry{}, entries...)
+	later[2].Tree = tree('c')
+	if _, err := Prefix(later, hashes[1]); err != nil {
+		t.Fatalf("an edit after the head changed the prefix: %v", err)
+	}
+	earlier := append([]Entry{}, entries...)
+	earlier[0].Tree = tree('c')
+	if _, err := Prefix(earlier, hashes[1]); !apierr.HasCode(err, "oplog_broken") {
+		t.Fatalf("an edit before the head: %v", err)
+	}
+	pinned := append([]Entry{}, entries[:2]...)
+	pinned[1].Trigger = "edited"
+	if _, err := Prefix(pinned, hashes[1]); !apierr.HasCode(err, "oplog_head_mismatch") {
+		t.Fatalf("an edit of the head: %v", err)
+	}
+}

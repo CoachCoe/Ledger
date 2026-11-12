@@ -31,7 +31,7 @@ type schemaSet struct {
 	kinds    map[int]map[Kind]*jsonschema.Schema
 	runtime  map[string]*jsonschema.Schema
 	api      map[int]map[string]*jsonschema.Schema
-	bundle   *jsonschema.Schema
+	bundle   map[int]*jsonschema.Schema
 }
 
 func compileAll() (*schemaSet, error) {
@@ -56,7 +56,7 @@ func compileAll() (*schemaSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &schemaSet{envelope: map[int]*jsonschema.Schema{}, kinds: map[int]map[Kind]*jsonschema.Schema{1: {}, 2: {}}, runtime: map[string]*jsonschema.Schema{}, api: map[int]map[string]*jsonschema.Schema{1: {}, 2: {}}}
+	s := &schemaSet{envelope: map[int]*jsonschema.Schema{}, kinds: map[int]map[Kind]*jsonschema.Schema{1: {}, 2: {}}, runtime: map[string]*jsonschema.Schema{}, api: map[int]map[string]*jsonschema.Schema{1: {}, 2: {}}, bundle: map[int]*jsonschema.Schema{}}
 	for _, u := range urls {
 		sch, err := c.Compile(u)
 		if err != nil {
@@ -72,7 +72,7 @@ func compileAll() (*schemaSet, error) {
 		case rel == "envelope.json":
 			s.envelope[version] = sch
 		case rel == "bundle_inventory.json":
-			s.bundle = sch
+			s.bundle[version] = sch
 		case strings.HasPrefix(rel, "api/"):
 			s.api[version][name] = sch
 		case strings.HasPrefix(rel, "runtime/"):
@@ -190,12 +190,16 @@ func ValidateAPIVersion(version int, name string, raw []byte) error {
 	return nil
 }
 
-// BundleVersion is the only bundle inventory version this build reads.
-const BundleVersion = 1
+// Bundle inventory versions: 1 carries a Git part for Phase 1 records, 2
+// carries native store objects and operation logs (ADR 0027).
+const (
+	BundleVersion       = 1
+	BundleVersionNative = 2
+)
 
 // ValidateBundle validates a bundle inventory document. An inventory whose
-// bundle_version is not BundleVersion fails with unsupported_bundle_version
-// before any other interpretation.
+// bundle_version this build does not read fails with
+// unsupported_bundle_version before any other interpretation.
 func ValidateBundle(raw []byte) error {
 	s, err := compiled()
 	if err != nil {
@@ -209,10 +213,16 @@ func ValidateBundle(raw []byte) error {
 	if !ok {
 		return invalid("bundle_inventory", fmt.Errorf("not an object"))
 	}
-	if v, ok := m["bundle_version"]; !ok || fmt.Sprint(v) != fmt.Sprint(BundleVersion) {
-		return apierr.New("unsupported_bundle_version", "bundle_version %v is not supported", v)
+	var sch *jsonschema.Schema
+	switch v := fmt.Sprint(m["bundle_version"]); v {
+	case fmt.Sprint(BundleVersion):
+		sch = s.bundle[BundleVersion]
+	case fmt.Sprint(BundleVersionNative):
+		sch = s.bundle[BundleVersionNative]
+	default:
+		return apierr.New("unsupported_bundle_version", "bundle_version %v is not supported", m["bundle_version"])
 	}
-	if err := s.bundle.Validate(inst); err != nil {
+	if err := sch.Validate(inst); err != nil {
 		return invalid("bundle_inventory", err)
 	}
 	return nil

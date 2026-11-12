@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/bundle_inventory.json",
+  "description": "A v2 bundle carries native store objects and the operation logs its manifests pin. Its Git part stays empty until the bridge adds one (ADR 0028).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bundle_version",
+    "generator",
+    "created_at",
+    "case_sensitive",
+    "complete",
+    "ids",
+    "objects",
+    "keys",
+    "roots",
+    "git",
+    "store",
+    "oplogs"
+  ],
+  "properties": {
+    "bundle_version": {
+      "const": 2
+    },
+    "generator": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "created_at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    },
+    "case_sensitive": {
+      "type": "boolean"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "ids": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(int|ses|cap|wsp|run)_[0-9a-v]{26}$"
+      },
+      "additionalProperties": {
+        "$ref": "../v1/common.json#/$defs/hash"
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hash",
+          "kind",
+          "size"
+        ],
+        "properties": {
+          "hash": {
+            "$ref": "../v1/common.json#/$defs/hash"
+          },
+          "kind": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fingerprint",
+          "public_key",
+          "role"
+        ],
+        "properties": {
+          "fingerprint": {
+            "$ref": "../v1/common.json#/$defs/hash"
+          },
+          "public_key": {
+            "$ref": "../v1/common.json#/$defs/public_key"
+          },
+          "role": {
+            "enum": [
+              "root",
+              "session"
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "roots": {
+      "$ref": "../v1/common.json#/$defs/hashes"
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "sha256",
+        "size",
+        "refs",
+        "commits"
+      ],
+      "properties": {
+        "file": {
+          "const": ""
+        },
+        "sha256": {
+          "const": ""
+        },
+        "size": {
+          "const": 0
+        },
+        "refs": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "commits": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "store": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "size"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.json#/$defs/object_id"
+          },
+          "kind": {
+            "enum": [
+              "blob",
+              "chunked_blob",
+              "tree",
+              "symbol_map"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "oplogs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspace",
+          "head",
+          "entries",
+          "size"
+        ],
+        "properties": {
+          "workspace": {
+            "$ref": "../v1/common.json#/$defs/workspace_id"
+          },
+          "head": {
+            "$ref": "../v1/common.json#/$defs/hash"
+          },
+          "entries": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

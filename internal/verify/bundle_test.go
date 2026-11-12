@@ -138,7 +138,7 @@ func TestAC088_UnavailableNotInvalid(t *testing.T) {
 					t.Fatalf("components are still reported: %+v", rep.Manifests)
 				}
 				if name == "commit" {
-					b := rep.Manifests[0].Binding
+					b := *rep.Manifests[0].Binding
 					if b.Trailer != verify.BindingUnavailable || b.Tree != verify.BindingUnavailable || b.Parent != verify.BindingUnavailable {
 						t.Fatalf("a missing commit is unavailable on all three conditions: %+v", b)
 					}
@@ -256,7 +256,7 @@ func TestAC177_TamperDetected(t *testing.T) {
 			if rep.Integrity != verify.Invalid || len(rep.Manifests) != 1 {
 				t.Fatalf("%s: %s", what, rep.Integrity)
 			}
-			b := rep.Manifests[0].Binding
+			b := *rep.Manifests[0].Binding
 			got := map[string]string{"trailer": b.Trailer, "tree": b.Tree, "parent": b.Parent}
 			for cond, v := range got {
 				want := verify.BindingOK
@@ -326,7 +326,7 @@ func TestAC078_099_114_BundleInventoryAndClosure(t *testing.T) {
 	}
 	// Unknown versions fail explicitly instead of being reinterpreted.
 	q := readParts(t, path)
-	q.Inv["bundle_version"] = 2
+	q.Inv["bundle_version"] = 3
 	if _, err := tryVerify(q.write(t, false)); code(t, err) != "unsupported_bundle_version" {
 		t.Fatalf("bundle version: %v", err)
 	}

@@ -163,6 +163,27 @@ func Verify(entries []Entry, head string) error {
 	return nil
 }
 
+// Prefix returns the entries up to and including head, checking every
+// link before it. Entries after head are not read: a manifest's signature
+// covers only what it pinned.
+func Prefix(entries []Entry, head string) ([]Entry, error) {
+	var prev *string
+	for i, e := range entries {
+		if e.Seq != int64(i+1) || !samePtr(e.Previous, prev) {
+			return nil, apierr.New("oplog_broken", "entry %d does not follow the entry before it", i+1).With("seq", i+1)
+		}
+		h, err := Hash(e)
+		if err != nil {
+			return nil, err
+		}
+		if h == head {
+			return entries[:i+1], nil
+		}
+		prev = &h
+	}
+	return nil, apierr.New("oplog_head_mismatch", "operation log has no entry %s", head).With("head", head)
+}
+
 func samePtr(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 
 // Head returns the last entry and its hash, or false for an empty log.

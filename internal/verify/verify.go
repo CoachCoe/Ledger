@@ -153,7 +153,7 @@ func (g *graph) manifest(hash string, trusted []string) Result {
 	if err := wobj.Decode(&w); err != nil {
 		return fail(err)
 	}
-	if w.BaseCommit != m.BaseCommit || w.ChangeID != m.ChangeID || w.IntentID != m.IntentID {
+	if w.BaseCommit != m.BaseCommit || w.BaseTree != m.BaseTree || w.ChangeID != m.ChangeID || w.IntentID != m.IntentID {
 		return fail(apierr.New("unauthorized", "manifest workspace differs"))
 	}
 	owner, cid, head := w.SessionID, w.CapabilityID, wobj.Hash

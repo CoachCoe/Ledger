@@ -14,6 +14,7 @@ import (
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/gitx"
+	"github.com/CoachCoe/Ledger/internal/oplog"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
@@ -31,12 +32,15 @@ type Limits struct {
 	MaxInventoryBytes int64
 	MaxTotalBytes     int64
 	MaxGitBytes       int64
+	// MaxObjectBytes bounds one store object or operation log in a v2
+	// bundle.
+	MaxObjectBytes int64
 }
 
 // DefaultLimits are generous for real repositories and small enough that a
 // hostile bundle cannot exhaust memory or disk.
 func DefaultLimits() Limits {
-	return Limits{MaxEntries: 200_000, MaxRecordBytes: 8 << 20, MaxInventoryBytes: 64 << 20, MaxTotalBytes: 4 << 30, MaxGitBytes: 4 << 30}
+	return Limits{MaxEntries: 200_000, MaxRecordBytes: 8 << 20, MaxInventoryBytes: 64 << 20, MaxTotalBytes: 4 << 30, MaxGitBytes: 4 << 30, MaxObjectBytes: 64 << 20}
 }
 
 // Staged is an inert, validated extraction of a bundle. Records stay in
@@ -52,6 +56,11 @@ type Staged struct {
 	Repo     *gitx.Repo
 	Problems []Problem
 	Size     Size
+	// Objects and OpLogs are the sizes of the store objects and operation
+	// logs a v2 bundle carries, by id and workspace; their files live under
+	// Dir/store and Dir/oplog.
+	Objects map[string]int64
+	OpLogs  map[string]int64
 }
 
 // Remove deletes the staging directory.
@@ -82,7 +91,7 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory needs the owner execute bit
 		return nil, err
 	}
-	st := &Staged{Dir: dir, Records: map[string][]byte{}}
+	st := &Staged{Dir: dir, Records: map[string][]byte{}, Objects: map[string]int64{}, OpLogs: map[string]int64{}}
 	tr := tar.NewReader(f)
 	seen := map[string]bool{}
 	folded := map[string]bool{}
@@ -129,6 +138,18 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 				return nil, unsafe("entry %q is not a record name", name)
 			}
 			kind, hash = "record", h
+		case strings.HasPrefix(name, storePrefix):
+			id, ok := storeName(strings.TrimPrefix(name, storePrefix))
+			if !ok {
+				return nil, unsafe("entry %q is not a store object name", name)
+			}
+			kind, hash = "object", id
+		case strings.HasPrefix(name, opLogPrefix):
+			w, ok := opLogName(strings.TrimPrefix(name, opLogPrefix))
+			if !ok {
+				return nil, unsafe("entry %q is not an operation log name", name)
+			}
+			kind, hash = "oplog", w
 		default:
 			return nil, unsafe("entry %q is not allowed", name)
 		}
@@ -136,7 +157,7 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 			return nil, unsafe("entry %q is a duplicate or alias", name)
 		}
 		seen[name], folded[strings.ToLower(name)] = true, true
-		limit := map[string]int64{"inventory": lim.MaxInventoryBytes, "record": lim.MaxRecordBytes, "git": lim.MaxGitBytes}[kind]
+		limit := map[string]int64{"inventory": lim.MaxInventoryBytes, "record": lim.MaxRecordBytes, "git": lim.MaxGitBytes, "object": lim.MaxObjectBytes, "oplog": lim.MaxObjectBytes}[kind]
 		if hdr.Size > limit {
 			return nil, apierr.New("bundle_too_large", "entry %q declares %d bytes, over the %d limit", name, hdr.Size, limit)
 		}
@@ -145,12 +166,30 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 		}
 		switch kind {
 		case "git":
-			gitSHA, err = copyGit(tr, filepath.Join(dir, "objects.bundle"), hdr.Size)
+			gitSHA, err = copyEntry(tr, filepath.Join(dir, "objects.bundle"), hdr.Size)
 			if err != nil {
 				return nil, err
 			}
 			st.GitFile = filepath.Join(dir, "objects.bundle")
 			st.Size.GitBytes = hdr.Size
+		case "object":
+			sub := filepath.Join(dir, "store", hash[:2])
+			if err := os.MkdirAll(sub, 0o700); err != nil {
+				return nil, err
+			}
+			if _, err := copyEntry(tr, filepath.Join(sub, hash[2:]), hdr.Size); err != nil {
+				return nil, err
+			}
+			st.Objects[hash] = hdr.Size
+			st.Size.StoreBytes += hdr.Size
+		case "oplog":
+			if err := os.MkdirAll(filepath.Join(dir, "oplog"), 0o700); err != nil {
+				return nil, err
+			}
+			if _, err := copyEntry(tr, oplog.Path(filepath.Join(dir, "oplog"), hash), hdr.Size); err != nil {
+				return nil, err
+			}
+			st.OpLogs[hash] = hdr.Size
 		default:
 			raw, err := io.ReadAll(io.LimitReader(tr, limit+1))
 			if err != nil {
@@ -176,8 +215,12 @@ func Stage(ctx context.Context, path, dir string, lim Limits) (*Staged, error) {
 	if err := unmarshalInventory(invRaw, &st.Inventory); err != nil {
 		return nil, err
 	}
+	if st.Inventory.BundleVersion == schema.BundleVersion && len(st.Objects)+len(st.OpLogs) > 0 {
+		return nil, unsafe("a version %d bundle cannot carry store objects or operation logs", schema.BundleVersion)
+	}
 	st.Size.Records = len(st.Records)
 	st.Size.Commits = len(st.Inventory.Git.Commits)
+	st.Size.StoreObjects = len(st.Objects)
 	st.Size.BundleBytes = total
 	st.checkInventory(gitSHA)
 	if st.GitFile != "" && st.Inventory.Git.File != "" {
@@ -209,7 +252,9 @@ func endMarker(f *os.File) error {
 	return nil
 }
 
-func copyGit(r io.Reader, dst string, size int64) (string, error) {
+// copyEntry streams one archive entry to a new file, checking its size,
+// and returns its SHA-256.
+func copyEntry(r io.Reader, dst string, size int64) (string, error) {
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // inside the private staging directory
 	if err != nil {
 		return "", err
@@ -220,10 +265,10 @@ func copyGit(r io.Reader, dst string, size int64) (string, error) {
 		err = cerr
 	}
 	if err != nil {
-		return "", apierr.New("bundle_corrupt", "reading the Git part: %v", err)
+		return "", apierr.New("bundle_corrupt", "reading %s: %v", filepath.Base(dst), err)
 	}
 	if n != size {
-		return "", apierr.New("bundle_corrupt", "the Git part declares %d bytes but holds %d", size, n)
+		return "", apierr.New("bundle_corrupt", "%s declares %d bytes but holds %d", filepath.Base(dst), size, n)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -246,6 +291,28 @@ func (s *Staged) checkInventory(gitSHA string) {
 			s.Problems = append(s.Problems, Problem{Hash: h, Code: "inventory_mismatch", Error: "record size differs from the inventory"})
 		}
 	}
+	objects := map[string]int64{}
+	for _, o := range s.Inventory.Store {
+		objects[o.ID] = o.Size
+	}
+	for _, id := range sortedKeys(s.Objects) {
+		if size, ok := objects[id]; !ok {
+			s.Problems = append(s.Problems, Problem{Hash: id, Code: "unlisted_object", Error: "store object is not in the inventory"})
+		} else if size != s.Objects[id] {
+			s.Problems = append(s.Problems, Problem{Hash: id, Code: "inventory_mismatch", Error: "store object size differs from the inventory"})
+		}
+	}
+	logs := map[string]int64{}
+	for _, l := range s.Inventory.OpLogs {
+		logs[l.Workspace] = l.Size
+	}
+	for _, w := range sortedKeys(s.OpLogs) {
+		if size, ok := logs[w]; !ok {
+			s.Problems = append(s.Problems, Problem{Hash: w, Code: "unlisted_oplog", Error: "operation log is not in the inventory"})
+		} else if size != s.OpLogs[w] {
+			s.Problems = append(s.Problems, Problem{Hash: w, Code: "inventory_mismatch", Error: "operation log size differs from the inventory"})
+		}
+	}
 	switch g := s.Inventory.Git; {
 	case g.File == "" && s.GitFile != "":
 		s.Problems = append(s.Problems, Problem{Hash: "git", Code: "unlisted_git", Error: "the archive has a Git part the inventory does not list"})
@@ -261,6 +328,16 @@ func (s *Staged) Missing() []string {
 	for _, o := range s.Inventory.Objects {
 		if _, ok := s.Records[o.Hash]; !ok {
 			out = append(out, o.Hash)
+		}
+	}
+	for _, o := range s.Inventory.Store {
+		if _, ok := s.Objects[o.ID]; !ok {
+			out = append(out, "object:"+o.ID)
+		}
+	}
+	for _, l := range s.Inventory.OpLogs {
+		if _, ok := s.OpLogs[l.Workspace]; !ok {
+			out = append(out, "oplog:"+l.Workspace)
 		}
 	}
 	if s.Inventory.Git.File != "" && s.GitFile == "" && !slices.ContainsFunc(s.Problems, func(p Problem) bool { return p.Hash == "git" }) {

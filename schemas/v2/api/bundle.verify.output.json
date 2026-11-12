@@ -203,6 +203,15 @@
           },
           "detail": {
             "type": "string"
+          },
+          "base_tree": {
+            "$ref": "../../v1/common.json#/$defs/hash"
+          },
+          "tree": {
+            "$ref": "../../v1/common.json#/$defs/hash"
+          },
+          "op_head": {
+            "$ref": "../../v1/common.json#/$defs/hash"
           }
         },
         "required": [
@@ -210,13 +219,59 @@
           "change_id",
           "intent_id",
           "author_session",
-          "commit",
           "integrity",
           "trust",
-          "binding",
           "evidence",
           "selections",
           "components"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "commit",
+              "binding"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "base_tree"
+                  ]
+                },
+                {
+                  "required": [
+                    "tree"
+                  ]
+                },
+                {
+                  "required": [
+                    "op_head"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "base_tree",
+              "tree",
+              "op_head"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "commit"
+                  ]
+                },
+                {
+                  "required": [
+                    "binding"
+                  ]
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -307,6 +362,14 @@
           "minimum": 0
         },
         "commits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "store_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "store_objects": {
           "type": "integer",
           "minimum": 0
         }

@@ -66,14 +66,19 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 	}
 	// Resolve filesystem arguments against the served repository, never the
 	// adapter or daemon process's incidental current directory.
+	root := filepath.Dir(s.Store.Dir)
 	local := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
 			return p
 		}
-		return filepath.Join(s.Store.Repo.MainDir, p)
+		return filepath.Join(root, p)
 	}
 	if r.Operation == "bundle.export" {
-		return verify.Export(ctx, s.Store.Repo, verify.ExportOptions{Out: local(in.Out), Manifests: in.Manifests, Intents: in.Intents, AllowPartial: in.AllowPartial})
+		opts := verify.ExportOptions{Out: local(in.Out), Manifests: in.Manifests, Intents: in.Intents, AllowPartial: in.AllowPartial}
+		if s.native() {
+			return verify.ExportNative(root, opts)
+		}
+		return verify.Export(ctx, s.Store.Repo, opts)
 	}
 	trust := identity.NewTrustList()
 	file := local(in.TrustFile)
@@ -96,7 +101,13 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		return nil, err
 	}
 	if r.Operation == "bundle.import" {
-		report, err := verify.Import(ctx, local(in.Bundle), publisher{s.Store}, s.Store.Repo, verify.ImportOptions{Trusted: trust})
+		opts := verify.ImportOptions{Trusted: trust}
+		var report *verify.ImportReport
+		if s.native() {
+			report, err = verify.ImportNative(ctx, local(in.Bundle), publisher{s.Store}, root, opts)
+		} else {
+			report, err = verify.Import(ctx, local(in.Bundle), publisher{s.Store}, s.Store.Repo, opts)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -107,9 +118,12 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		return map[string]any{"import": report, "index_digest": digest}, err
 	}
 	var src *verify.Source
-	if in.Bundle == "" {
+	switch {
+	case in.Bundle == "" && s.native():
+		src, err = verify.OpenNativeSource(root)
+	case in.Bundle == "":
 		src, err = verify.OpenRepoSource(ctx, s.Store.Repo)
-	} else {
+	default:
 		src, err = verify.OpenBundleSource(ctx, local(in.Bundle), verify.DefaultLimits())
 	}
 	if err != nil {

@@ -49,6 +49,25 @@ type Inventory struct {
 	Roots         []string          `json:"roots"`
 	Missing       []string          `json:"missing,omitempty"`
 	Git           InvGit            `json:"git"`
+	// Store and OpLogs are the native parts of a version 2 bundle.
+	Store  []InvStoreObject `json:"store,omitzero"`
+	OpLogs []InvOpLog       `json:"oplogs,omitzero"`
+}
+
+// InvStoreObject lists one store object file in a version 2 bundle.
+type InvStoreObject struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Size int64  `json:"size"`
+}
+
+// InvOpLog lists one workspace's operation log, cut at the last head an
+// exported manifest pinned.
+type InvOpLog struct {
+	Workspace string `json:"workspace"`
+	Head      string `json:"head"`
+	Entries   int    `json:"entries"`
+	Size      int64  `json:"size"`
 }
 
 // InvObject lists one record file in the archive.
@@ -91,6 +110,9 @@ type Size struct {
 	GitBytes    int64 `json:"git_bytes"`
 	Records     int   `json:"records"`
 	Commits     int   `json:"commits"`
+	// StoreBytes and StoreObjects size a version 2 bundle's store part.
+	StoreBytes   int64 `json:"store_bytes,omitzero"`
+	StoreObjects int   `json:"store_objects,omitzero"`
 }
 
 func unmarshalInventory(raw []byte, inv *Inventory) error {
@@ -137,62 +159,15 @@ func fault(o ExportOptions, stage string) error {
 // and uncommitted records are never exported. The bundle appears at
 // opts.Out only after it is complete and durable.
 func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportReport, error) {
-	if opts.Out == "" {
-		return nil, apierr.New("usage", "export needs an output file")
-	}
-	if opts.Now == nil {
-		opts.Now = time.Now
-	}
-	if _, err := os.Lstat(opts.Out); err == nil {
-		return nil, apierr.New("export_exists", "%s already exists", opts.Out)
-	}
 	objDir := filepath.Join(repo.MainDir, ".ledger", "objects")
-	c, err := LoadObjectsDir(objDir)
+	sel, err := selectRecords(objDir, &opts)
 	if err != nil {
 		return nil, err
 	}
-	g, err := newGraph(valuesOf(c.Objects), true)
-	if err != nil {
-		return nil, err
-	}
-	if err := fault(opts, StageExportInventory); err != nil {
-		return nil, err
-	}
-	ex := newExporter(g, c)
-	var set map[string]bool
-	var missing []string
-	if len(opts.Manifests)+len(opts.Intents) == 0 {
-		set = map[string]bool{}
-		for h := range c.Committed {
-			set[h] = true
-		}
-		missing = slices.Clone(c.Missing)
-		for _, p := range c.Problems {
-			missing = append(missing, "corrupt:"+p.Hash)
-		}
-	} else {
-		starts, err := ex.starts(opts.Manifests, opts.Intents)
-		if err != nil {
-			return nil, err
-		}
-		for _, h := range starts {
-			ex.include(h)
-		}
-		ex.run()
-		set, missing = ex.set, ex.missingList()
-	}
-	slices.Sort(missing)
-	missing = slices.Compact(missing)
-
-	manifests := []string{}
-	for _, h := range sortedKeys(set) {
-		if c.Objects[h].Envelope.Kind == schema.KindChangeManifest {
-			manifests = append(manifests, h)
-		}
-	}
+	c, missing := sel.corpus, sel.missing
 	commits := []InvCommit{}
 	refs := []string{}
-	for _, m := range manifests {
+	for _, m := range sel.manifests {
 		ref := ProposalRefPrefix + m
 		sha, err := repo.ResolveRef(ctx, ref)
 		if err != nil {
@@ -220,7 +195,7 @@ func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportRe
 	if err := fault(opts, StageExportGit); err != nil {
 		return nil, err
 	}
-	hashes := sortedKeys(set)
+	hashes := sortedKeys(sel.set)
 	tmp, err := os.MkdirTemp("", "ledger-export-")
 	if err != nil {
 		return nil, err
@@ -232,11 +207,102 @@ func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportRe
 	}
 	inv := Inventory{
 		BundleVersion: schema.BundleVersion, Generator: Generator, CreatedAt: schema.Timestamp(opts.Now()),
-		CaseSensitive: caseSensitive(repo), Complete: complete, IDs: map[string]string{},
-		Objects: []InvObject{}, Keys: []InvKey{}, Roots: []string{}, Missing: nilToEmpty(missing),
+		CaseSensitive: caseSensitive(repo), Complete: complete, Missing: nilToEmpty(missing),
 		Git: InvGit{Refs: nilToEmpty(gitRefs), Commits: commits},
 	}
-	if len(missing) == 0 {
+	var parts []part
+	var gitBytes int64
+	if gitFile != "" {
+		sum, size, err := fileDigest(gitFile)
+		if err != nil {
+			return nil, err
+		}
+		inv.Git.File, inv.Git.SHA256, inv.Git.Size, gitBytes = GitName, sum, size, size
+		parts = append(parts, part{GitName, func() ([]byte, error) { return os.ReadFile(gitFile) }}) //nolint:gosec // a file Ledger just wrote
+	}
+	rep, err := writeBundle(opts, inv, c, hashes, parts)
+	if err != nil {
+		return nil, err
+	}
+	rep.Missing, rep.Manifests = missing, sel.manifests
+	rep.Size.GitBytes, rep.Size.Commits = gitBytes, len(commits)
+	return rep, nil
+}
+
+// chosen is the set of committed records an export carries.
+type chosen struct {
+	corpus    *Corpus
+	set       map[string]bool
+	missing   []string
+	manifests []string
+}
+
+// selectRecords loads the records in objDir and picks the provenance
+// closure opts asks for, or every committed group.
+func selectRecords(objDir string, opts *ExportOptions) (chosen, error) {
+	if opts.Out == "" {
+		return chosen{}, apierr.New("usage", "export needs an output file")
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	if _, err := os.Lstat(opts.Out); err == nil {
+		return chosen{}, apierr.New("export_exists", "%s already exists", opts.Out)
+	}
+	c, err := LoadObjectsDir(objDir)
+	if err != nil {
+		return chosen{}, err
+	}
+	g, err := newGraph(valuesOf(c.Objects), true)
+	if err != nil {
+		return chosen{}, err
+	}
+	if err := fault(*opts, StageExportInventory); err != nil {
+		return chosen{}, err
+	}
+	sel := chosen{corpus: c, manifests: []string{}}
+	if len(opts.Manifests)+len(opts.Intents) == 0 {
+		sel.set = map[string]bool{}
+		for h := range c.Committed {
+			sel.set[h] = true
+		}
+		sel.missing = slices.Clone(c.Missing)
+		for _, p := range c.Problems {
+			sel.missing = append(sel.missing, "corrupt:"+p.Hash)
+		}
+	} else {
+		ex := newExporter(g, c)
+		starts, err := ex.starts(opts.Manifests, opts.Intents)
+		if err != nil {
+			return chosen{}, err
+		}
+		for _, h := range starts {
+			ex.include(h)
+		}
+		ex.run()
+		sel.set, sel.missing = ex.set, ex.missingList()
+	}
+	slices.Sort(sel.missing)
+	sel.missing = slices.Compact(sel.missing)
+	for _, h := range sortedKeys(sel.set) {
+		if c.Objects[h].Envelope.Kind == schema.KindChangeManifest {
+			sel.manifests = append(sel.manifests, h)
+		}
+	}
+	return sel, nil
+}
+
+// part is an archive entry after the records, read only when written.
+type part struct {
+	name string
+	read func() ([]byte, error)
+}
+
+// writeBundle lists the records in inv, then writes the archive beside
+// opts.Out and renames it into place once it is durable.
+func writeBundle(opts ExportOptions, inv Inventory, c *Corpus, hashes []string, parts []part) (*ExportReport, error) {
+	inv.IDs, inv.Objects, inv.Keys, inv.Roots = map[string]string{}, []InvObject{}, []InvKey{}, []string{}
+	if len(inv.Missing) == 0 {
 		inv.Missing = nil
 	}
 	var recordBytes int64
@@ -272,14 +338,6 @@ func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportRe
 	}
 	slices.Sort(inv.Roots)
 	inv.Roots = slices.Compact(inv.Roots)
-	var gitBytes int64
-	if gitFile != "" {
-		sum, size, err := fileDigest(gitFile)
-		if err != nil {
-			return nil, err
-		}
-		inv.Git.File, inv.Git.SHA256, inv.Git.Size, gitBytes = GitName, sum, size, size
-	}
 	invRaw, err := canon.Marshal(inv)
 	if err != nil {
 		return nil, err
@@ -291,7 +349,7 @@ func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportRe
 		return nil, err
 	}
 	partial := opts.Out + ".partial"
-	if err := writeArchive(partial, invRaw, c, hashes, gitFile); err != nil {
+	if err := writeArchive(partial, invRaw, c, hashes, parts); err != nil {
 		_ = os.Remove(partial)
 		return nil, err
 	}
@@ -308,10 +366,8 @@ func Export(ctx context.Context, repo *gitx.Repo, opts ExportOptions) (*ExportRe
 	if err != nil {
 		return nil, err
 	}
-	return &ExportReport{
-		Out: opts.Out, Complete: complete, Missing: missing, Manifests: manifests,
-		Size: Size{BundleBytes: fi.Size(), RecordBytes: recordBytes, GitBytes: gitBytes, Records: len(hashes), Commits: len(commits)},
-	}, nil
+	return &ExportReport{Out: opts.Out, Complete: inv.Complete,
+		Size: Size{BundleBytes: fi.Size(), RecordBytes: recordBytes, Records: len(hashes)}}, nil
 }
 
 func nilToEmpty(s []string) []string {
@@ -363,7 +419,7 @@ func fileDigest(path string) (string, int64, error) {
 }
 
 // writeArchive writes the tar to path and makes it durable.
-func writeArchive(path string, inv []byte, c *Corpus, hashes []string, gitFile string) (err error) {
+func writeArchive(path string, inv []byte, c *Corpus, hashes []string, parts []part) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // the caller names the output
 	if err != nil {
 		return err
@@ -390,12 +446,12 @@ func writeArchive(path string, inv []byte, c *Corpus, hashes []string, gitFile s
 			return err
 		}
 	}
-	if gitFile != "" {
-		raw, err := os.ReadFile(gitFile) //nolint:gosec // a file Ledger just wrote
+	for _, p := range parts {
+		raw, err := p.read()
 		if err != nil {
 			return err
 		}
-		if err := put(GitName, raw); err != nil {
+		if err := put(p.name, raw); err != nil {
 			return err
 		}
 	}
