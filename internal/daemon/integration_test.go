@@ -201,7 +201,6 @@ func TestPublicCLILifecycle(t *testing.T) {
 
 	// Poll-only mode uses the same cached observations without filesystem events.
 	must("daemon", "stop")
-	time.Sleep(100 * time.Millisecond)
 	foreground := exec.Command(binary, "daemon", "--no-watch", "--poll", "200ms", "--idle", "200ms")
 	foreground.Dir = repo
 	foreground.Env = env

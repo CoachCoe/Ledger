@@ -40,6 +40,32 @@ func Socket(repo *gitx.Repo) string {
 	return filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.sock")
 }
 
+// acquire takes the daemon lock. A daemon closes its listener before it
+// releases the lock, so a held lock with nothing answering on the socket
+// belongs to one that is shutting down: wait for it rather than exit and leave
+// the client that started us polling a socket nobody will open.
+func acquire(ctx context.Context, path, socket string) (func(), error) {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		unlock, err := lock.Acquire(path, true)
+		if err == nil {
+			return unlock, nil
+		}
+		if e, ok := errors.AsType[*apierr.Error](err); !ok || e.Code != "already_running" || time.Now().After(deadline) {
+			return nil, err
+		}
+		if conn, dialErr := net.DialTimeout("unix", socket, time.Second); dialErr == nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 // Run serves the API until ctx ends, a root-authorized daemon.stop
 // arrives, or the daemon has been idle with no open workspace for
 // opts.Idle. Only one daemon runs per repository.
@@ -65,7 +91,7 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 	if err := os.Chmod(runtimeDir, 0700); err != nil { //nolint:gosec // directories require owner execute permission
 		return err
 	}
-	unlock, err := lock.Acquire(filepath.Join(runtimeDir, "daemon.lock"), true)
+	unlock, err := acquire(ctx, filepath.Join(runtimeDir, "daemon.lock"), Socket(repo))
 	if err != nil {
 		return err
 	}
