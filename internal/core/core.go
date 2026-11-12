@@ -54,6 +54,9 @@ type Service struct {
 	// evaluating cancels the in-process evaluation of a run, by run id.
 	evaluating map[string]context.CancelFunc
 
+	// checkouts makes the fresh checkouts evidence runs in.
+	checkouts evidence.Checkouts
+
 	// evidenceHooks are test seams for evidence runs; nil in production.
 	evidenceHooks *evidence.Hooks
 	writeFault    func(string) error // test-only runtime editing interruption seam
@@ -88,8 +91,10 @@ func New(ctx context.Context, records *record.Store, keys identity.IdentityProvi
 		}
 		s.Objects = objects
 		s.Provider = workspace.NativeProvider{Workspaces: workspaces, Store: objects}
+		s.checkouts = evidence.NativeCheckouts{Workspaces: workspaces}
 	} else {
 		s.Provider = workspace.GitProvider{Repo: records.Repo}
+		s.checkouts = evidence.GitCheckouts{Repo: records.Repo}
 	}
 	records.SetEffectHandler(s.Provider.Apply)
 	stale, err := filepath.Glob(filepath.Join(s.runtimeDir(), "observe-*.index.lock"))
@@ -104,7 +109,7 @@ func New(ctx context.Context, records *record.Store, keys identity.IdentityProvi
 	if _, err := records.Recover(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := evidence.Reconcile(ctx, records.Repo, s.runtimeDir()); err != nil {
+	if _, err := evidence.Reconcile(ctx, s.checkouts, s.runtimeDir()); err != nil {
 		return nil, err
 	}
 	if err := s.settleRuns(ctx); err != nil {

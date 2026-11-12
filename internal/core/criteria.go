@@ -24,6 +24,15 @@ const independenceNote = "independence describes who signed the evidence; it doe
 // judgeGrace bounds the human verifier session a root judgment provisions.
 const judgeGrace = 10 * time.Minute
 
+// withCommit adds the commit a v1 binding names to result; a v2 binding
+// names none.
+func withCommit(result map[string]any, commit string) map[string]any {
+	if commit != "" {
+		result["commit"] = commit
+	}
+	return result
+}
+
 type bindingInput struct {
 	Manifest string `json:"manifest"`
 	Commit   string `json:"commit"`
@@ -78,10 +87,10 @@ func (s *Service) evidenceIsIndependent(ctx context.Context, r api.Request) (any
 		}
 	}
 	slices.Sort(passing)
-	return map[string]any{
-		"manifest": in.Manifest, "commit": in.Commit, "attestations": attestations,
+	return withCommit(map[string]any{
+		"manifest": in.Manifest, "attestations": attestations,
 		"independent_passing": passing, "note": independenceNote,
-	}, nil
+	}, in.Commit), nil
 }
 
 // criteriaStatus evaluates every criterion of the intent for one revision
@@ -115,10 +124,10 @@ func (s *Service) criteriaStatus(ctx context.Context, r api.Request) (any, error
 		hashes = append(hashes, e.Hash)
 	}
 	slices.Sort(hashes)
-	return map[string]any{
-		"intent_id": b.IntentID, "manifest": b.Manifest, "commit": b.Commit, "evidence_set": slices.Compact(hashes),
+	return withCommit(map[string]any{
+		"intent_id": b.IntentID, "manifest": b.Manifest, "evidence_set": slices.Compact(hashes),
 		"criteria": res.Criteria, "contrary_evidence": res.Contrary, "rejected": res.Rejected,
-	}, nil
+	}, b.Commit), nil
 }
 
 // explicitSet loads the named attestations. An unknown hash is
@@ -232,10 +241,10 @@ func (s *Service) evidenceJudge(ctx context.Context, r api.Request) (any, error)
 	if err != nil {
 		return nil, err
 	}
-	result := map[string]any{
-		"attestation": o.Hash, "check_definition": defRecord.Hash, "manifest": b.Manifest, "commit": b.Commit,
+	result := withCommit(map[string]any{
+		"attestation": o.Hash, "check_definition": defRecord.Hash, "manifest": b.Manifest,
 		"criterion_id": in.CriterionID, "result": in.Result, "reviewer_session": reviewer, "reviewer_kind": sess.ParticipantKind,
-	}
+	}, b.Commit)
 	return s.publish(context.WithoutCancel(ctx), record.Op{ID: r.OperationID, Name: r.Operation, Digest: digest, Signer: signer}, func(*index.Index) (any, []envelope.Object, []record.Effect, error) {
 		return result, []envelope.Object{defRecord, o}, nil, nil
 	})

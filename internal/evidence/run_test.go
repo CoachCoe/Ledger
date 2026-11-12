@@ -35,7 +35,7 @@ func (f *wtFixture) plan(d schema.CheckDefinition) Plan {
 // run executes plan and fails the test on an unexpected error.
 func (f *wtFixture) run(t *testing.T, p Plan) Outcome {
 	t.Helper()
-	out, err := Execute(context.Background(), f.repo, f.runtimeDir, p, nil)
+	out, err := Execute(context.Background(), GitCheckouts{Repo: f.repo}, f.runtimeDir, p, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestAC095_WorktreeRemoved(t *testing.T) {
 	}
 	// Abort: a dirty checkout never runs anything and leaves nothing behind.
 	p := f.plan(checkDef("echo should-not-run"))
-	_, err := Execute(ctx, f.repo, f.runtimeDir, p, &Hooks{AfterCheckout: func(path string) {
+	_, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p, &Hooks{AfterCheckout: func(path string) {
 		_ = os.WriteFile(filepath.Join(path, "a.txt"), []byte("tampered\n"), 0o600)
 	}})
 	if !apierr.HasCode(err, "dirty_checkout") {
@@ -181,7 +181,7 @@ func TestAC095_WorktreeRemoved(t *testing.T) {
 			if out.Kept != VerifyPath(f.runtimeDir, p.RunID) || !f.worktreeListed(t, out.Kept) {
 				t.Fatalf("kept worktree %s missing", out.Kept)
 			}
-			if err := removeVerifyWorktree(ctx, f.repo, f.runtimeDir, p.RunID, out.Kept); err != nil {
+			if err := removeVerifyWorktree(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p.RunID, out.Kept); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -305,7 +305,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 	t.Run("start failure", func(t *testing.T) {
 		d := checkDef("true")
 		d.WorkingDirectory = "missing"
-		_, err := Execute(ctx, f.repo, f.runtimeDir, f.plan(d), nil)
+		_, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.plan(d), nil)
 		if !apierr.HasCode(err, "invalid_working_directory") {
 			t.Fatalf("missing working directory: %v", err)
 		}
@@ -348,7 +348,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 			cancel()
 		}()
 		p := f.plan(checkDef("sleep 300 & echo $! > " + pidFile + "; sleep 300"))
-		out, err := Execute(cctx, f.repo, f.runtimeDir, p, nil)
+		out, err := Execute(cctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -363,7 +363,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 	t.Run("cancelled before start", func(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
-		out, err := Execute(cctx, f.repo, f.runtimeDir, f.plan(checkDef("true")), nil)
+		out, err := Execute(cctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.plan(checkDef("true")), nil)
 		if err == nil {
 			expect(t, out.Attestation, ReasonCancelled)
 		}
@@ -442,7 +442,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 	t.Run("judgment is not runnable", func(t *testing.T) {
 		d := checkDef("true")
 		d.Category = "judgment"
-		if _, err := Execute(ctx, f.repo, f.runtimeDir, f.plan(d), nil); !apierr.HasCode(err, "not_runnable") {
+		if _, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.plan(d), nil); !apierr.HasCode(err, "not_runnable") {
 			t.Fatalf("judgment run: %v", err)
 		}
 	})
@@ -496,7 +496,7 @@ func TestEvidenceExecuteRecovery(t *testing.T) {
 			setup := "echo setup"
 			d.Setup = &setup
 			p := f.plan(d)
-			out, err := Execute(ctx, f.repo, f.runtimeDir, p, &Hooks{Fault: func(s string) error {
+			out, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p, &Hooks{Fault: func(s string) error {
 				if s == stage {
 					return errCrash
 				}
@@ -505,7 +505,7 @@ func TestEvidenceExecuteRecovery(t *testing.T) {
 			if !errors.Is(err, errCrash) || out.Attestation.Manifest != "" {
 				t.Fatalf("fault at %s: %v %+v", stage, err, out)
 			}
-			interrupted, err := Reconcile(ctx, f.repo, f.runtimeDir)
+			interrupted, err := Reconcile(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -520,7 +520,7 @@ func TestEvidenceExecuteRecovery(t *testing.T) {
 			if err != nil || j.State != StateInterrupted {
 				t.Fatalf("journal %+v %v", j, err)
 			}
-			if again, err := Reconcile(ctx, f.repo, f.runtimeDir); err != nil || len(again) != 0 {
+			if again, err := Reconcile(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir); err != nil || len(again) != 0 {
 				t.Fatalf("reconcile is not idempotent: %v %v", again, err)
 			}
 			// A fresh run after the restart succeeds.

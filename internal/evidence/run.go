@@ -10,7 +10,6 @@ import (
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/atomicfile"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
@@ -79,7 +78,7 @@ func SetState(runtimeDir, runID, state, reason string) error {
 // means no outcome exists: Prepare refused the checkout, or Execute failed
 // internally (journal aborted). A Hooks.Fault error is returned untouched,
 // as a crash would leave things.
-func Execute(ctx context.Context, repo *gitx.Repo, runtimeDir string, p Plan, hooks *Hooks) (Outcome, error) {
+func Execute(ctx context.Context, checkouts Checkouts, runtimeDir string, p Plan, hooks *Hooks) (Outcome, error) {
 	d := p.Check.Definition
 	if err := Runnable(d); err != nil {
 		return Outcome{}, apierr.New("not_runnable", "%v", err)
@@ -88,7 +87,7 @@ func Execute(ctx context.Context, repo *gitx.Repo, runtimeDir string, p Plan, ho
 		return Outcome{}, apierr.New("invalid_checks", "%v", err)
 	}
 	template := Journal{RunID: p.RunID, OperationID: p.OperationID, CheckDefinition: p.Check.DefinitionHash, VerifierSession: p.VerifierSession}
-	wt, err := Prepare(ctx, repo, runtimeDir, p.Binding, template, hooks)
+	wt, err := Prepare(ctx, checkouts, runtimeDir, p.Binding, template, hooks)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -178,7 +177,7 @@ func Execute(ctx context.Context, repo *gitx.Repo, runtimeDir string, p Plan, ho
 	ended := time.Now()
 
 	att := schema.EvidenceAttestation{
-		Manifest: p.Binding.Manifest, Commit: p.Binding.Commit, ExecutedTree: p.Binding.Tree,
+		Manifest:        p.Binding.Manifest,
 		CheckDefinition: p.Check.DefinitionHash, Category: d.Category,
 		Criteria: slices.Sorted(slices.Values(p.Check.Criteria)), Command: d.Command,
 		Setup: setup, Check: check, Result: "pass",
@@ -186,6 +185,12 @@ func Execute(ctx context.Context, repo *gitx.Repo, runtimeDir string, p Plan, ho
 		StartedAt: schema.Timestamp(started), EndedAt: schema.Timestamp(ended),
 		OutputDigest: out.Digest(), OutputBytes: out.Total(), OutputTruncated: out.Truncated(),
 		Isolation: "none",
+	}
+	// A v2 manifest binds no commit; its attestation names only the tree.
+	if p.Binding.Commit != "" {
+		att.Commit, att.ExecutedTree = p.Binding.Commit, p.Binding.Tree
+	} else {
+		att.Tree = p.Binding.Tree
 	}
 	if reason != "" {
 		att.Result, att.Reason = "fail", &reason

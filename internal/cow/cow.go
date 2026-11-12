@@ -419,3 +419,38 @@ func (m *Manager) Import(dir string) (string, error) {
 	}
 	return tree, b.Commit()
 }
+
+// Checkout clones base tree to dst, a new path on the runtime filesystem,
+// for a check to run in. It has no operation log and shares no dependency
+// trees; TrackedTree reads it back.
+func (m *Manager) Checkout(tree, dst string) error {
+	if err := m.ensureBase(tree); err != nil {
+		return err
+	}
+	return cloneTree(m.basePath(tree), dst)
+}
+
+// TrackedTree returns the tree of the files of tree as they now are in dir,
+// a checkout of it: changed, deleted or retyped tracked files count, and
+// new files do not, as with git add -u.
+func (m *Manager) TrackedTree(dir, tree string) (string, error) {
+	files, err := m.cfg.Store.Files(tree)
+	if err != nil {
+		return "", err
+	}
+	tracked := make(map[string]bool, len(files))
+	for _, f := range files {
+		tracked[f.Path] = true
+	}
+	b := m.cfg.Store.Batch()
+	res, err := scan(dir, m.rules(dir), tracked, "", statCache{Files: map[string]cached{}}, b, m.cfg.Workers)
+	if err != nil {
+		return "", err
+	}
+	kept := slices.DeleteFunc(res.files, func(f store.File) bool { return !tracked[f.Path] })
+	got, err := b.BuildTree(kept)
+	if err != nil {
+		return "", err
+	}
+	return got, b.Commit()
+}

@@ -365,3 +365,37 @@ func TestIgnoredFilesSkipDependencyTrees(t *testing.T) {
 		t.Fatalf("ignored files %v", got)
 	}
 }
+
+func TestCheckoutTrackedTreeCountsOnlyTrackedFiles(t *testing.T) {
+	f := setup(t)
+	dir := filepath.Join(t.TempDir(), "check")
+	if err := f.m.Checkout(f.base, dir); err != nil {
+		t.Fatal(err)
+	}
+	tree := func() string {
+		t.Helper()
+		got, err := f.m.TrackedTree(dir, f.base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := tree(); got != f.base {
+		t.Fatalf("fresh checkout scans as %s, want %s", got, f.base)
+	}
+	writeFiles(t, dir, map[string]string{"coverage/out.txt": "built\n", "dist/more.js": "x\n"})
+	if got := tree(); got != f.base {
+		t.Fatalf("new files changed the tracked tree: %s", got)
+	}
+	writeFiles(t, dir, map[string]string{"src/index.ts": "export const a = 2\n"})
+	if got := tree(); got == f.base {
+		t.Fatal("an edited tracked file did not change the tree")
+	}
+	writeFiles(t, dir, map[string]string{"src/index.ts": "export const a = 1\n"})
+	if err := os.Remove(filepath.Join(dir, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	if got := tree(); got == f.base {
+		t.Fatal("a deleted tracked file did not change the tree")
+	}
+}

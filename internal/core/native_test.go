@@ -261,3 +261,50 @@ func TestNativeStatusAndWrite(t *testing.T) {
 		t.Fatalf("no write entry in %+v", entries)
 	}
 }
+
+// A check on a native proposal runs in a clone of the manifest tree, and its
+// attestation names that tree and no commit.
+func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
+	s, _ := nativeFixture(t)
+	check := unitCheck()
+	check.Command = "test -f a.ts && ! test -e .git"
+	writeChecks(t, s, []schema.CheckDefinition{check})
+	intent := call(t, s, requestV2("intent.create", "", checkIntent()))
+	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	sid := sess["session_id"].(string)
+	fork := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": sess["capability_id"]}))
+	if err := os.WriteFile(filepath.Join(fork["path"].(string), "a.ts"), []byte("export const x=5;\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prop := call(t, s, requestV2("workspace.propose", sid, map[string]any{"workspace_id": fork["workspace_id"]}))
+	resolved := call(t, s, requestV2("evidence.resolve", "", map[string]any{"manifest": prop["manifest"]}))
+	checks := resolved["checks"].([]any)
+	def := checks[0].(map[string]any)["definition_hash"]
+	run := call(t, s, requestV2("evidence.run", "", map[string]any{"manifest": prop["manifest"], "check_definition": def}))
+	if run["result"] != "pass" {
+		t.Fatalf("run %v", run)
+	}
+	o, err := s.Store.Read(run["attestation"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var att schema.EvidenceAttestation
+	if err := o.Decode(&att); err != nil || o.Envelope.SchemaVersion != 2 || att.Tree != prop["tree"] || att.Commit != "" {
+		t.Fatalf("attestation v%d %+v, %v", o.Envelope.SchemaVersion, att, err)
+	}
+	if left, _ := os.ReadDir(filepath.Join(s.runtimeDir(), "verify")); len(left) != 0 {
+		t.Fatalf("checkouts left behind: %v", left)
+	}
+	sel := call(t, s, requestV2("selection.record", "", map[string]any{"manifest": prop["manifest"], "evidence": []any{run["attestation"]}}))
+	o, err = s.Store.Read(sel["selection"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d schema.SelectionDecision
+	if err := o.Decode(&d); err != nil || o.Envelope.SchemaVersion != 2 || d.Manifest != prop["manifest"] || d.Commit != "" {
+		t.Fatalf("selection v%d %+v, %v", o.Envelope.SchemaVersion, d, err)
+	}
+	if !slices.ContainsFunc(d.Criteria, func(c schema.CriterionStatus) bool { return c.CriterionID == "tests" && c.Status == "satisfied" }) {
+		t.Fatalf("criteria %+v", d.Criteria)
+	}
+}

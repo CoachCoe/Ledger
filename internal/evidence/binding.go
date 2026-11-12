@@ -23,10 +23,13 @@ type CheckRef struct {
 // commit and the pinned definitions. Once returned it never changes; a
 // reworked proposal is a different manifest and a different Binding.
 type Binding struct {
-	Manifest      string     `json:"manifest"`
-	Commit        string     `json:"commit"`
+	Manifest string `json:"manifest"`
+	// Commit and BaseCommit bind a v1 manifest; a v2 one binds BaseTree
+	// and Tree only.
+	Commit        string     `json:"commit,omitzero"`
 	Tree          string     `json:"tree"`
-	BaseCommit    string     `json:"base_commit"`
+	BaseCommit    string     `json:"base_commit,omitzero"`
+	BaseTree      string     `json:"base_tree,omitzero"`
 	ChangeID      string     `json:"change_id"`
 	IntentID      string     `json:"intent_id"`
 	WorkspaceID   string     `json:"workspace_id"`
@@ -60,7 +63,7 @@ func Resolve(ctx context.Context, idx *index.Index, in ResolveInput) (Binding, e
 		if err != nil {
 			return Binding{}, err
 		}
-		if last.Manifest == "" || last.Commit == "" {
+		if last.Manifest == "" {
 			return Binding{}, apierr.New("not_proposed", "change %s has no proposal", in.ChangeID)
 		}
 		manifest = last.Manifest
@@ -72,22 +75,30 @@ func Resolve(ctx context.Context, idx *index.Index, in ResolveInput) (Binding, e
 	if err != nil {
 		return Binding{}, err
 	}
-	bound, err := idx.ManifestCommit(ctx, manifest)
-	if err != nil {
-		return Binding{}, err
-	}
-	if bound == "" {
-		return Binding{}, apierr.New("not_proposed", "manifest %s has no proposal commit", manifest)
-	}
-	if commit != "" && commit != bound {
-		return Binding{}, apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", commit, manifest).With("bound_commit", bound)
+	// A v2 manifest binds its tree directly, and is indexed only as part of
+	// its proposal.
+	bound := ""
+	if m.BaseTree != "" {
+		if commit != "" {
+			return Binding{}, apierr.New("binding_mismatch", "manifest %s binds a tree, not commit %s", manifest, commit)
+		}
+	} else {
+		if bound, err = idx.ManifestCommit(ctx, manifest); err != nil {
+			return Binding{}, err
+		}
+		if bound == "" {
+			return Binding{}, apierr.New("not_proposed", "manifest %s has no proposal commit", manifest)
+		}
+		if commit != "" && commit != bound {
+			return Binding{}, apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", commit, manifest).With("bound_commit", bound)
+		}
 	}
 	checks, err := pinnedChecks(ctx, idx, m.IntentID)
 	if err != nil {
 		return Binding{}, err
 	}
 	return Binding{
-		Manifest: manifest, Commit: bound, Tree: m.Tree, BaseCommit: m.BaseCommit,
+		Manifest: manifest, Commit: bound, Tree: m.Tree, BaseCommit: m.BaseCommit, BaseTree: m.BaseTree,
 		ChangeID: m.ChangeID, IntentID: m.IntentID, WorkspaceID: m.WorkspaceID, AuthorSession: m.AuthorSession,
 		Checks: checks, Frozen: true,
 	}, nil

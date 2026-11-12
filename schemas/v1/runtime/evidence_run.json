@@ -7,7 +7,6 @@
     "run_id",
     "state",
     "manifest",
-    "commit",
     "tree",
     "worktree_path"
   ],
@@ -33,7 +32,8 @@
     },
     "commit": {
       "type": "string",
-      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+      "description": "The proposal commit of a Phase 1 manifest; absent for a v2 manifest, which binds only its tree."
     },
     "tree": {
       "type": "string",

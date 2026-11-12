@@ -55,7 +55,7 @@ func (s *Service) evidenceRun(ctx context.Context, r api.Request) (any, error) {
 		}
 		return nil, err
 	}
-	out, execErr := evidence.Execute(ctx, s.Store.Repo, s.runtimeDir(), plan, s.evidenceHooks)
+	out, execErr := evidence.Execute(ctx, s.checkouts, s.runtimeDir(), plan, s.evidenceHooks)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.finishRun(ctx, r, digest, plan, out, execErr)
@@ -210,9 +210,10 @@ func (s *Service) finishRun(ctx context.Context, r api.Request, digest string, p
 	}
 	result := map[string]any{
 		"run_id": plan.RunID, "attestation": o.Hash, "result": att.Result, "reason": att.Reason,
-		"verifier_session": att.VerifierSession, "manifest": att.Manifest, "commit": att.Commit,
+		"verifier_session": att.VerifierSession, "manifest": att.Manifest,
 		"check_definition": att.CheckDefinition, "setup": att.Setup, "check": att.Check, "kept_worktree": kept,
 	}
+	withCommit(result, att.Commit)
 	res, err := s.publish(pctx, record.Op{ID: r.OperationID, Name: r.Operation, Digest: digest, Signer: verifier}, func(*index.Index) (any, []envelope.Object, []record.Effect, error) {
 		return result, []envelope.Object{o}, nil, nil
 	})

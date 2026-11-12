@@ -89,10 +89,10 @@ func (s *Service) recordSelection(ctx context.Context, c *invocation) (prepared,
 	if err != nil {
 		return prepared{}, err
 	}
-	return prepared{records: []envelope.Object{o}, result: map[string]any{
-		"selection": o.Hash, "intent_id": d.IntentID, "manifest": d.Manifest, "commit": d.Commit,
+	return prepared{records: []envelope.Object{o}, result: withCommit(map[string]any{
+		"selection": o.Hash, "intent_id": d.IntentID, "manifest": d.Manifest,
 		"evidence": d.Evidence, "competitors": slices.Clone(d.Competitors), "criteria": d.Criteria,
 		"outstanding": selection.OutstandingIDs(d.Criteria), "contrary_evidence": d.ContraryEvidence,
 		"accepted": false, "selector": d.Selector,
-	}}, nil
+	}, d.Commit)}, nil
 }

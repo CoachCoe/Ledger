@@ -107,7 +107,7 @@ func TestAC090_091_111_VerificationWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := runID()
-	w, err := Prepare(ctx, f.repo, f.runtimeDir, f.b, Journal{RunID: id}, nil)
+	w, err := Prepare(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestAC090_091_111_VerificationWorktree(t *testing.T) {
 		t.Fatal("author worktree removed")
 	}
 	// A run id is single use.
-	if _, err := Prepare(ctx, f.repo, f.runtimeDir, f.b, Journal{RunID: id}, nil); !apierr.HasCode(err, "run_exists") {
+	if _, err := Prepare(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, nil); !apierr.HasCode(err, "run_exists") {
 		t.Fatalf("reused run id: %v", err)
 	}
 }
@@ -180,7 +180,7 @@ func TestAC091_DirtyTrackedAborts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newWT(t)
 			id := runID()
-			_, err := Prepare(context.Background(), f.repo, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{AfterCheckout: tamper})
+			_, err := Prepare(context.Background(), GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{AfterCheckout: tamper})
 			f.expectAbort(t, id, "dirty_checkout", err)
 		})
 	}
@@ -192,7 +192,7 @@ func TestAC091_TreeMismatchAborts(t *testing.T) {
 		f := newWT(t)
 		f.b.Tree = git(t, f.repo.Dir, "rev-parse", f.base+"^{tree}")
 		id := runID()
-		_, err := Prepare(ctx, f.repo, f.runtimeDir, f.b, Journal{RunID: id}, nil)
+		_, err := Prepare(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, nil)
 		f.expectAbort(t, id, "tree_mismatch", err)
 		var ae *apierr.Error
 		if !errors.As(err, &ae) || ae.Details["tree"] != "mismatch" || ae.Details["trailer"] != "ok" || ae.Details["parent"] != "ok" {
@@ -203,7 +203,7 @@ func TestAC091_TreeMismatchAborts(t *testing.T) {
 		f := newWT(t)
 		id := runID()
 		move := func(p string) { git(t, p, "checkout", "-q", "--detach", f.base) }
-		_, err := Prepare(ctx, f.repo, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{AfterCheckout: move})
+		_, err := Prepare(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{AfterCheckout: move})
 		f.expectAbort(t, id, "tree_mismatch", err)
 	})
 }
@@ -229,7 +229,7 @@ func TestAC057_BindingFailuresAbortBeforeCheckout(t *testing.T) {
 			tc.mutate(&f.b)
 			id := runID()
 			created := false
-			_, err := Prepare(context.Background(), f.repo, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{AfterCheckout: func(string) { created = true }})
+			_, err := Prepare(context.Background(), GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{AfterCheckout: func(string) { created = true }})
 			f.expectAbort(t, id, tc.code, err)
 			var ae *apierr.Error
 			if !errors.As(err, &ae) || ae.Details["trailer"] != tc.trailer || ae.Details["tree"] != tc.tree || ae.Details["parent"] != tc.parent {
@@ -244,7 +244,7 @@ func TestAC057_BindingFailuresAbortBeforeCheckout(t *testing.T) {
 		f := newWT(t)
 		f.b.Commit = strings.Repeat("a", 40)
 		id := runID()
-		_, err := Prepare(context.Background(), f.repo, f.runtimeDir, f.b, Journal{RunID: id}, nil)
+		_, err := Prepare(context.Background(), GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, nil)
 		f.expectAbort(t, id, "dependency_unavailable", err)
 	})
 }
@@ -266,7 +266,7 @@ func TestVerificationSetupRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := runID()
-			_, err := Prepare(ctx, f.repo, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{Fault: func(s string) error {
+			_, err := Prepare(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: id}, &Hooks{Fault: func(s string) error {
 				if s == stage {
 					return crash
 				}
@@ -280,7 +280,7 @@ func TestVerificationSetupRecovery(t *testing.T) {
 				t.Fatalf("journal after crash %+v %v", jr, jerr)
 			}
 			// Restart.
-			got, err := Reconcile(ctx, f.repo, f.runtimeDir)
+			got, err := Reconcile(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir)
 			if err != nil || len(got) != 2 {
 				t.Fatalf("reconcile %v %v", got, err)
 			}
@@ -297,14 +297,14 @@ func TestVerificationSetupRecovery(t *testing.T) {
 				t.Fatal("unrelated worktree was touched")
 			}
 			// Reconcile is idempotent and the interrupted runs are listed.
-			if again, err := Reconcile(ctx, f.repo, f.runtimeDir); err != nil || len(again) != 0 {
+			if again, err := Reconcile(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir); err != nil || len(again) != 0 {
 				t.Fatalf("second reconcile %v %v", again, err)
 			}
 			if list, err := Interrupted(f.runtimeDir); err != nil || len(list) != 2 {
 				t.Fatalf("interrupted %v %v", list, err)
 			}
 			// A fresh run id then works.
-			w, err := Prepare(ctx, f.repo, f.runtimeDir, f.b, Journal{RunID: runID()}, nil)
+			w, err := Prepare(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.b, Journal{RunID: runID()}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -4,12 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/gitx"
-	"github.com/CoachCoe/Ledger/internal/schema"
-	"github.com/CoachCoe/Ledger/internal/verify"
 )
 
 // Fault stages inside Prepare, for crash-injection tests.
@@ -57,8 +53,23 @@ type Worktree struct {
 	Path    string
 	Binding Binding
 
-	repo       *gitx.Repo
+	checkouts  Checkouts
 	runtimeDir string
+}
+
+// Checkouts makes the fresh checkout a check runs in and reads its tracked
+// content back. Paths are always a run's own verify path.
+type Checkouts interface {
+	// Add checks b's binding and checks b.Tree out at the new path.
+	Add(ctx context.Context, path string, b Binding) error
+	// Verify checks that the checkout at path is still of b before
+	// anything runs, beyond its tracked content.
+	Verify(ctx context.Context, path string, b Binding) error
+	// Tree returns the tree of the tracked content now at path.
+	Tree(ctx context.Context, path string, b Binding) (string, error)
+	// Remove deletes the checkout at path if this source made it, and
+	// leaves anything else alone.
+	Remove(ctx context.Context, path string) error
 }
 
 // Prepare creates a fresh detached worktree at the bound commit under
@@ -67,7 +78,7 @@ type Worktree struct {
 // that no tracked file differs. On any failure no worktree remains and the
 // journal is "aborted" with a structured error. The journal template j
 // carries the run's operation, check definition and verifier for recovery.
-func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding, j Journal, hooks *Hooks) (*Worktree, error) {
+func Prepare(ctx context.Context, checkouts Checkouts, runtimeDir string, b Binding, j Journal, hooks *Hooks) (*Worktree, error) {
 	runID := j.RunID
 	path := VerifyPath(runtimeDir, runID)
 	j.State, j.Manifest, j.Commit, j.Tree, j.WorktreePath = StatePreparing, b.Manifest, b.Commit, b.Tree, path
@@ -79,7 +90,7 @@ func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding,
 	if err := WriteJournal(runtimeDir, j); err != nil {
 		return nil, err
 	}
-	w := &Worktree{RunID: runID, Path: path, Binding: b, repo: repo, runtimeDir: runtimeDir}
+	w := &Worktree{RunID: runID, Path: path, Binding: b, checkouts: checkouts, runtimeDir: runtimeDir}
 	abort := func(err error) (*Worktree, error) {
 		cleanCtx := context.WithoutCancel(ctx)
 		_ = w.Remove(cleanCtx)
@@ -89,16 +100,13 @@ func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding,
 		}
 		return nil, err
 	}
-	if err := checkCommit(ctx, repo, b); err != nil {
-		return abort(err)
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return abort(err)
 	}
 	if err := hooks.fault(StageBeforeWorktreeAdd); err != nil {
 		return nil, err
 	}
-	if err := repo.WorktreeAddDetached(ctx, path, b.Commit); err != nil {
+	if err := checkouts.Add(ctx, path, b); err != nil {
 		return abort(err)
 	}
 	if err := hooks.fault(StageAfterWorktreeAdd); err != nil {
@@ -120,34 +128,11 @@ func Prepare(ctx context.Context, repo *gitx.Repo, runtimeDir string, b Binding,
 	return w, nil
 }
 
-// checkCommit loads the bound commit and applies the three binding
-// conditions. A tree-only mismatch is reported as tree_mismatch; any other
-// failure as binding_mismatch. Both carry the three conditions.
-func checkCommit(ctx context.Context, repo *gitx.Repo, b Binding) error {
-	c, err := repo.ReadCommit(ctx, b.Commit)
-	if err != nil {
-		return err
-	}
-	res := verify.CheckBinding(c, b.Manifest, schema.ChangeManifest{Tree: b.Tree, BaseCommit: b.BaseCommit})
-	if res.OK() {
-		return nil
-	}
-	code, msg := "binding_mismatch", "commit %s is not bound to manifest %s"
-	if res.Tree == verify.BindingMismatch && res.Trailer == verify.BindingOK && res.Parent == verify.BindingOK {
-		code, msg = "tree_mismatch", "commit %s has a different tree than manifest %s"
-	}
-	return apierr.New(code, msg, b.Commit, b.Manifest).With("trailer", res.Trailer).With("tree", res.Tree).With("parent", res.Parent).With("detail", res.Detail)
-}
-
-// verifyCheckout asserts HEAD's tree and the tracked working files both
-// equal the manifest tree.
+// verifyCheckout asserts the checkout is of the binding and its tracked
+// working files equal the manifest tree.
 func (w *Worktree) verifyCheckout(ctx context.Context) error {
-	head, err := gitx.Run(ctx, w.Path, nil, nil, "rev-parse", "HEAD^{tree}")
-	if err != nil {
+	if err := w.checkouts.Verify(ctx, w.Path, w.Binding); err != nil {
 		return err
-	}
-	if got := strings.TrimSpace(string(head)); got != w.Binding.Tree {
-		return apierr.New("tree_mismatch", "verification checkout tree %s differs from manifest tree %s", got, w.Binding.Tree)
 	}
 	got, err := w.TrackedTree(ctx)
 	if err != nil {
@@ -160,48 +145,25 @@ func (w *Worktree) verifyCheckout(ctx context.Context) error {
 	return nil
 }
 
-// TrackedTree returns the tree of HEAD with every tracked file's current
-// content, mode and presence applied. It uses a temporary index, so the
-// real index is untouched, and ignores untracked and ignored files.
+// TrackedTree returns the tree of the tracked content now in the checkout,
+// ignoring untracked and ignored files.
 func (w *Worktree) TrackedTree(ctx context.Context) (string, error) {
-	dir, err := os.MkdirTemp("", "ledger-tracked-*")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(dir)
-	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
-	for _, args := range [][]string{{"read-tree", "HEAD"}, {"add", "-u"}} {
-		if _, err := gitx.Run(ctx, w.Path, nil, env, args...); err != nil {
-			return "", err
-		}
-	}
-	out, err := gitx.Run(ctx, w.Path, nil, env, "write-tree")
-	return strings.TrimSpace(string(out)), err
+	return w.checkouts.Tree(ctx, w.Path, w.Binding)
 }
 
-// Remove deletes the worktree. It refuses any path that is not exactly
+// Remove deletes the checkout. It refuses any path that is not exactly
 // <runtimeDir>/verify/<run id> for this run.
 func (w *Worktree) Remove(ctx context.Context) error {
-	return removeVerifyWorktree(ctx, w.repo, w.runtimeDir, w.RunID, w.Path)
+	return removeVerifyWorktree(ctx, w.checkouts, w.runtimeDir, w.RunID, w.Path)
 }
 
 // removeVerifyWorktree removes path only if it is the run's own verify path
-// and git lists it as a detached worktree there. Anything else is left alone.
-func removeVerifyWorktree(ctx context.Context, repo *gitx.Repo, runtimeDir, runID, path string) error {
+// and the checkout source made it. Anything else is left alone.
+func removeVerifyWorktree(ctx context.Context, checkouts Checkouts, runtimeDir, runID, path string) error {
 	if !runIDPattern.MatchString(runID) || filepath.Clean(path) != VerifyPath(runtimeDir, runID) {
 		return apierr.New("unsafe_worktree_path", "%s is not the verification path of run %s", path, runID)
 	}
-	listed, err := repo.Worktrees(ctx)
-	if err != nil {
-		return err
-	}
-	want := realPath(path)
-	for _, wt := range listed {
-		if realPath(wt.Path) == want && wt.Detached {
-			return repo.WorktreeRemove(ctx, wt.Path)
-		}
-	}
-	return nil
+	return checkouts.Remove(ctx, path)
 }
 
 // realPath resolves symlinks in the longest existing prefix of p.
@@ -217,10 +179,10 @@ func realPath(p string) string {
 }
 
 // Reconcile marks every non-terminal run interrupted and removes the
-// verification worktree it left behind, only when the journalled path is the
-// run's own verify path and git lists it as a detached worktree. It returns
+// verification checkout it left behind, only when the journalled path is the
+// run's own verify path and the checkout source made it. It returns
 // the journals it interrupted. No attestation is ever created here.
-func Reconcile(ctx context.Context, repo *gitx.Repo, runtimeDir string) ([]Journal, error) {
+func Reconcile(ctx context.Context, checkouts Checkouts, runtimeDir string) ([]Journal, error) {
 	journals, err := ListJournals(runtimeDir)
 	if err != nil {
 		return nil, err
@@ -230,7 +192,7 @@ func Reconcile(ctx context.Context, repo *gitx.Repo, runtimeDir string) ([]Journ
 		if j.Terminal() {
 			continue
 		}
-		if err := removeVerifyWorktree(ctx, repo, runtimeDir, j.RunID, j.WorktreePath); err != nil && !apierr.HasCode(err, "unsafe_worktree_path") {
+		if err := removeVerifyWorktree(ctx, checkouts, runtimeDir, j.RunID, j.WorktreePath); err != nil && !apierr.HasCode(err, "unsafe_worktree_path") {
 			return nil, err
 		}
 		j.State, j.Reason = StateInterrupted, "daemon_restart"
