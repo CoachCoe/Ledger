@@ -244,6 +244,8 @@ func (e *Engine) Compare(ctx context.Context, src Source, base, candidate string
 	for _, edge := range edges {
 		r.Edges = append(r.Edges, edge)
 	}
+	revise(r.Written, after, before)
+	revise(r.Read, after, before)
 	sortSymbols(r.Written)
 	sortSymbols(r.Read)
 	slices.SortFunc(r.Edges, func(a, b Edge) int { return strings.Compare(Key(a.Source)+Key(a.Target), Key(b.Source)+Key(b.Target)) })
@@ -259,6 +261,24 @@ func (e *Engine) Compare(ctx context.Context, src Source, base, candidate string
 	})
 	return r, nil
 }
+
+// revise sets each symbol's Revision to its span hash in the first project
+// that declares it: the candidate, or the base for a deleted declaration.
+func revise(syms []schema.Symbol, projects ...map[string]Analysis) {
+	for i := range syms {
+		key := Key(syms[i])
+	search:
+		for _, project := range projects {
+			for _, d := range project[syms[i].Path].Declarations {
+				if Key(d.Symbol) == key {
+					syms[i].Revision = d.Revision
+					break search
+				}
+			}
+		}
+	}
+}
+
 func sortSymbols(s []schema.Symbol) {
 	slices.SortFunc(s, func(a, b schema.Symbol) int { return strings.Compare(Key(a), Key(b)) })
 }

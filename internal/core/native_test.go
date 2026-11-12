@@ -13,9 +13,12 @@ import (
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
+	"github.com/CoachCoe/Ledger/internal/oplog"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/store"
+	"github.com/CoachCoe/Ledger/internal/symbols"
+	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 // nativeFixture is a native repository whose initial tree holds a.ts.
@@ -116,5 +119,52 @@ func TestNativeForkClonesTheLineHead(t *testing.T) {
 	}
 	if _, err := s.Handle(ctx, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"], "base_tree": "e" + tree[1:]})); !apierr.HasCode(err, "base_unavailable") {
 		t.Fatalf("fork from a missing tree: %v", err)
+	}
+}
+
+// A native proposal pins the operation log entry that froze its tree and
+// the symbol maps of that tree (P2-AC-013).
+func TestNativeProposePinsTheOperationLog(t *testing.T) {
+	s, base := nativeFixture(t)
+	intent := call(t, s, requestV2("intent.create", "", judgment("native")))["intent_id"].(string)
+	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	sid := sess["session_id"].(string)
+	fork := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+	wid := fork["workspace_id"].(string)
+	if err := os.WriteFile(filepath.Join(fork["path"].(string), "a.ts"), []byte("export function x() { return 2 }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prop := call(t, s, requestV2("workspace.propose", sid, map[string]any{"workspace_id": wid}))
+	o, err := s.Store.Read(prop["manifest"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m schema.ChangeManifest
+	if err := o.Decode(&m); err != nil || o.Envelope.SchemaVersion != 2 {
+		t.Fatalf("manifest v%d, %v", o.Envelope.SchemaVersion, err)
+	}
+	if m.BaseTree != base || m.Tree != prop["tree"] || m.Tree == base || m.OpHead != prop["op_head"] || len(m.Files) != 1 || m.Files[0] != "a.ts" {
+		t.Fatalf("manifest %+v, proposal %v", m, prop)
+	}
+	entries, err := s.Provider.(workspace.NativeProvider).Workspaces.Log(wid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := entries[len(entries)-1]
+	if h, err := oplog.Hash(last); err != nil || h != m.OpHead || last.Kind != "propose" || last.Tree != m.Tree {
+		t.Fatalf("op_head %s, last entry %+v (%s), %v", m.OpHead, last, h, err)
+	}
+	if len(m.SymbolsWritten) == 0 || m.SymbolsWritten[0].Revision == "" {
+		t.Fatalf("written symbols %+v", m.SymbolsWritten)
+	}
+	id := m.SymbolMaps["a.ts"]
+	if same, err := symbols.Recompute(s.Objects, id); err != nil || !same {
+		t.Fatalf("symbol map %s: %v, %v", id, same, err)
+	}
+	status := call(t, s, requestV2("system.status", "", map[string]any{}))
+	for _, sub := range status["subjects"].([]any) {
+		if sub := sub.(map[string]any); sub["id"] == wid && sub["state"] != "proposed" {
+			t.Fatalf("workspace %v", sub)
+		}
 	}
 }

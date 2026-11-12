@@ -843,6 +843,9 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err != nil {
 		return prepared{}, err
 	}
+	if s.native() {
+		return s.proposeNative(ctx, c, sub, w, snap, recordFiles, analysis, in)
+	}
 	manifest, err := s.seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: recordFiles, SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written}, c.signer)
 	if err != nil {
 		return prepared{}, err
@@ -882,6 +885,37 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 			{Kind: record.EffectRef, Ref: "refs/ledger/proposals/" + manifest.Hash, New: commit},
 			{Kind: record.EffectRef, Ref: branch, Old: old, New: commit},
 		},
+	}, err
+}
+
+// proposeNative signs a v2 manifest of the frozen tree. The symbol maps it
+// names are made durable first, and op_head pins the operation log entry
+// that froze the tree (ADR 0026).
+func (s *Service) proposeNative(ctx context.Context, c *invocation, sub *index.Subject, w schema.Workspace, snap workspace.Snapshot, files []string, analysis symbols.Summary, in proposeInput) (prepared, error) {
+	maps, err := s.symbolEngine.Maps(ctx, s.symbolSource(), snap.Tree)
+	if err != nil {
+		return prepared{}, err
+	}
+	b := s.Objects.Batch()
+	ids := make(map[string]string, len(maps))
+	for p, m := range maps {
+		if ids[p], err = m.Put(b); err != nil {
+			return prepared{}, err
+		}
+	}
+	if err := b.Commit(); err != nil {
+		return prepared{}, err
+	}
+	manifest, err := s.seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID,
+		AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseTree: w.BaseTree, Tree: snap.Tree, Files: files,
+		SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written, OpHead: snap.OpHead, SymbolMaps: ids}, c.signer)
+	if err != nil {
+		return prepared{}, err
+	}
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, "proposed", nil, c.signer.ID()), c.signer)
+	return prepared{
+		result:  map[string]string{"workspace_id": w.ID, "change_id": w.ChangeID, "manifest": manifest.Hash, "tree": snap.Tree, "op_head": snap.OpHead},
+		records: []envelope.Object{manifest, event},
 	}, err
 }
 

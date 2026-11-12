@@ -2,6 +2,7 @@ package symbols
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -96,5 +97,69 @@ func TestStoreSourceMatchesGit(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fromGit, fromStore) {
 		t.Fatalf("sources disagree:\n git   %+v\n store %+v", fromGit, fromStore)
+	}
+}
+
+// Engine.Maps gives the maps MapFile computes from the bytes, so stored
+// maps recompute exactly (P2-AC-005).
+func TestEngineMapsMatchMapFile(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "objects"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := map[string]string{
+		"src/a.ts":   "export function f() { return 1 }\n",
+		"src/b.py":   "def g():\n    return 2\n",
+		"README.md":  "notes\n",
+		"src/bad.ts": "export function (\n",
+	}
+	b := s.Batch()
+	var list []store.File
+	for p, c := range content {
+		id, err := b.PutFile([]byte(c))
+		if err != nil {
+			t.Fatal(err)
+		}
+		list = append(list, store.File{Path: p, Type: store.TypeFile, ID: id})
+	}
+	tree, err := b.BuildTree(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e Engine
+	got, err := e.Maps(ctx, StoreSource{Store: s}, tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["README.md"]; ok || len(got) != 3 {
+		t.Fatalf("maps for %v", slices.Sorted(maps.Keys(got)))
+	}
+	ids := []string{}
+	for _, f := range list {
+		want, ok, err := MapFile(f.Path, f.ID, []byte(content[f.Path]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			continue
+		}
+		id, err := got[f.Path].Put(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantID, err := want.Put(b)
+		if err != nil || id != wantID {
+			t.Fatalf("%s: map %s, MapFile %s, %v", f.Path, id, wantID, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := b.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if same, err := Recompute(s, id); err != nil || !same {
+			t.Fatalf("%s does not recompute: %v", id, err)
+		}
 	}
 }

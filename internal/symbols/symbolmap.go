@@ -2,6 +2,7 @@ package symbols
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"runtime/debug"
 	"sync"
@@ -106,6 +107,10 @@ func MapFile(p, blob string, src []byte) (Map, bool, error) {
 	if err != nil {
 		return Map{}, false, err
 	}
+	return newMap(analyzer, blob, p, a), true, nil
+}
+
+func newMap(analyzer Analyzer, blob, p string, a Analysis) Map {
 	m := Map{Analyzer: analyzer, Blob: blob, Path: p, Declarations: a.Declarations, References: a.References, Imports: a.Imports, Fallback: a.Fallback}
 	if m.Declarations == nil {
 		m.Declarations = []Declaration{}
@@ -116,7 +121,41 @@ func MapFile(p, blob string, src []byte) (Map, bool, error) {
 	if m.Imports == nil {
 		m.Imports = []Import{}
 	}
-	return m, true, nil
+	return m
+}
+
+// unanalyzed are the fallbacks load assigns without running an analyzer;
+// a file with one of them has no map, as MapFile would give it none.
+var unanalyzed = map[string]bool{"ambiguous_path": true, "non_regular_file": true, "unsupported_file": true, "source_too_large": true}
+
+// Maps returns the map MapFile would make for every analyzed file in tree,
+// by NFC path, from the engine's cached analyses.
+func (e *Engine) Maps(ctx context.Context, src Source, tree string) (map[string]Map, error) {
+	entries, err := src.Entries(ctx, tree)
+	if err != nil {
+		return nil, err
+	}
+	analyses, err := e.load(ctx, src, tree)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]Map{}
+	for _, entry := range entries {
+		p := norm.NFC.String(entry.Path)
+		a, ok := analyses[p]
+		if !ok || unanalyzed[a.Fallback] {
+			continue
+		}
+		analyzer, ok, err := CurrentAnalyzer(p)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		out[p] = newMap(analyzer, entry.ID, p, a)
+	}
+	return out, nil
 }
 
 func (m Map) encode() ([]byte, error) { return canon.Marshal(m) }
