@@ -7,41 +7,35 @@ import (
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/capability"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
-type treeEntry struct{ mode, oid string }
+type treeEntry struct {
+	link bool
+	id   string
+}
 
 // Violations authorizes the frozen candidate and base trees, never live disk
-// symlinks. Both sides matter for deletion, replacement and rename. Git trees
+// symlinks. Both sides matter for deletion, replacement and rename. Trees
 // contain no directory symlinks: resolution walks every component explicitly.
-func Violations(ctx context.Context, dir, base string, snap Snapshot, chain []schema.Capability, sensitive bool, at time.Time) (map[string]error, error) {
+func Violations(ctx context.Context, src TreeSource, base string, snap Snapshot, chain []schema.Capability, sensitive bool, at time.Time) (map[string]error, error) {
 	bad := map[string]error{}
 	trees := []map[string]treeEntry{}
 	for _, tree := range []string{base, snap.Tree} {
-		raw, err := gitx.Run(ctx, dir, nil, nil, "ls-tree", "-r", "-z", tree, "--")
+		list, err := src.Entries(ctx, tree)
 		if err != nil {
 			return nil, err
 		}
 		entries := map[string]treeEntry{}
-		for row := range strings.SplitSeq(string(raw), "\x00") {
-			if row == "" {
-				continue
-			}
-			meta, name, ok := strings.Cut(row, "\t")
-			fields := strings.Fields(meta)
-			if !ok || len(fields) != 3 {
-				return nil, apierr.New("git_output", "malformed tree")
-			}
-			normalized, err := capability.Normalize(name, sensitive)
+		for _, e := range list {
+			normalized, err := capability.Normalize(e.Path, sensitive)
 			if err != nil {
 				continue
 			} // unmodified unsupported names cannot be traversal components
 			if _, exists := entries[normalized]; exists {
-				return nil, apierr.New("path_alias", "ambiguous tree path %q", name)
+				return nil, apierr.New("path_alias", "ambiguous tree path %q", e.Path)
 			}
-			entries[normalized] = treeEntry{fields[0], fields[2]}
+			entries[normalized] = treeEntry{e.Link, e.ID}
 		}
 		trees = append(trees, entries)
 	}
@@ -55,7 +49,7 @@ func Violations(ctx context.Context, dir, base string, snap Snapshot, chain []sc
 			if _, exists := entries[normalized]; !exists {
 				continue
 			}
-			resolved, err := resolveTreePath(ctx, dir, p, entries, sensitive)
+			resolved, err := resolveTreePath(ctx, src, p, entries, sensitive)
 			if err == nil {
 				err = capability.Authorize(chain, resolved, sensitive, at)
 			}
@@ -70,7 +64,7 @@ func Violations(ctx context.Context, dir, base string, snap Snapshot, chain []sc
 
 // Resolve components in order: cleaning `link/../file` before following link
 // would incorrectly erase a symlink that leads outside the workspace.
-func resolveTreePath(ctx context.Context, dir, p string, entries map[string]treeEntry, sensitive bool) (string, error) {
+func resolveTreePath(ctx context.Context, src TreeSource, p string, entries map[string]treeEntry, sensitive bool) (string, error) {
 	pending := strings.Split(p, "/")
 	stack := []string{}
 	links := 0
@@ -94,18 +88,17 @@ func resolveTreePath(ctx context.Context, dir, p string, entries map[string]tree
 		stack = append(stack, normalized)
 		prefix := strings.Join(stack, "/")
 		entry := entries[prefix]
-		if entry.mode != "120000" {
+		if !entry.link {
 			continue
 		}
 		links++
 		if links > 40 {
 			return "", apierr.New("scope_violation", "symlink cycle at %q", prefix)
 		}
-		raw, err := gitx.Run(ctx, dir, nil, nil, "cat-file", "blob", entry.oid)
+		target, err := src.LinkTarget(ctx, entry.id)
 		if err != nil {
 			return "", err
 		}
-		target := string(raw)
 		if target == "" || strings.HasPrefix(target, "/") || strings.ContainsAny(target, "\\:\x00") {
 			return "", apierr.New("scope_violation", "symlink %q has unsafe target", prefix)
 		}

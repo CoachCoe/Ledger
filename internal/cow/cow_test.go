@@ -303,3 +303,65 @@ func TestManyWorkspacesFromOneBase(t *testing.T) {
 		t.Fatal("remove left the checkout")
 	}
 }
+
+func TestProposeRecordsADurableEntry(t *testing.T) {
+	f := setup(t)
+	id := wsp(1)
+	if _, err := f.m.Create(id, f.base, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	writeFiles(t, f.m.Path(id), map[string]string{"src/index.ts": "export const a = 3\n"})
+	e, h, err := f.m.Propose(id, nil)
+	if err != nil || e.Kind != oplog.Propose || e.Tree == f.base || e.Base != f.base {
+		t.Fatalf("propose %+v, %v", e, err)
+	}
+	// Proposing the same tree again still records the proposal.
+	again, h2, err := f.m.Propose(id, nil)
+	if err != nil || again.Tree != e.Tree || h2 == h {
+		t.Fatalf("second propose %+v, %v", again, err)
+	}
+	entries, err := f.m.Log(id)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("%d log entries, %v", len(entries), err)
+	}
+}
+
+func TestCreateRebuildsAnOrphanedCheckout(t *testing.T) {
+	f := setup(t)
+	id := wsp(1)
+	writeFiles(t, f.m.Path(id), map[string]string{"half-cloned.txt": "x"})
+	if _, err := f.m.Create(id, f.base, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(f.m.Path(id), "half-cloned.txt")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("orphaned checkout kept: %v", err)
+	}
+	if _, err := f.m.Create(id, f.base, nil); !apierr.HasCode(err, "workspace_exists") {
+		t.Fatalf("second create: %v", err)
+	}
+}
+
+func TestIgnoredFilesSkipDependencyTrees(t *testing.T) {
+	f := setup(t)
+	id := wsp(1)
+	if _, err := f.m.Create(id, f.base, nil); err != nil {
+		t.Fatal(err)
+	}
+	ws := f.m.Path(id)
+	if got, err := f.m.IgnoredFiles(id); err != nil || len(got) != 0 {
+		t.Fatalf("fresh workspace has ignored files %v, %v", got, err)
+	}
+	writeFiles(t, ws, map[string]string{"dist/out.js": "built\n", "debug.log": "x", "src/index.ts": "export const a = 4\n"})
+	if err := f.m.Detach(id, ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, ws, map[string]string{"node_modules/extra/index.js": "x"})
+	got, err := f.m.IgnoredFiles(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(got) != "[debug.log dist/out.js]" {
+		t.Fatalf("ignored files %v", got)
+	}
+}

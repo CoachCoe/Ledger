@@ -209,15 +209,15 @@ func TestM2FrozenSymlinkResolution(t *testing.T) {
 		}
 		return strings.TrimSpace(string(raw))
 	}
-	entries := map[string]treeEntry{"src/caf\u00e9": {mode: "120000", oid: blob("../../outside")}, "src/escape": {mode: "120000", oid: blob("../../outside")}, "src/safe": {mode: "100644"}}
+	entries := map[string]treeEntry{"src/caf\u00e9": {link: true, id: blob("../../outside")}, "src/escape": {link: true, id: blob("../../outside")}, "src/safe": {}}
 	for _, p := range []string{"src/Cafe\u0301", "src/escape/../safe"} {
-		_, err := resolveTreePath(ctx, dir, p, entries, false)
+		_, err := resolveTreePath(ctx, GitTrees{Dir: dir}, p, entries, false)
 		if err == nil {
 			t.Fatal("allowed aliased or cleaned escape", p)
 		}
 	}
-	entries["src/link"] = treeEntry{mode: "120000", oid: blob("../src/safe")}
-	resolved, err := resolveTreePath(ctx, dir, "src/link", entries, true)
+	entries["src/link"] = treeEntry{link: true, id: blob("../src/safe")}
+	resolved, err := resolveTreePath(ctx, GitTrees{Dir: dir}, "src/link", entries, true)
 	if err != nil || resolved != "src/safe" {
 		t.Fatalf("safe relative link: %q %v", resolved, err)
 	}

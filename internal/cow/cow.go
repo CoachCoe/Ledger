@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -217,6 +218,12 @@ func (m *Manager) Create(id, base string, session *string) (oplog.Entry, error) 
 	if _, _, ok := l.Head(); ok {
 		return oplog.Entry{}, apierr.New("workspace_exists", "workspace %s already exists", id)
 	}
+	// A checkout without a log entry is left by a crash during an earlier
+	// Create. The workspace was never handed out, so nothing was edited in
+	// it and it is rebuilt.
+	if err := os.RemoveAll(m.Path(id)); err != nil {
+		return oplog.Entry{}, err
+	}
 	if err := m.ensureBase(base); err != nil {
 		return oplog.Entry{}, err
 	}
@@ -257,6 +264,12 @@ func (m *Manager) Snapshot(id, trigger string, session *string) (oplog.Entry, st
 	return m.snapshot(id, oplog.Snapshot, trigger, session)
 }
 
+// Wrote records the tree after a write through the API as a write entry.
+func (m *Manager) Wrote(id string, session *string) (oplog.Entry, string, bool, error) {
+	defer m.lock(id)()
+	return m.snapshot(id, oplog.Write, "api", session)
+}
+
 func (m *Manager) snapshot(id, kind, trigger string, session *string) (oplog.Entry, string, bool, error) {
 	l, err := m.log(id)
 	if err != nil {
@@ -278,6 +291,73 @@ func (m *Manager) snapshot(id, kind, trigger string, session *string) (oplog.Ent
 		}
 	}
 	return l.Append(oplog.Entry{Kind: kind, Tree: tree, Base: head.Base, Trigger: trigger, Session: session}, kind == oplog.Propose)
+}
+
+// Propose captures the workspace twice and records the tree as a durable
+// propose entry only when both captures agree, retrying a bounded number of
+// times. It detects edits during capture; it does not claim an atomic
+// filesystem snapshot.
+func (m *Manager) Propose(id string, session *string) (oplog.Entry, string, error) {
+	defer m.lock(id)()
+	l, err := m.log(id)
+	if err != nil {
+		return oplog.Entry{}, "", err
+	}
+	head, _, ok := l.Head()
+	if !ok {
+		return oplog.Entry{}, "", apierr.New("workspace_unknown", "workspace %s does not exist", id)
+	}
+	for range 3 {
+		first, _, err := m.capture(id)
+		if err != nil {
+			return oplog.Entry{}, "", err
+		}
+		second, files, err := m.capture(id)
+		if err != nil {
+			return oplog.Entry{}, "", err
+		}
+		if first != second {
+			continue
+		}
+		if changed, err := m.manifestsChanged(head.Base, files); err != nil {
+			return oplog.Entry{}, "", err
+		} else if changed {
+			if err := m.detach(id, ""); err != nil {
+				return oplog.Entry{}, "", err
+			}
+		}
+		e, h, _, err := l.Append(oplog.Entry{Kind: oplog.Propose, Tree: second, Base: head.Base, Trigger: "propose", Session: session}, true)
+		return e, h, err
+	}
+	return oplog.Entry{}, "", apierr.New("concurrent_edit", "files changed during proposal capture; retry when writes settle")
+}
+
+// IgnoredFiles lists the ignored files of a workspace, which a snapshot does
+// not capture. Dependency directories are skipped, linked or detached: they
+// are rebuilt from their manifests. Removing a workspace that has any other
+// ignored file would lose it.
+func (m *Manager) IgnoredFiles(id string) ([]string, error) {
+	root := m.Path(id)
+	rules := m.rules(root)
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == root {
+			return err
+		}
+		if d.IsDir() && slices.Contains(m.cfg.DepDirs, d.Name()) {
+			return filepath.SkipDir
+		}
+		rel := filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator)))
+		if d.IsDir() || m.isTracked(id, rel) {
+			return nil
+		}
+		ignored, err := rules.Ignored(rel, false)
+		if ignored {
+			out = append(out, rel)
+		}
+		return err
+	})
+	return out, err
 }
 
 // capture scans the workspace and makes its tree durable.

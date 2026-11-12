@@ -19,6 +19,9 @@ type Snapshot struct {
 	Tree   string            `json:"tree"`
 	Files  []string          `json:"files"`
 	Status map[string]string `json:"status"`
+	// OpHead is the operation log entry that recorded Tree, in a native
+	// workspace.
+	OpHead string `json:"-"`
 }
 
 // Capture observes the complete difference from a fixed base, including

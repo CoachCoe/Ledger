@@ -13,6 +13,9 @@ const (
 	EffectRef            = "ref"
 	EffectWorktreeAdd    = "worktree_add"
 	EffectWorktreeRemove = "worktree_remove"
+	// Native repositories create and remove copy-on-write workspaces.
+	EffectWorkspaceCreate = "workspace_create"
+	EffectWorkspaceRemove = "workspace_remove"
 )
 
 // Effect is a frozen external side effect recorded before execution.
@@ -29,6 +32,8 @@ type Effect struct {
 	// candidate) whose exact content may be removed even though uncommitted.
 	Tree  string `json:"tree,omitempty"`
 	After bool   `json:"after"`
+	// Session is who a native workspace creation is recorded for.
+	Session string `json:"session,omitempty"`
 }
 
 // EffectsFunc is a BuildFunc that also returns the operation's effects.

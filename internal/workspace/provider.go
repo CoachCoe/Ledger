@@ -1,4 +1,6 @@
-// Package workspace implements detached Git workspaces and fixed-base snapshots.
+// Package workspace implements workspaces and fixed-base snapshots: detached
+// Git worktrees for Phase 1 repositories and copy-on-write workspaces over
+// the native store (ADR 0026).
 package workspace
 
 import (
@@ -22,11 +24,13 @@ type WorkspaceProvider interface {
 	Path(id string) string
 	// Snapshot captures w through the persistent private index indexFile.
 	Snapshot(ctx context.Context, w schema.Workspace, indexFile string) (Snapshot, error)
-	// StableSnapshot captures w for a proposal, using scratch indexes in
-	// dir to detect files changing during the capture.
-	StableSnapshot(ctx context.Context, w schema.Workspace, dir string) (Snapshot, error)
+	// StableSnapshot captures w for a proposal by session, using scratch
+	// space in dir to detect files changing during the capture.
+	StableSnapshot(ctx context.Context, w schema.Workspace, dir, session string) (Snapshot, error)
 	// Apply performs a journaled workspace or ref effect idempotently.
 	Apply(ctx context.Context, e record.Effect) error
+	// Trees reads the frozen trees that snapshots name.
+	Trees() TreeSource
 }
 
 // GitProvider implements WorkspaceProvider with detached Git worktrees.
@@ -173,8 +177,10 @@ func (p GitProvider) Snapshot(ctx context.Context, w schema.Workspace, indexFile
 	return Capture(ctx, path, w.BaseCommit, indexFile)
 }
 
+func (p GitProvider) Trees() TreeSource { return GitTrees{Dir: p.Repo.Dir} }
+
 // StableSnapshot is Snapshot for proposals; see the package function.
-func (p GitProvider) StableSnapshot(ctx context.Context, w schema.Workspace, dir string) (Snapshot, error) {
+func (p GitProvider) StableSnapshot(ctx context.Context, w schema.Workspace, dir, _ string) (Snapshot, error) {
 	path := p.Path(w.ID)
 	if err := p.validate(ctx, w.ID, path); err != nil {
 		return Snapshot{}, err

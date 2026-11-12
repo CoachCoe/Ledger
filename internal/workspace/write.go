@@ -25,11 +25,17 @@ type TextWriter interface {
 // symlink or writes Git/Ledger metadata. A retry after replacement succeeds if
 // the exact desired bytes are already present; no signed history is implied.
 func (p GitProvider) WriteText(ctx context.Context, w schema.Workspace, name, content string, expected *string) (string, error) {
-	if len(content) > 262144 || !utf8.ValidString(content) {
-		return "", apierr.New("invalid_content", "text must be valid UTF-8 and at most 256 KiB")
-	}
 	if err := p.validate(ctx, w.ID, p.Path(w.ID)); err != nil {
 		return "", err
+	}
+	return writeText(p.Path(w.ID), name, content, expected)
+}
+
+// writeText replaces name under the workspace root at workspaceDir; see
+// WriteText.
+func writeText(workspaceDir, name, content string, expected *string) (string, error) {
+	if len(content) > 262144 || !utf8.ValidString(content) {
+		return "", apierr.New("invalid_content", "text must be valid UTF-8 and at most 256 KiB")
 	}
 	n, err := capability.Normalize(name, true)
 	if err != nil {
@@ -43,7 +49,7 @@ func (p GitProvider) WriteText(ctx context.Context, w schema.Workspace, name, co
 			return "", apierr.New("invalid_path", "metadata cannot be edited")
 		}
 	}
-	root, err := os.OpenRoot(p.Path(w.ID))
+	root, err := os.OpenRoot(workspaceDir)
 	if err != nil {
 		return "", err
 	}

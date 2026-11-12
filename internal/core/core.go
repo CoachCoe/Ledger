@@ -116,6 +116,10 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 
 func (s *Service) runtimeDir() string { return filepath.Join(s.Store.Dir, "runtime") }
 
+// workspaceBase is the fixed base a workspace's snapshots are compared to:
+// its store tree in a native repository, its commit in a Phase 1 one.
+func workspaceBase(w schema.Workspace) string { return cmp.Or(w.BaseTree, w.BaseCommit) }
+
 // native reports whether the service runs over a native store (ADR 0025)
 // rather than a Phase 1 Git repository.
 func (s *Service) native() bool { return s.Store.Repo == nil }
@@ -746,7 +750,7 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err := s.leaf(ctx, w.IntentID); err != nil {
 		return prepared{}, err
 	}
-	snap, err := s.Provider.StableSnapshot(ctx, w, s.runtimeDir())
+	snap, err := s.Provider.StableSnapshot(ctx, w, s.runtimeDir(), c.SessionID)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -757,7 +761,7 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err != nil {
 		return prepared{}, err
 	}
-	bad, err := workspace.Violations(ctx, s.Provider.Path(w.ID), w.BaseCommit, snap, chain, s.caseSensitive, time.Now())
+	bad, err := workspace.Violations(ctx, s.Provider.Trees(), workspaceBase(w), snap, chain, s.caseSensitive, time.Now())
 	if err != nil {
 		return prepared{}, err
 	}
