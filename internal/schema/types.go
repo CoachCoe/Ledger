@@ -156,6 +156,8 @@ type Capability struct {
 	MayAddDependencies bool     `json:"may_add_dependencies"`
 	ExpiresAt          string   `json:"expires_at"`
 	CreatedAt          string   `json:"created_at"`
+	// MayAdvance is set only by schema_version 2 capabilities.
+	MayAdvance []string `json:"-"`
 }
 
 // Issuer is the root (Fingerprint set) or a parent capability
@@ -184,6 +186,9 @@ type Workspace struct {
 	ChangeID     string `json:"change_id"`
 	BaseCommit   string `json:"base_commit"`
 	CreatedAt    string `json:"created_at"`
+	// BaseTree and BaseLineAdvance replace BaseCommit in schema_version 2.
+	BaseTree        string  `json:"-"`
+	BaseLineAdvance *string `json:"-"`
 }
 
 type LifecycleEvent struct {
@@ -215,6 +220,8 @@ type Symbol struct {
 	Name          string  `json:"name"`
 	Kind          string  `json:"kind"`
 	Disambiguator *string `json:"disambiguator"`
+	// Revision, the declaration span hash, is recorded from schema_version 2.
+	Revision string `json:"-"`
 }
 
 type ChangeManifest struct {
@@ -229,6 +236,11 @@ type ChangeManifest struct {
 	Files          []string `json:"files"`
 	SymbolsRead    []Symbol `json:"symbols_read"`
 	SymbolsWritten []Symbol `json:"symbols_written"`
+	// Schema_version 2 replaces BaseCommit with BaseTree, names a store
+	// tree in Tree, and adds OpHead and SymbolMaps.
+	BaseTree   string            `json:"-"`
+	OpHead     string            `json:"-"`
+	SymbolMaps map[string]string `json:"-"`
 }
 
 type Phase struct {
@@ -266,6 +278,8 @@ type EvidenceAttestation struct {
 	OutputBytes     int64       `json:"output_bytes"`
 	OutputTruncated bool        `json:"output_truncated"`
 	Isolation       string      `json:"isolation"`
+	// Tree replaces Commit and ExecutedTree in schema_version 2.
+	Tree string `json:"-"`
 }
 
 type CriterionStatus struct {
@@ -337,6 +351,8 @@ type SpeculationRun struct {
 	BaseCommit       string             `json:"base_commit"`
 	Deadline         string             `json:"deadline"`
 	CreatedAt        string             `json:"created_at"`
+	// BaseTree replaces BaseCommit in schema_version 2.
+	BaseTree string `json:"-"`
 }
 
 type OperationReceipt struct {

@@ -95,14 +95,14 @@ func Resolve(ctx context.Context, idx *index.Index, in ResolveInput) (Binding, e
 
 // pinnedChecks groups the intent's check criteria by pinned definition hash.
 func pinnedChecks(ctx context.Context, idx *index.Index, intentID string) ([]CheckRef, error) {
-	kind, raw, err := idx.Creation(ctx, intentID)
+	cr, err := idx.Creation(ctx, intentID)
 	if err != nil {
 		return nil, err
 	}
-	if kind != schema.KindIntent {
+	if cr.Kind != schema.KindIntent {
 		return nil, apierr.New("unknown_entity", "no intent %s", intentID)
 	}
-	intent, err := decodeIntent(raw)
+	intent, err := decodeIntent(cr.Payload)
 	if err != nil {
 		return nil, err
 	}

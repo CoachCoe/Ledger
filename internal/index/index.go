@@ -31,7 +31,8 @@ var (
 const ddl = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS objects (
-	hash TEXT PRIMARY KEY, kind TEXT NOT NULL, signer TEXT NOT NULL, payload TEXT NOT NULL);
+	hash TEXT PRIMARY KEY, kind TEXT NOT NULL, signer TEXT NOT NULL, payload TEXT NOT NULL,
+	version INTEGER NOT NULL DEFAULT 1);
 CREATE INDEX IF NOT EXISTS objects_intent_parent ON objects (json_extract(payload, '$.parent_id'))
 	WHERE kind = 'intent';
 CREATE INDEX IF NOT EXISTS objects_manifest_intent ON objects (json_extract(payload, '$.intent_id'))
@@ -58,7 +59,7 @@ CREATE TABLE IF NOT EXISTS operations (
 CREATE UNIQUE INDEX IF NOT EXISTS operations_receipt ON operations (receipt);
 CREATE TABLE IF NOT EXISTS creations (
 	entity_id TEXT NOT NULL, hash TEXT NOT NULL, kind TEXT NOT NULL, signer TEXT NOT NULL,
-	payload TEXT NOT NULL, PRIMARY KEY (entity_id, hash));
+	payload TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (entity_id, hash));
 CREATE TABLE IF NOT EXISTS events (
 	hash TEXT PRIMARY KEY, subject_id TEXT NOT NULL, creation TEXT NOT NULL,
 	signer TEXT NOT NULL, payload TEXT NOT NULL);
@@ -143,6 +144,19 @@ func connect(path string) (*sql.DB, os.FileInfo, error) {
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(ddl); err != nil {
 		return fmt.Errorf("index: migrate: %w", err)
+	}
+	// Indexes built before schema_version 2 records hold only version 1
+	// payloads, which the column's default describes.
+	for _, table := range []string{"objects", "creations"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'version'`, table).Scan(&n); err != nil {
+			return fmt.Errorf("index: migrate: %w", err)
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN version INTEGER NOT NULL DEFAULT 1`); err != nil { //nolint:gosec // table is from the fixed list above
+				return fmt.Errorf("index: migrate: %w", err)
+			}
+		}
 	}
 	var v int
 	err := db.QueryRow(`SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'schema_version'`).Scan(&v)

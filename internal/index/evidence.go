@@ -29,7 +29,7 @@ func (x *Index) EvidenceFor(ctx context.Context, manifest string) ([]selection.E
 }
 
 func evidenceFor(ctx context.Context, q querier, manifest string) ([]selection.Evidence, error) {
-	rows, err := q.QueryContext(ctx, `SELECT hash, signer, payload FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
+	rows, err := q.QueryContext(ctx, `SELECT hash, signer, payload, version FROM objects WHERE kind='evidence_attestation' AND json_extract(payload,'$.manifest')=? ORDER BY hash`, manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (x *Index) EvidenceByHash(ctx context.Context, hashes []string) ([]selectio
 func evidenceByHash(ctx context.Context, q querier, hashes []string) ([]selection.Evidence, error) {
 	var raws []rawEvidence
 	for _, h := range hashes {
-		rows, err := q.QueryContext(ctx, `SELECT hash, signer, payload FROM objects WHERE hash=? AND kind='evidence_attestation'`, h)
+		rows, err := q.QueryContext(ctx, `SELECT hash, signer, payload, version FROM objects WHERE hash=? AND kind='evidence_attestation'`, h)
 		if err != nil {
 			return nil, err
 		}
@@ -74,10 +74,11 @@ func scanEvidence(rows *sql.Rows) ([]rawEvidence, error) {
 	for rows.Next() {
 		var r rawEvidence
 		var payload string
-		if err := rows.Scan(&r.hash, &r.signer, &payload); err != nil {
+		var version int
+		if err := rows.Scan(&r.hash, &r.signer, &payload, &version); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(payload), &r.att); err != nil {
+		if err := schema.Decode(version, schema.KindEvidenceAttestation, []byte(payload), &r.att); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

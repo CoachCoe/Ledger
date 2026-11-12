@@ -73,7 +73,7 @@ func (s *Service) evidenceIsIndependent(ctx context.Context, r api.Request) (any
 			"hash": e.Hash, "signer": e.Signer, "signer_kind": kind, "independent": e.Independent,
 			"reason": reason, "result": e.Att.Result, "category": e.Att.Category, "criteria": e.Att.Criteria,
 		})
-		if e.Independent && e.Att.Result == "pass" && e.Att.Commit == sb.Commit && e.Att.ExecutedTree == sb.Tree && selection.Consistent(e.Att) == "" {
+		if e.Independent && e.Att.Result == "pass" && e.Att.Commit == sb.Commit && e.Att.ExecutedOn() == sb.Tree && selection.Consistent(e.Att) == "" {
 			passing = append(passing, e.Hash)
 		}
 	}
@@ -138,7 +138,7 @@ func (s *Service) explicitSet(ctx context.Context, sb selection.Binding, hashes 
 		switch {
 		case !ok:
 			return nil, apierr.New("unknown_evidence", "no committed evidence attestation %s", h).With("evidence", h)
-		case e.Att.Manifest != sb.Manifest || e.Att.Commit != sb.Commit || e.Att.ExecutedTree != sb.Tree:
+		case e.Att.Manifest != sb.Manifest || e.Att.Commit != sb.Commit || e.Att.ExecutedOn() != sb.Tree:
 			return nil, apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", h, e.Att.Manifest, sb.Manifest).
 				With("evidence", h).With("evidence_manifest", e.Att.Manifest)
 		}

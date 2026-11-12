@@ -14,7 +14,7 @@ import (
 // ActiveWorkspaces returns the creation records of unconflicted open or
 // proposed workspaces, only those currently bound to owner if it is set.
 func (x *Index) ActiveWorkspaces(ctx context.Context, owner string) ([]schema.Workspace, error) {
-	rows, err := x.conn().QueryContext(ctx, `SELECT c.payload FROM subjects s JOIN creations c ON c.hash=s.creation
+	rows, err := x.conn().QueryContext(ctx, `SELECT c.payload, c.version FROM subjects s JOIN creations c ON c.hash=s.creation
  WHERE s.kind='workspace' AND s.state IN ('open','proposed') AND s.conflict='' AND (?='' OR s.owner=?) ORDER BY s.id`, owner, owner)
 	if err != nil {
 		return nil, err
@@ -23,11 +23,12 @@ func (x *Index) ActiveWorkspaces(ctx context.Context, owner string) ([]schema.Wo
 	var out []schema.Workspace
 	for rows.Next() {
 		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		var version int
+		if err := rows.Scan(&raw, &version); err != nil {
 			return nil, err
 		}
 		var w schema.Workspace
-		if err := json.Unmarshal(raw, &w); err != nil {
+		if err := schema.Decode(version, schema.KindWorkspace, raw, &w); err != nil {
 			return nil, err
 		}
 		out = append(out, w)
@@ -253,14 +254,15 @@ func (x *Index) Manifest(ctx context.Context, hash string) (schema.ChangeManifes
 func manifestIn(ctx context.Context, q querier, hash string) (schema.ChangeManifest, error) {
 	var m schema.ChangeManifest
 	var raw string
-	err := q.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='change_manifest'`, hash).Scan(&raw)
+	var version int
+	err := q.QueryRowContext(ctx, `SELECT payload, version FROM objects WHERE hash=? AND kind='change_manifest'`, hash).Scan(&raw, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, apierr.New("unknown_manifest", "no committed change manifest %s", hash)
 	}
 	if err != nil {
 		return m, err
 	}
-	return m, json.Unmarshal([]byte(raw), &m)
+	return m, schema.Decode(version, schema.KindChangeManifest, []byte(raw), &m)
 }
 
 // CheckDefinition returns a committed check definition record by hash.
@@ -284,15 +286,15 @@ func (x *Index) WorkspaceHolders(ctx context.Context, id string) ([]string, erro
 }
 
 func workspaceHolders(ctx context.Context, q querier, id string) ([]string, error) {
-	kind, raw, err := creation(ctx, q, id)
+	cr, err := creation(ctx, q, id)
 	if err != nil {
 		return nil, err
 	}
-	if kind != schema.KindWorkspace {
+	if cr.Kind != schema.KindWorkspace {
 		return nil, apierr.New("unknown_entity", "no workspace %s", id)
 	}
 	var w schema.Workspace
-	if err := json.Unmarshal(raw, &w); err != nil {
+	if err := cr.Decode(&w); err != nil {
 		return nil, err
 	}
 	holders := []string{w.SessionID}

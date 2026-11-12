@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json/v2"
 
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/capability"
@@ -81,19 +80,19 @@ func (s *Service) history(ctx context.Context, r api.Request) (any, error) {
 		switch record.Kind {
 		case schema.KindChangeManifest:
 			var m schema.ChangeManifest
-			if err := json.Unmarshal(record.Payload, &m); err != nil {
+			if err := record.Decode(&m); err != nil {
 				return nil, err
 			}
 			manifests[record.Hash] = m
 		case schema.KindSelectionDecision:
 			var d schema.SelectionDecision
-			if err := json.Unmarshal(record.Payload, &d); err != nil {
+			if err := record.Decode(&d); err != nil {
 				return nil, err
 			}
 			selected[d.Manifest] = append(selected[d.Manifest], record)
 		case schema.KindIntent:
 			var i schema.Intent
-			if err := json.Unmarshal(record.Payload, &i); err != nil {
+			if err := record.Decode(&i); err != nil {
 				return nil, err
 			}
 			intents[i.ID] = append(intents[i.ID], record)
@@ -112,7 +111,7 @@ func (s *Service) history(ctx context.Context, r api.Request) (any, error) {
 				continue
 			}
 			var a schema.AttemptRecord
-			if err := json.Unmarshal(record.Payload, &a); err != nil {
+			if err := record.Decode(&a); err != nil {
 				return nil, err
 			}
 			match := s.matchesSymbols(q, a.TargetSymbols)

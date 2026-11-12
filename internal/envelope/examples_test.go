@@ -324,3 +324,48 @@ func TestInvalidCalendarTimestampRejected(t *testing.T) {
 		t.Fatal("impossible calendar time accepted")
 	}
 }
+
+// Code that reads records uses one Go type per kind; a v2 payload fills
+// the v2 members and leaves the Git ones empty.
+func TestV2DecodesIntoDomainTypes(t *testing.T) {
+	ex := readExamples(t)
+	parse := func(key string) Object {
+		o, err := Parse(ex[key])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	var w schema.Workspace
+	if err := parse("v2/workspace").Decode(&w); err != nil || w.BaseTree == "" || w.BaseCommit != "" || w.BaseLineAdvance == nil {
+		t.Fatalf("workspace %+v, %v", w, err)
+	}
+	var m schema.ChangeManifest
+	if err := parse("v2/change_manifest").Decode(&m); err != nil || m.BaseTree == "" || m.OpHead == "" ||
+		len(m.SymbolMaps) != 2 || m.SymbolsRead[0].Revision == "" || m.BaseCommit != "" {
+		t.Fatalf("manifest %+v, %v", m, err)
+	}
+	var a schema.EvidenceAttestation
+	if err := parse("v2/evidence_attestation").Decode(&a); err != nil || a.Tree == "" || a.Commit != "" || a.ExecutedTree != "" {
+		t.Fatalf("attestation %+v, %v", a, err)
+	}
+	var r schema.SpeculationRun
+	if err := parse("v2/speculation_run").Decode(&r); err != nil || r.BaseTree == "" || r.BaseCommit != "" {
+		t.Fatalf("run %+v, %v", r, err)
+	}
+	var c schema.Capability
+	if err := parse("v2/capability").Decode(&c); err != nil || len(c.MayAdvance) != 1 {
+		t.Fatalf("capability %+v, %v", c, err)
+	}
+	var sd schema.SelectionDecision
+	if err := parse("v2/selection_decision").Decode(&sd); err != nil || sd.Commit != "" || sd.Manifest == "" {
+		t.Fatalf("selection %+v, %v", sd, err)
+	}
+	var v1 schema.Workspace
+	if err := parse("v1/workspace").Decode(&v1); err != nil || v1.BaseCommit == "" || v1.BaseTree != "" {
+		t.Fatalf("v1 workspace %+v, %v", v1, err)
+	}
+	if err := parse("v2/workspace").Decode(&schema.Intent{}); err == nil {
+		t.Fatal("a v2 workspace decoded into an intent")
+	}
+}

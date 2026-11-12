@@ -153,12 +153,12 @@ func TestAC167_168_058_RunSignsAttestation(t *testing.T) {
 	if _, held := s.signers[a.VerifierSession]; held {
 		t.Fatal("verifier key still held")
 	}
-	kind, raw, err := s.Store.Index.Creation(context.Background(), a.VerifierSession)
-	if err != nil || kind != schema.KindSession {
-		t.Fatal(kind, err)
+	cr, err := s.Store.Index.Creation(context.Background(), a.VerifierSession)
+	if err != nil || cr.Kind != schema.KindSession {
+		t.Fatal(cr.Kind, err)
 	}
 	var vs schema.Session
-	if err := json.Unmarshal(raw, &vs); err != nil || vs.ParticipantKind != "service" {
+	if err := cr.Decode(&vs); err != nil || vs.ParticipantKind != "service" {
 		t.Fatalf("verifier session %+v %v", vs, err)
 	}
 	f.verifyDirEmpty(t)

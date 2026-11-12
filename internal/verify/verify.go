@@ -391,7 +391,7 @@ func (g *graph) chain(cid string) ([]schema.Capability, error) {
 				return c, err
 			}
 			var parent schema.Capability
-			if err := json.Unmarshal(p.Envelope.Payload, &parent); err != nil {
+			if err := p.Decode(&parent); err != nil {
 				return c, err
 			}
 			if parent.SessionID != o.Envelope.Signer {

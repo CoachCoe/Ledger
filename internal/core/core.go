@@ -188,14 +188,14 @@ func (s *Service) subject(ctx context.Context, id, kind string) (*index.Subject,
 
 func creation[T any](ctx context.Context, idx *index.Index, id string, kind schema.Kind) (T, error) {
 	var p T
-	k, raw, err := idx.Creation(ctx, id)
+	cr, err := idx.Creation(ctx, id)
 	if err != nil {
 		return p, err
 	}
-	if k != kind {
+	if cr.Kind != kind {
 		return p, apierr.New("unknown_entity", "no %s %s", kind, id)
 	}
-	return p, json.Unmarshal(raw, &p)
+	return p, cr.Decode(&p)
 }
 
 func decode[T any](raw []byte) (T, error) {

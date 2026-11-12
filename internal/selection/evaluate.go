@@ -108,7 +108,7 @@ func Applicable(b Binding, c schema.Criterion, e Evidence) (bool, string) {
 		return false, ReasonOtherManifest
 	case a.Commit != b.Commit:
 		return false, ReasonOtherCommit
-	case a.ExecutedTree != b.Tree:
+	case a.ExecutedOn() != b.Tree:
 		return false, ReasonOtherTree
 	case !slices.Contains(a.Criteria, c.ID):
 		return false, ReasonCriterionNotListed

@@ -112,13 +112,10 @@ func (o Object) Verify(pub ed25519.PublicKey) error {
 	return nil
 }
 
-// Decode unmarshals the payload into v, which must be the payload type for
-// the object's kind. Unknown members are rejected.
+// Decode unmarshals the payload into v, the Go type for the object's kind
+// (see schema.Decode) or its exact wire type. Unknown members are rejected.
 func (o Object) Decode(v any) error {
-	if err := json.Unmarshal(o.Envelope.Payload, v, json.RejectUnknownMembers(true)); err != nil {
-		return apierr.New("record_malformed", "%s payload: %v", o.Envelope.Kind, err)
-	}
-	return nil
+	return schema.Decode(o.Envelope.SchemaVersion, o.Envelope.Kind, o.Envelope.Payload, v)
 }
 
 // Payload decodes the payload into a new value of its kind's type.

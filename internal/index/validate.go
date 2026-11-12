@@ -121,7 +121,7 @@ func (v *validator) check(o envelope.Object) error {
 		if err := v.object(ws.Creation, schema.KindWorkspace, &w); err != nil {
 			return err
 		}
-		if w.BaseCommit != p.BaseCommit || w.ChangeID != p.ChangeID || w.IntentID != p.IntentID {
+		if w.BaseCommit != p.BaseCommit || w.BaseTree != p.BaseTree || w.ChangeID != p.ChangeID || w.IntentID != p.IntentID {
 			return unauthorized("manifest workspace binding differs")
 		}
 		if _, err := v.subjectIn(p.IntentID, lifecycle.Intent, "open"); err != nil {
@@ -198,11 +198,11 @@ func (v *validator) signerActive(signer string) error {
 			return err
 		}
 	} else {
-		_, raw, err := creation(v.ctx, v.q, signer)
+		cr, err := creation(v.ctx, v.q, signer)
 		if err != nil {
 			return err
 		}
-		if err := json.Unmarshal(raw, &session); err != nil {
+		if err := cr.Decode(&session); err != nil {
 			return err
 		}
 	}
@@ -258,17 +258,17 @@ func (v *validator) capability(id string) (*schema.Capability, error) {
 		}
 		return &c, o.Decode(&c)
 	}
-	k, payload, err := creation(v.ctx, v.q, id)
+	cr, err := creation(v.ctx, v.q, id)
 	if err != nil {
 		return nil, err
 	}
-	if k == "" {
+	if cr.Kind == "" {
 		return nil, apierr.New(CodeUnavailable, "missing capability %s", id)
 	}
-	if k != schema.KindCapability {
+	if cr.Kind != schema.KindCapability {
 		return nil, apierr.New("unknown_entity", "no capability %s", id)
 	}
-	return &c, json.Unmarshal(payload, &c)
+	return &c, cr.Decode(&c)
 }
 
 // subject returns the current state of id, including changes made earlier
@@ -530,15 +530,25 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 	if signer == m.AuthorSession || slices.Contains(holders, signer) {
 		return apierr.New("author_signed_evidence", "session %s authored or held the workspace of manifest %s", signer, p.Manifest)
 	}
-	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
-	if err != nil {
-		return err
-	}
-	if commit == "" || commit != p.Commit {
-		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
-	}
-	if p.ExecutedTree != m.Tree {
-		return apierr.New("tree_mismatch", "executed tree %s is not the manifest tree %s", p.ExecutedTree, m.Tree)
+	if native := m.BaseTree != ""; native != (p.Tree != "") {
+		return apierr.New("cross_revision_evidence", "attestation and manifest %s use different schema versions", p.Manifest).With("evidence_manifest", p.Manifest)
+	} else if native {
+		// A v2 attestation names only the tree it ran on (ADR 0027).
+		if p.Tree != m.Tree {
+			return apierr.New("cross_revision_evidence", "evidence ran on tree %s, not the tree %s of manifest %s", p.Tree, m.Tree, p.Manifest).
+				With("evidence_manifest", p.Manifest).With("tree", p.Tree)
+		}
+	} else {
+		commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+		if err != nil {
+			return err
+		}
+		if commit == "" || commit != p.Commit {
+			return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+		}
+		if p.ExecutedTree != m.Tree {
+			return apierr.New("tree_mismatch", "executed tree %s is not the manifest tree %s", p.ExecutedTree, m.Tree)
+		}
 	}
 	var d schema.CheckDefinition
 	if err := v.object(p.CheckDefinition, schema.KindCheckDefinition, &d); err != nil {
@@ -547,15 +557,15 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 	if d.Category != p.Category {
 		return apierr.New("invalid_attestation", "category %s differs from the pinned definition's %s", p.Category, d.Category)
 	}
-	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	cr, err := creation(v.ctx, v.q, m.IntentID)
 	if err != nil {
 		return err
 	}
-	if kind != schema.KindIntent {
+	if cr.Kind != schema.KindIntent {
 		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
 	}
 	var intent schema.Intent
-	if err := json.Unmarshal(raw, &intent); err != nil {
+	if err := cr.Decode(&intent); err != nil {
 		return err
 	}
 	for _, id := range p.Criteria {
@@ -625,12 +635,18 @@ func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) e
 	if p.IntentID != m.IntentID {
 		return apierr.New("invalid_selection", "intent %s is not the intent of manifest %s", p.IntentID, p.Manifest)
 	}
-	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
-	if err != nil {
-		return err
-	}
-	if commit == "" || commit != p.Commit {
-		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+	if m.BaseTree != "" {
+		if p.Commit != "" {
+			return apierr.New("binding_mismatch", "manifest %s binds a tree, not a commit", p.Manifest)
+		}
+	} else {
+		commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+		if err != nil {
+			return err
+		}
+		if commit == "" || commit != p.Commit {
+			return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+		}
 	}
 	if _, err := v.subjectIn(m.IntentID, lifecycle.Intent, "open"); err != nil {
 		return err
@@ -669,20 +685,20 @@ func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) e
 		switch {
 		case i < 0:
 			return apierr.New("unknown_evidence", "no committed evidence attestation %s", h).With("evidence", h)
-		case set[i].Att.Manifest != p.Manifest || set[i].Att.Commit != p.Commit || set[i].Att.ExecutedTree != m.Tree:
+		case set[i].Att.Manifest != p.Manifest || set[i].Att.Commit != p.Commit || set[i].Att.ExecutedOn() != m.Tree:
 			return apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", h, set[i].Att.Manifest, p.Manifest).
 				With("evidence", h).With("evidence_manifest", set[i].Att.Manifest)
 		}
 	}
-	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	cr, err := creation(v.ctx, v.q, m.IntentID)
 	if err != nil {
 		return err
 	}
-	if kind != schema.KindIntent {
+	if cr.Kind != schema.KindIntent {
 		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
 	}
 	var intent schema.Intent
-	if err := json.Unmarshal(raw, &intent); err != nil {
+	if err := cr.Decode(&intent); err != nil {
 		return err
 	}
 	known, err := evidenceFor(v.ctx, v.q, p.Manifest)
