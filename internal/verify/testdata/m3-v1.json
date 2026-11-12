@@ -1,0 +1,80 @@
+{
+  "root": "627d6f6c7afb217fc579c0294ba73cf2037b3d230d507afd99596cd9335b054d",
+  "report": {
+    "bundle_version": 1,
+    "integrity": "verified",
+    "trust": "trusted",
+    "complete": true,
+    "roots": [
+      {
+        "fingerprint": "627d6f6c7afb217fc579c0294ba73cf2037b3d230d507afd99596cd9335b054d",
+        "trusted": true
+      }
+    ],
+    "manifests": [
+      {
+        "hash": "0462892375577d179b393af4c60f756f3c5e501a21ad2d0b17ab46cc80b4e6b3",
+        "change_id": "chg_vge9kcceplklh5kt92403aguso",
+        "intent_id": "int_ftrggkqdmu5l41el7ro7l586d0",
+        "author_session": "ses_n2lfpk285c1p8up9t6grujj2vo",
+        "commit": "8900116b6bc76096507e93bcec13176d6e27ea56",
+        "integrity": "verified",
+        "trust": "trusted",
+        "binding": {
+          "trailer": "ok",
+          "tree": "ok",
+          "parent": "ok"
+        },
+        "evidence": [
+          {
+            "hash": "7351ae9ba91dde65f76e90c8e0ca6afa5772ed3c163413951e1359377f526c0c",
+            "integrity": "verified",
+            "result": "pass",
+            "category": "judgment",
+            "criteria": [
+              "review"
+            ],
+            "independent": true
+          },
+          {
+            "hash": "cd72d34fa0f162b288d9783b91202e3ad134567f2c42860747b615244dcdc715",
+            "integrity": "verified",
+            "result": "pass",
+            "category": "mechanical",
+            "criteria": [
+              "tests"
+            ],
+            "independent": true
+          }
+        ],
+        "selections": [
+          {
+            "hash": "c70edcacf98b70f7530443ba6bb06c3fbe0bf4b5052f948aa1ca8b1a6566b4ee",
+            "integrity": "verified"
+          }
+        ],
+        "components": {
+          "authority": "verified",
+          "evidence": "verified",
+          "parent": "verified",
+          "selections": "verified",
+          "trailer": "verified",
+          "tree": "verified"
+        }
+      }
+    ],
+    "runs": [],
+    "conflicts": [],
+    "missing": [],
+    "invalid": [],
+    "pending": [],
+    "unattached": [],
+    "size": {
+      "bundle_bytes": 47265,
+      "record_bytes": 22029,
+      "git_bytes": 19485,
+      "records": 31,
+      "commits": 1
+    }
+  }
+}
