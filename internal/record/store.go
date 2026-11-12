@@ -1,6 +1,7 @@
 // Package record implements the RecordStore: content-addressed record
-// files under .ledger/objects, their mirror on refs/ledger/records, and
-// publication of operation groups with recovery (ADR 0009,
+// files under .ledger/objects, the list of accepted groups (the records
+// head log in a native repository, refs/ledger/records in a Phase 1 one),
+// and publication of operation groups with recovery (ADR 0009, ADR 0027,
 // docs/contracts/recovery.md).
 package record
 
@@ -41,6 +42,7 @@ const (
 	StageReceipt = "receipt"
 	StageRef     = "ref"
 	StageRefCAS  = "ref_cas"
+	StageLog     = "log"
 	StageIndex   = "index"
 	StageCleanup = "cleanup"
 	StageDone    = "done"
@@ -59,19 +61,45 @@ type Options struct {
 
 // Store is an open RecordStore.
 type Store struct {
-	Dir   string // the .ledger directory
+	Dir string // the .ledger directory
+	// Repo is the Git repository of a Phase 1 store, and nil for a native
+	// one.
 	Repo  *gitx.Repo
 	Index *index.Index
 	opts  Options
+	log   *headLog
 }
 
 // Open opens the RecordStore of repo, which must have been initialized.
 // It does not run recovery; call Recover when a full reconciliation is
 // wanted (daemon start, reindex).
 func Open(ctx context.Context, repo *gitx.Repo, opts Options) (*Store, error) {
-	dir := filepath.Join(repo.MainDir, DirName)
+	s, err := open(repo.MainDir, opts)
+	if err != nil {
+		return nil, err
+	}
+	s.Repo = repo
+	return s, nil
+}
+
+// OpenNative opens the RecordStore of the native repository at root,
+// whose accepted groups are listed by the records head log.
+func OpenNative(ctx context.Context, root string, opts Options) (*Store, error) {
+	s, err := open(root, opts)
+	if err != nil {
+		return nil, err
+	}
+	if s.log, err = openLog(s.Dir); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func open(root string, opts Options) (*Store, error) {
+	dir := filepath.Join(root, DirName)
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return nil, apierr.New("not_initialized", "%s has no %s directory; run ledger init", repo.MainDir, DirName)
+		return nil, apierr.New("not_initialized", "%s has no %s directory; run ledger init", root, DirName)
 	}
 	for _, sub := range []string{"objects", "quarantine", "journal", "runtime"} {
 		if err := atomicfile.MakeDir(filepath.Join(dir, sub), 0o700); err != nil {
@@ -85,7 +113,7 @@ func Open(ctx context.Context, repo *gitx.Repo, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{Dir: dir, Repo: repo, Index: idx, opts: opts}, nil
+	return &Store{Dir: dir, Index: idx, opts: opts}, nil
 }
 
 // lock takes the exclusive RecordStore lock, which the kernel releases if
@@ -279,6 +307,21 @@ func (s *Store) finish(ctx context.Context, g index.Group, effects []Effect) err
 	}
 	if err := s.writeObject(g.Receipt); err != nil {
 		return err
+	}
+	if s.log != nil {
+		if err := s.fault(StageLog); err != nil {
+			return err
+		}
+		if err := s.log.append(g.Receipt.Hash); err != nil {
+			return err
+		}
+		if err := s.fault(StageIndex); err != nil {
+			return err
+		}
+		if err := s.Index.Apply(ctx, g); err != nil {
+			return err
+		}
+		return s.cleanup(ctx, g, effects)
 	}
 	if err := s.fault(StageRef); err != nil {
 		return err

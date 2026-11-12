@@ -699,3 +699,21 @@ func (x *Index) ConflictingOperations(ctx context.Context) (map[string][]string,
 	}
 	return out, rows.Err()
 }
+
+// Receipts lists the receipts of every indexed group, sorted.
+func (x *Index) Receipts(ctx context.Context) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT receipt FROM operations ORDER BY receipt`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}

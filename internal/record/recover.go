@@ -31,6 +31,12 @@ type Report struct {
 	AddedToRef int `json:"added_to_ref"`
 	// InvalidInRef lists ref entries that failed verification.
 	InvalidInRef []string `json:"invalid_in_ref"`
+	// Logged counts accepted groups added to the records head log because
+	// a crash or an import left them out.
+	Logged int `json:"logged,omitzero"`
+	// Missing lists receipts the head log names whose group is no longer
+	// complete and valid on disk.
+	Missing []Problem `json:"missing,omitempty"`
 	// Imported counts object files an import newly wrote.
 	Imported int `json:"imported,omitempty"`
 	// Indexed counts groups newly indexed.
@@ -123,12 +129,17 @@ func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
 			r.Quarantined = append(r.Quarantined, h)
 		}
 	}
-	sync, err := s.syncRef(ctx)
-	if err != nil {
+	if s.log == nil {
+		sync, err := s.syncRef(ctx)
+		if err != nil {
+			return nil, err
+		}
+		r.Materialized, r.AddedToRef, r.InvalidInRef = len(sync.Materialized), sync.Added, sync.Invalid
+	}
+	if err := s.indexAll(ctx, r); err != nil {
 		return nil, err
 	}
-	r.Materialized, r.AddedToRef, r.InvalidInRef = len(sync.Materialized), sync.Added, sync.Invalid
-	if err := s.indexAll(ctx, r); err != nil {
+	if err := s.reconcileLog(ctx, r); err != nil {
 		return nil, err
 	}
 	if err := s.completeJournals(ctx, false); err != nil {
@@ -253,6 +264,52 @@ func (s *Store) indexAll(ctx context.Context, r *Report) error {
 		if !committed {
 			r.Pending = append(r.Pending, h)
 		}
+	}
+	return nil
+}
+
+// reconcileLog makes the head log list every indexed group: groups a crash
+// left between receipt and log, or that an import brought in, are appended
+// in receipt hash order, and logged receipts whose group is no longer
+// accepted are reported as missing rather than dropped from the log.
+func (s *Store) reconcileLog(ctx context.Context, r *Report) error {
+	if s.log == nil {
+		return nil
+	}
+	if err := s.log.load(); err != nil {
+		return err
+	}
+	indexed, err := s.Index.Receipts(ctx)
+	if err != nil {
+		return err
+	}
+	var add []string
+	for _, h := range indexed {
+		if !s.log.logged[h] {
+			add = append(add, h)
+		}
+	}
+	if err := s.log.append(add...); err != nil {
+		return err
+	}
+	r.Logged += len(add)
+	accepted := make(map[string]bool, len(indexed))
+	for _, h := range indexed {
+		accepted[h] = true
+	}
+	problems := map[string]Problem{}
+	for _, p := range r.Unverifiable {
+		problems[p.Hash] = p
+	}
+	for _, e := range s.log.entries {
+		if accepted[e.Receipt] {
+			continue
+		}
+		p, ok := problems[e.Receipt]
+		if !ok {
+			p = Problem{Hash: e.Receipt, Code: "record_missing", Error: "the receipt or a member of its group is missing"}
+		}
+		r.Missing = append(r.Missing, p)
 	}
 	return nil
 }

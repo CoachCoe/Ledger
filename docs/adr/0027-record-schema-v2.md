@@ -41,6 +41,23 @@ New record kinds:
   root with participant kind `bridge`. It claims no capability and cannot
   satisfy check criteria by itself.
 
+**A native repository lists its accepted groups in a records head log**
+instead of `refs/ledger/records`. Record files stay under `.ledger/objects`
+as in ADR 0009, and `.ledger/records.log` holds one canonical JSON line per
+accepted receipt, `{seq, previous, receipt}`, hash-chained like the
+workspace operation log (ADR 0026). The entry is appended and synced under
+the RecordStore lock after the receipt is durable and before the index is
+updated, where Phase 1 updates the ref. Recovery cuts a torn final line,
+appends groups that are accepted but unlogged (a crash between receipt and
+log, or an import) in receipt hash order, and reports logged receipts whose
+group is no longer complete as `record_missing` instead of dropping them.
+A log that is edited, shrinks or does not chain fails with
+`record_log_broken`. The log is unsigned: it detects crashes and lost
+files, not a writer who rewrites both the log and the objects; signatures
+and receipts remain the authority. There is no shared ref to merge: other
+machines' records arrive through bundles and the bridge, and import
+appends them.
+
 **v1 stays verifiable for good.** `ledger verify` keeps the v1 code path. A
 Phase 1 repository migrates by importing its Git history through the bridge,
 which writes `bridge_mapping` records for every commit a v1 record names. No
@@ -56,6 +73,9 @@ an empty `session_id`.
 
 - **Add native fields beside the Git ones in v1.** Rejected: v1 schemas are
   closed, and optional dual bindings would let a record satisfy either one.
+- **Keep no head log; receipt files alone define what is accepted.**
+  Rejected: a deleted receipt would silently remove its group, and
+  incremental export would have to scan every object.
 - **Re-sign v1 history as v2.** Rejected: it replaces original authorship with
   the migration's, against ADR 0011's rule that recovery never rewrites
   authors.
