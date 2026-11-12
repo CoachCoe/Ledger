@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "kind": "capability",
+  "payload": {
+    "id": "cap_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "session_id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "issuer": {
+      "kind": "root",
+      "fingerprint": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e"
+    },
+    "allow": [
+      "**"
+    ],
+    "deny": [
+      ".github/**"
+    ],
+    "may_add_dependencies": false,
+    "expires_at": "2026-11-06T12:00:00.000Z",
+    "created_at": "2026-11-05T12:00:00.000Z",
+    "may_advance": [
+      "main"
+    ]
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "5d9etTXZrwvnl2j_MSxWF0CINB-8wDjuZUBBH-i3qUGnOx1NnwvufQRl0Pb2sVLuC4cV-rhTAWFOf4TzRk5BDw"
+}

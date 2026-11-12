@@ -16,16 +16,19 @@ import (
 	"github.com/CoachCoe/Ledger/schemas"
 )
 
-// Version is the only envelope schema_version this build understands.
-const Version = 1
+// Current is the envelope schema_version this build writes; Versions lists
+// every one it reads.
+const Current = 1
+
+var Versions = []int{1, 2}
 
 const baseURL = "https://schemas.ledger.invalid/"
 
 var compiled = sync.OnceValues(compileAll)
 
 type schemaSet struct {
-	envelope *jsonschema.Schema
-	kinds    map[Kind]*jsonschema.Schema
+	envelope map[int]*jsonschema.Schema
+	kinds    map[int]map[Kind]*jsonschema.Schema
 	runtime  map[string]*jsonschema.Schema
 	api      map[string]*jsonschema.Schema
 	bundle   *jsonschema.Schema
@@ -35,7 +38,7 @@ func compileAll() (*schemaSet, error) {
 	c := jsonschema.NewCompiler()
 	c.AssertFormat()
 	var urls []string
-	err := fs.WalkDir(schemas.FS, "v1", func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(schemas.FS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -53,17 +56,21 @@ func compileAll() (*schemaSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &schemaSet{kinds: map[Kind]*jsonschema.Schema{}, runtime: map[string]*jsonschema.Schema{}, api: map[string]*jsonschema.Schema{}}
+	s := &schemaSet{envelope: map[int]*jsonschema.Schema{}, kinds: map[int]map[Kind]*jsonschema.Schema{1: {}, 2: {}}, runtime: map[string]*jsonschema.Schema{}, api: map[string]*jsonschema.Schema{}}
 	for _, u := range urls {
 		sch, err := c.Compile(u)
 		if err != nil {
 			return nil, err
 		}
-		rel := strings.TrimPrefix(u, baseURL+"v1/")
+		dir, rel, _ := strings.Cut(strings.TrimPrefix(u, baseURL), "/")
+		version := 1
+		if dir == "v2" {
+			version = 2
+		}
 		name := strings.TrimSuffix(path.Base(rel), ".json")
 		switch {
 		case rel == "envelope.json":
-			s.envelope = sch
+			s.envelope[version] = sch
 		case rel == "bundle_inventory.json":
 			s.bundle = sch
 		case strings.HasPrefix(rel, "api/"):
@@ -71,12 +78,20 @@ func compileAll() (*schemaSet, error) {
 		case strings.HasPrefix(rel, "runtime/"):
 			s.runtime[name] = sch
 		case rel != "common.json":
-			s.kinds[Kind(name)] = sch
+			s.kinds[version][Kind(name)] = sch
 		}
 	}
-	for _, k := range Kinds {
-		if s.kinds[k] == nil {
-			return nil, fmt.Errorf("schema: no schema for kind %q", k)
+	for _, v := range Versions {
+		if s.envelope[v] == nil {
+			return nil, fmt.Errorf("schema: no envelope schema for version %d", v)
+		}
+		for _, k := range KindsFor(v) {
+			if s.kinds[v][k] == nil {
+				return nil, fmt.Errorf("schema: no version %d schema for kind %q", v, k)
+			}
+		}
+		if len(s.kinds[v]) != len(KindsFor(v)) {
+			return nil, fmt.Errorf("schema: version %d has schemas for kinds this build does not list", v)
 		}
 	}
 	return s, nil
@@ -94,17 +109,24 @@ func ValidateEnvelope(raw []byte) error {
 	if err != nil {
 		return invalid("envelope", err)
 	}
+	version := 1
 	if m, ok := inst.(map[string]any); ok {
-		if v, ok := m["schema_version"]; ok && fmt.Sprint(v) != fmt.Sprint(Version) {
-			return apierr.New("unsupported_schema_version", "schema_version %v is not supported", v)
+		if v, ok := m["schema_version"]; ok {
+			switch fmt.Sprint(v) {
+			case "1":
+			case "2":
+				version = 2
+			default:
+				return apierr.New("unsupported_schema_version", "schema_version %v is not supported", v)
+			}
 		}
 	}
-	if err := s.envelope.Validate(inst); err != nil {
+	if err := s.envelope[version].Validate(inst); err != nil {
 		return invalid("envelope", err)
 	}
 	m := inst.(map[string]any)
 	kind := Kind(m["kind"].(string))
-	if err := s.kinds[kind].Validate(m["payload"]); err != nil {
+	if err := s.kinds[version][kind].Validate(m["payload"]); err != nil {
 		return invalid(string(kind), err)
 	}
 	return nil

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/root_key.json",
+  "title": "Human root public key",
+  "description": "Unchanged from schema_version 1.",
+  "$ref": "../v1/root_key.json"
+}

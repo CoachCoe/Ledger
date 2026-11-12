@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "kind": "line_advance",
+  "payload": {
+    "line": "main",
+    "previous": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "manifest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "selection": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actor": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+    "at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "GjTyTvB-6KId9uyXOnhqmeKz37Myk5D4bT-unUMgFc7VK2mHGeDTOr1186pXRmvKkU4Sg6-edt42w-2QimisCQ"
+}

@@ -4,7 +4,7 @@ package schemas
 
 import "embed"
 
-// FS holds the versioned schema tree, rooted at "v1/".
+// FS holds the versioned schema trees, rooted at "v1/" and "v2/".
 //
-//go:embed v1
+//go:embed v1 v2
 var FS embed.FS

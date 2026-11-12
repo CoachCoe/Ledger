@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "kind": "change_manifest",
+  "payload": {
+    "change_id": "chg_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "intent_id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workspace_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "author_session": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "context_refs": [
+      "docs/api.md"
+    ],
+    "plan": "Add GET /health",
+    "tree": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "files": [
+      "src/app.ts",
+      "src/health.ts"
+    ],
+    "symbols_read": [
+      {
+        "path": "src/app.ts",
+        "language": "typescript",
+        "name": "AppService.getHello",
+        "kind": "method",
+        "disambiguator": null,
+        "revision": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ],
+    "symbols_written": [
+      {
+        "path": "src/health.ts",
+        "language": "typescript",
+        "name": "health",
+        "kind": "function",
+        "disambiguator": null,
+        "revision": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ],
+    "base_tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "op_head": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "symbol_maps": {
+      "src/app.ts": "1111111111111111111111111111111111111111111111111111111111111111",
+      "src/health.ts": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  },
+  "signer": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "signature": "hKyi7Yo37z_a0pYp3dO76gq3TmCaIT8upc4ZKQDKAAu_GiVrlp4Tamztt-LIz6NAzKWK__NfFkh5ITKSHnYpDA"
+}

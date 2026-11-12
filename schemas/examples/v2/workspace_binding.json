@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "kind": "workspace_binding",
+  "payload": {
+    "workspace_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "previous": "2222222222222222222222222222222222222222222222222222222222222222",
+    "session_id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capability_id": "cap_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+    "reason": "daemon restart recovery",
+    "at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "4YZ6CUks1oGumHPx6f1hbIdOOMkgaFujF-jbHRrpdiSKIXiA6mUC4kujwVKepze7GLlClU32Z3oWqn3w8kLGDw"
+}

@@ -331,7 +331,7 @@ func TestAC078_099_114_BundleInventoryAndClosure(t *testing.T) {
 		t.Fatalf("bundle version: %v", err)
 	}
 	q = readParts(t, path)
-	q.forge(t, p.byKind(t, schema.KindIntent)[0], func(env map[string]any) { env["schema_version"] = 2 })
+	q.forge(t, p.byKind(t, schema.KindIntent)[0], func(env map[string]any) { env["schema_version"] = 3 })
 	if _, err := tryVerify(q.write(t, true)); code(t, err) != "unsupported_schema_version" {
 		t.Fatalf("schema version: %v", err)
 	}

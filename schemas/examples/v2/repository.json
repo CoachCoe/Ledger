@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "kind": "repository",
+  "payload": {
+    "id": "rep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "hash_algorithm": "sha256",
+    "case_policy": "insensitive",
+    "analyzers": [
+      "javascript",
+      "python",
+      "tsx",
+      "typescript"
+    ],
+    "created_at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "WLrNqdv5wQltNbupuHHe4Fwj11LqGTg65FFtL5ldXRvNl0YiLJSGmVjoUC0iYYMhhG3xm1FK-gsfRCJRKqrLCg"
+}

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/capability.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "session_id",
+    "issuer",
+    "allow",
+    "deny",
+    "may_add_dependencies",
+    "may_advance",
+    "expires_at",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "../v1/common.json#/$defs/capability_id"
+    },
+    "session_id": {
+      "$ref": "../v1/common.json#/$defs/session_id"
+    },
+    "issuer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "fingerprint"
+          ],
+          "properties": {
+            "kind": {
+              "const": "root"
+            },
+            "fingerprint": {
+              "$ref": "../v1/common.json#/$defs/hash"
+            }
+          },
+          "title": "Root issuer"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "capability_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "capability"
+            },
+            "capability_id": {
+              "$ref": "../v1/common.json#/$defs/capability_id"
+            }
+          },
+          "title": "Delegating issuer"
+        }
+      ]
+    },
+    "allow": {
+      "type": "array",
+      "items": {
+        "$ref": "../v1/common.json#/$defs/path"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "deny": {
+      "type": "array",
+      "items": {
+        "$ref": "../v1/common.json#/$defs/path"
+      },
+      "uniqueItems": true
+    },
+    "may_add_dependencies": {
+      "type": "boolean"
+    },
+    "may_advance": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/line"
+      },
+      "uniqueItems": true
+    },
+    "expires_at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    },
+    "created_at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    }
+  },
+  "title": "Capability"
+}

@@ -26,14 +26,27 @@ const (
 	KindAttemptRecord       Kind = "attempt_record"
 	KindSpeculationRun      Kind = "speculation_run"
 	KindOperationReceipt    Kind = "operation_receipt"
+	KindRepository          Kind = "repository"
+	KindLineAdvance         Kind = "line_advance"
 )
 
-// Kinds lists every record kind this build understands.
-var Kinds = []Kind{
+var kindsV1 = []Kind{
 	KindRootKey, KindIntent, KindCheckDefinition, KindCapability, KindSession,
 	KindWorkspace, KindLifecycleEvent, KindWorkspaceBinding, KindChangeManifest,
 	KindEvidenceAttestation, KindSelectionDecision, KindAttemptRecord,
 	KindSpeculationRun, KindOperationReceipt,
+}
+
+// KindsFor lists the record kinds of one schema_version, or nil for a
+// version this build does not read.
+func KindsFor(version int) []Kind {
+	switch version {
+	case 1:
+		return kindsV1
+	case 2:
+		return append(kindsV1[:len(kindsV1):len(kindsV1)], KindRepository, KindLineAdvance)
+	}
+	return nil
 }
 
 // Envelope is the signed wrapper around every immutable record. Signature
@@ -56,6 +69,7 @@ const (
 	PrefixChange     = "chg_"
 	PrefixRun        = "run_"
 	PrefixOperation  = "op_"
+	PrefixRepository = "rep_"
 )
 
 var idEncoding = base32.NewEncoding("0123456789abcdefghijklmnopqrstuv").WithPadding(base32.NoPadding)
@@ -334,9 +348,31 @@ type OperationReceipt struct {
 	At            string         `json:"at"`
 }
 
-// PayloadType returns a pointer to a new zero payload for kind, or nil if
-// the kind is unknown.
-func PayloadType(kind Kind) any {
+// PayloadType returns a pointer to a new zero payload for kind at
+// version, or nil if this build does not read that pair.
+func PayloadType(version int, kind Kind) any {
+	if version == 2 {
+		switch kind {
+		case KindCapability:
+			return new(CapabilityV2)
+		case KindWorkspace:
+			return new(WorkspaceV2)
+		case KindChangeManifest:
+			return new(ChangeManifestV2)
+		case KindEvidenceAttestation:
+			return new(EvidenceAttestationV2)
+		case KindSelectionDecision:
+			return new(SelectionDecisionV2)
+		case KindSpeculationRun:
+			return new(SpeculationRunV2)
+		case KindRepository:
+			return new(Repository)
+		case KindLineAdvance:
+			return new(LineAdvance)
+		}
+	} else if version != 1 {
+		return nil
+	}
 	switch kind {
 	case KindRootKey:
 		return new(RootKey)

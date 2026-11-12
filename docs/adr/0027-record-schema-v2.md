@@ -1,6 +1,6 @@
 # ADR 0027: Record schema v2
 
-- Status: Proposed
+- Status: Accepted (2026-11-12)
 - Date: 2026-11-10
 
 ## Context

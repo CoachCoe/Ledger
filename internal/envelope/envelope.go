@@ -14,9 +14,11 @@ import (
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
-// SigningPrefix is prepended to the canonical unsigned envelope to form
-// the Ed25519 signing message.
-const SigningPrefix = "ledger-record-v1\n"
+// SigningPrefix returns the literal prepended to the canonical unsigned
+// envelope to form the Ed25519 signing message for a schema_version.
+func SigningPrefix(version int) string {
+	return fmt.Sprintf("ledger-record-v%d\n", version)
+}
 
 // Object is a sealed record: its canonical bytes and their SHA-256 hash.
 // The hash is the record's object id; it is never part of the record.
@@ -33,16 +35,22 @@ func SigningInput(env schema.Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append([]byte(SigningPrefix), b...), nil
+	return append([]byte(SigningPrefix(env.SchemaVersion)), b...), nil
 }
 
-// Seal encodes payload as a record of the given kind signed by s.
+// Seal encodes payload as a record of the given kind at schema.Current,
+// signed by s.
 func Seal(kind schema.Kind, payload any, s identity.Signer) (Object, error) {
+	return SealVersion(schema.Current, kind, payload, s)
+}
+
+// SealVersion is Seal at an explicit schema_version.
+func SealVersion(version int, kind schema.Kind, payload any, s identity.Signer) (Object, error) {
 	p, err := canon.Marshal(payload)
 	if err != nil {
 		return Object{}, err
 	}
-	env := schema.Envelope{SchemaVersion: schema.Version, Kind: kind, Payload: p, Signer: s.ID()}
+	env := schema.Envelope{SchemaVersion: version, Kind: kind, Payload: p, Signer: s.ID()}
 	msg, err := SigningInput(env)
 	if err != nil {
 		return Object{}, err
@@ -115,9 +123,9 @@ func (o Object) Decode(v any) error {
 
 // Payload decodes the payload into a new value of its kind's type.
 func (o Object) Payload() (any, error) {
-	v := schema.PayloadType(o.Envelope.Kind)
+	v := schema.PayloadType(o.Envelope.SchemaVersion, o.Envelope.Kind)
 	if v == nil {
-		return nil, fmt.Errorf("envelope: unknown kind %q", o.Envelope.Kind)
+		return nil, fmt.Errorf("envelope: unknown kind %q at schema_version %d", o.Envelope.Kind, o.Envelope.SchemaVersion)
 	}
 	return v, o.Decode(v)
 }
