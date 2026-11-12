@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,16 +31,31 @@ import (
 // nativeFixture is a native repository whose initial tree holds a.ts.
 func nativeFixture(t *testing.T) (*Service, string) {
 	t.Helper()
+	return nativeFixtureWith(t, nil)
+}
+
+// nativeFixtureWith adds files to the default workspace before its import.
+func nativeFixtureWith(t *testing.T, files map[string]string) (*Service, string) {
+	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "a.ts"), []byte("export const x=1;\n"), 0600); err != nil {
-		t.Fatal(err)
+	files = maps.Clone(files)
+	if files == nil {
+		files = map[string]string{}
+	}
+	files["a.ts"] = "export const x=1;\n"
+	files[".ledgerignore"] = "/" + record.DirName + "/\n" + files[".ledgerignore"]
+	for p, body := range files {
+		full := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	ledger := filepath.Join(dir, record.DirName)
 	if err := os.Mkdir(ledger, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".ledgerignore"), []byte("/"+record.DirName+"/\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	objects, err := store.Open(filepath.Join(ledger, "store", "objects"), true)
@@ -268,7 +285,7 @@ func TestNativeStatusAndWrite(t *testing.T) {
 // A check on a native proposal runs in a clone of the manifest tree, and its
 // attestation names that tree and no commit.
 func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
-	s, _ := nativeFixture(t)
+	s, base := nativeFixture(t)
 	check := unitCheck()
 	check.Command = "test -f a.ts && ! test -e .git"
 	writeChecks(t, s, []schema.CheckDefinition{check})
@@ -294,6 +311,23 @@ func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
 	var att schema.EvidenceAttestation
 	if err := o.Decode(&att); err != nil || o.Envelope.SchemaVersion != 2 || att.Tree != prop["tree"] || att.Commit != "" {
 		t.Fatalf("attestation v%d %+v, %v", o.Envelope.SchemaVersion, att, err)
+	}
+	// P2-AC-022: an attestation naming any other tree is not evidence for
+	// this manifest, even when everything else about it is genuine.
+	forger := call(t, s, requestV2("session.create", "", map[string]any{}))["session_id"].(string)
+	forged := att
+	forged.VerifierSession = forger
+	forged.Tree = base
+	fo, err := s.seal(schema.KindEvidenceAttestation, forged, s.signers[forger])
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Store.Do(context.Background(), record.Op{ID: schema.NewID(schema.PrefixOperation), Name: "test.forge", Digest: canon.Hash([]byte(fo.Hash)), Signer: s.signers[forger]},
+		func(*index.Index) (any, []envelope.Object, error) {
+			return map[string]any{}, []envelope.Object{fo}, nil
+		})
+	if !apierr.HasCode(err, "cross_revision_evidence") {
+		t.Fatalf("attestation for another tree: %v", err)
 	}
 	if left, _ := os.ReadDir(filepath.Join(s.runtimeDir(), "verify")); len(left) != 0 {
 		t.Fatalf("checkouts left behind: %v", left)
@@ -427,5 +461,57 @@ func TestNativeSpeculationResolves(t *testing.T) {
 	status := call(t, s, requestV2("speculation.status", "", map[string]any{"run_id": runID}))
 	if status["state"] != "resolved" || status["base_tree"] == nil {
 		t.Fatalf("status %v", status)
+	}
+}
+
+// Detaching gives one workspace a private, writable dependency tree and
+// leaves the shared one, and the other workspaces linking it, untouched.
+func TestNativeDetachDeps(t *testing.T) {
+	s, _ := nativeFixtureWith(t, map[string]string{
+		".ledgerignore":                  "node_modules/\n",
+		"package.json":                   `{"name":"app"}`,
+		"node_modules/left-pad/index.js": "module.exports = s => s\n",
+	})
+	intent := call(t, s, requestV2("intent.create", "", judgment("deps")))["intent_id"].(string)
+	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	sid := sess["session_id"].(string)
+	fork := func() (string, string) {
+		f := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+		return f["workspace_id"].(string), filepath.Join(f["path"].(string), "node_modules")
+	}
+	a, aDeps := fork()
+	_, bDeps := fork()
+	t.Cleanup(func() {
+		deps := filepath.Join(s.Store.Dir, "runtime", "deps")
+		_ = filepath.WalkDir(deps, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				_ = os.Chmod(p, 0700)
+			}
+			return nil
+		})
+	})
+	shared := func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, ".ledger-shared"))
+		return err == nil
+	}
+	if !shared(aDeps) || !shared(bDeps) {
+		t.Fatal("forks do not share the dependency tree")
+	}
+	got := call(t, s, requestV2("workspace.deps.detach", sid, map[string]any{"workspace_id": a, "path": "node_modules"}))
+	if got["workspace_id"] != a || got["path"] != "node_modules" {
+		t.Fatalf("detach %v", got)
+	}
+	if shared(aDeps) || !shared(bDeps) {
+		t.Fatal("detach did not apply to exactly one workspace")
+	}
+	if err := os.WriteFile(filepath.Join(aDeps, "left-pad", "index.js"), []byte("a"), 0600); err != nil {
+		t.Fatalf("detached tree is not writable: %v", err)
+	}
+	if body, _ := os.ReadFile(filepath.Join(bDeps, "left-pad", "index.js")); string(body) != "module.exports = s => s\n" {
+		t.Fatalf("other workspace saw the install: %q", body)
+	}
+	call(t, s, requestV2("workspace.deps.detach", sid, map[string]any{"workspace_id": a}))
+	if _, err := s.Handle(context.Background(), requestV2("workspace.deps.detach", "", map[string]any{"workspace_id": a})); !apierr.HasCode(err, "unauthorized") {
+		t.Fatalf("detach without the session: %v", err)
 	}
 }

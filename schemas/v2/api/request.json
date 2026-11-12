@@ -31,6 +31,7 @@
         "selection.record",
         "workspace.fork",
         "workspace.write",
+        "workspace.deps.detach",
         "workspace.status",
         "workspace.propose",
         "workspace.rework",

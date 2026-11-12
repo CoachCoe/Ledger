@@ -129,3 +129,43 @@ func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
 	}
 	return journal.Result, nil
 }
+
+// detachDeps gives a native workspace private, writable copies of its shared
+// dependency trees, so installing into them changes no other workspace
+// (ADR 0026). Repeating it changes nothing.
+func (s *Service) detachDeps(ctx context.Context, r api.Request) (any, error) {
+	in, err := decode[struct {
+		WorkspaceID string  `json:"workspace_id"`
+		Path        *string `json:"path"`
+	}](r.Input)
+	if err != nil {
+		return nil, err
+	}
+	native, ok := s.Provider.(workspace.NativeProvider)
+	if !ok {
+		return nil, apierr.New("unsupported_operation", "only native workspaces share dependency trees")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.SessionID == "" || s.signers[r.SessionID] == nil {
+		return nil, apierr.New("unauthorized", "detaching dependencies requires the bound local session")
+	}
+	sub, w, cid, err := s.boundWorkspace(ctx, in.WorkspaceID, r.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sub.State != "open" {
+		return nil, apierr.New("invalid_state", "only open workspaces can be changed")
+	}
+	if err := s.authority(ctx, r.SessionID, cid); err != nil {
+		return nil, err
+	}
+	rel := ""
+	if in.Path != nil {
+		rel = *in.Path
+	}
+	if err := native.Workspaces.Detach(w.ID, rel); err != nil {
+		return nil, err
+	}
+	return runtimeResult(map[string]any{"unsigned": true, "workspace_id": w.ID, "path": in.Path})
+}
