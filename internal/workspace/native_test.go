@@ -65,11 +65,11 @@ func TestNativeProviderLifecycle(t *testing.T) {
 	if err := p.Apply(ctx, create); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := p.Snapshot(ctx, w, "")
+	snap, err := p.Snapshot(ctx, w)
 	if err != nil || len(snap.Files) != 1 || snap.Status["src/app.ts"] != "M" || snap.OpHead == "" {
 		t.Fatalf("snapshot %+v, %v", snap, err)
 	}
-	prop, err := p.StableSnapshot(ctx, w, "", "ses_"+"a0000000000000000000000000")
+	prop, err := p.StableSnapshot(ctx, w, "ses_"+"a0000000000000000000000000")
 	if err != nil || prop.Tree != snap.Tree || prop.OpHead == snap.OpHead {
 		t.Fatalf("proposal %+v, %v", prop, err)
 	}

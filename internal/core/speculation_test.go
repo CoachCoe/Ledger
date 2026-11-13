@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/speculate"
+	"github.com/CoachCoe/Ledger/internal/store"
 	"github.com/CoachCoe/Ledger/internal/verify"
 )
 
@@ -145,12 +147,12 @@ func attemptsByWorkspace(t *testing.T, out map[string]any) map[string]map[string
 
 func TestAC196_ThreeScriptedAttemptsSelectOne(t *testing.T) {
 	// AC-005, AC-195, AC-196, AC-208: one candidate fails the check, one
-	// loses on the scorer, one is selected; the winner is an ordinary branch
-	// and nothing is merged.
+	// loses on the scorer, one is selected; the winner stays a manifest and
+	// nothing is merged.
 	s := fixture(t)
 	f := newSpec(t, s, submissionScorer(), nil)
 	ctx := context.Background()
-	head, err := s.Store.Repo.ResolveRef(ctx, "HEAD")
+	head, err := s.Store.Index.LineHead(ctx, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,13 +226,9 @@ func TestAC196_ThreeScriptedAttemptsSelectOne(t *testing.T) {
 		}
 	}
 
-	// AC-247: the selected branch is an ordinary Git branch; HEAD did not move.
-	tip, err := s.Store.Repo.ResolveRef(ctx, "refs/heads/"+winner["branch"].(string))
-	if err != nil || tip != winner["commit"] {
-		t.Fatalf("winner branch %v -> %s (%v)", winner["branch"], tip, err)
-	}
-	if now, _ := s.Store.Repo.ResolveRef(ctx, "HEAD"); now != head {
-		t.Fatal("speculation moved HEAD")
+	// AC-247: selecting the winner did not move line main.
+	if now, _ := s.Store.Index.LineHead(ctx, "main"); !reflect.DeepEqual(now, head) {
+		t.Fatal("speculation moved line main")
 	}
 
 	// A resolved run accepts nothing further.
@@ -356,7 +354,7 @@ func TestAC119_SubmissionFreezesTheCandidate(t *testing.T) {
 	expectErr(t, s, request("workspace.rework", sid, map[string]any{"workspace_id": wid}), "run_active")
 	expectErr(t, s, request("workspace.close", sid, map[string]any{"workspace_id": wid, "reason": "done"}), "run_active")
 	expectErr(t, s, request("workspace.close", "", map[string]any{"workspace_id": wid, "reason": "done"}), "run_active")
-	expectErr(t, s, request("selection.record", "", map[string]any{"manifest": first["manifest"], "commit": first["commit"], "evidence": []any{}}), "run_active")
+	expectErr(t, s, request("selection.record", "", map[string]any{"manifest": first["manifest"], "evidence": []any{}}), "run_active")
 	// Another attempt's session cannot submit this workspace, and a
 	// workspace of another run is refused.
 	expectErr(t, s, request("speculation.submit", f.attempts[1]["session_id"].(string), map[string]any{"run_id": f.runID, "workspace_id": wid}), "unauthorized")
@@ -391,14 +389,20 @@ func TestAC119_DeadlineTimesOutUnsubmittedAttempts(t *testing.T) {
 		t.Fatalf("status: %v", st)
 	}
 	call(t, s, f.runReq("speculation.evaluate"))
-	// Beta's late edit was never submitted: its worktree is preserved and
-	// the committed resolution reports the pending cleanup.
-	e := expectErr(t, s, request("speculation.score", "", map[string]any{"run_id": f.runID, "scores": map[string]any{m: 1}}), "cleanup_pending")
-	if e.Details["committed"] != true {
-		t.Fatalf("details: %v", e.Details)
+	// Beta's late edit was never submitted: resolution records its checkout
+	// in the operation log before removing it, so the edit is not lost.
+	call(t, s, request("speculation.score", "", map[string]any{"run_id": f.runID, "scores": map[string]any{m: 1}}))
+	beta := f.attempts[1]["workspace_id"].(string)
+	if _, err := os.Stat(f.attempts[1]["path"].(string)); !os.IsNotExist(err) {
+		t.Fatalf("the timed-out checkout was kept: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(f.attempts[1]["path"].(string), "ok.txt")); err != nil {
-		t.Fatalf("an unsubmitted edit was deleted: %v", err)
+	entries, err := s.Provider.Workspaces.Log(beta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := s.Objects.Files(entries[len(entries)-1].Tree)
+	if err != nil || !slices.ContainsFunc(files, func(f store.File) bool { return f.Path == "ok.txt" }) {
+		t.Fatalf("the unsubmitted edit is not in the closing tree: %v %v", files, err)
 	}
 	rows := attemptsByWorkspace(t, f.status(t))
 	for i, want := range []string{"selected", speculate.OutcomeTimeout, speculate.OutcomeTimeout} {
@@ -636,7 +640,7 @@ func TestAC120_ResolutionPublicationIsOneIdempotentGroup(t *testing.T) {
 	// AC-120: a crash at every record store boundary of the resolution leaves
 	// either no terminal outcome (resume and resolve again) or exactly one,
 	// with one outcome per attempt and no duplicate winner.
-	stages := []string{record.StageJournal, record.StageEffects, record.StageObjects, record.StageReceipt, record.StageRef, record.StageRefCAS, record.StageIndex, record.StageCleanup, record.StageDone}
+	stages := []string{record.StageJournal, record.StageEffects, record.StageObjects, record.StageReceipt, record.StageLog, record.StageIndex, record.StageCleanup, record.StageDone}
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
@@ -704,7 +708,7 @@ func TestAC190_CommandScorerAndEvidenceIndependence(t *testing.T) {
 	// scores eligible candidates with the pinned command scorer.
 	s := fixture(t)
 	t.Setenv("PATH", os.Getenv("PATH"))
-	command := `printf '{"scores":{' > "$LEDGER_SCORER_OUTPUT"; sep=; for id in $(grep -o '"id":"[0-9a-f]*"' "$LEDGER_SCORER_INPUT" | cut -d'"' -f4); do n=$(git -C "$LEDGER_REPOSITORY" show "refs/ledger/proposals/$id:ok.txt"); printf '%s"%s":%s' "$sep" "$id" "$n" >> "$LEDGER_SCORER_OUTPUT"; sep=,; done; printf '}}' >> "$LEDGER_SCORER_OUTPUT"`
+	command := `printf '{"scores":{' > "$LEDGER_SCORER_OUTPUT"; sep=; for id in $(grep -o '"id":"[0-9a-f]*"' "$LEDGER_SCORER_INPUT" | cut -d'"' -f4); do n=$(cat "$LEDGER_CANDIDATES/$id/ok.txt"); printf '%s"%s":%s' "$sep" "$id" "$n" >> "$LEDGER_SCORER_OUTPUT"; sep=,; done; printf '}}' >> "$LEDGER_SCORER_OUTPUT"`
 	f := newSpec(t, s, map[string]any{"kind": "command", "command": command, "timeout_seconds": 30, "env_allowlist": []any{"PATH"}}, nil)
 	m := f.scripted(t, "12", "7")
 	out := call(t, s, f.runReq("speculation.evaluate"))
@@ -772,7 +776,7 @@ func TestAC120_PublicationRejectsForgedRunGroups(t *testing.T) {
 			t.Fatal(err)
 		}
 		edit(p)
-		out, err := envelope.Seal(o.Envelope.Kind, p, root)
+		out, err := envelope.SealVersion(2, o.Envelope.Kind, p, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -811,7 +815,7 @@ func TestAC120_PublicationRejectsForgedRunGroups(t *testing.T) {
 		"missing attempt":   {without(schema.KindAttemptRecord, 0), "run_incomplete"},
 		"missing selection": {without(schema.KindSelectionDecision, 0), "run_incomplete"},
 		"winner against scores": {replace(schema.KindSelectionDecision, func(p any) {
-			d := p.(*schema.SelectionDecision)
+			d := p.(*schema.SelectionDecisionV2)
 			d.Scoring = jsontext.Value(`{"eligible":["` + sortedOf(m[0], m[1])[0] + `","` + sortedOf(m[0], m[1])[1] + `"],"rule":"` + speculate.TieRule + `","scorer":"` + rs.run.Scorer + `","scores":{"` + m[0] + `":4,"` + m[1] + `":3}}`)
 		}), "invalid_selection"},
 		"forged score": {replace(schema.KindAttemptRecord, func(p any) {
@@ -826,7 +830,7 @@ func TestAC120_PublicationRejectsForgedRunGroups(t *testing.T) {
 			}
 		}), "invalid_attempt"},
 		"session selector": {replace(schema.KindSelectionDecision, func(p any) {
-			p.(*schema.SelectionDecision).Selector = schema.Selector{Kind: "root", ID: root.ID()}
+			p.(*schema.SelectionDecisionV2).Selector = schema.Selector{Kind: "root", ID: root.ID()}
 		}), "run_incomplete"},
 	}
 	for name, c := range cases {
@@ -861,7 +865,7 @@ func TestAC120_ExportVerifiesRunsWithoutTheIndex(t *testing.T) {
 	call(t, s, request("speculation.score", "", map[string]any{"run_id": f.runID, "scores": map[string]any{m[0]: 1, m[1]: 3}}))
 	ctx := context.Background()
 	out := filepath.Join(t.TempDir(), "run.ledger")
-	if _, err := verify.Export(ctx, s.Store.Repo, verify.ExportOptions{Out: out, Manifests: []string{m[1]}}); err != nil {
+	if _, err := verify.ExportNative(s.repositoryDir(), verify.ExportOptions{Out: out, Manifests: []string{m[1]}}); err != nil {
 		t.Fatal(err)
 	}
 	src, err := verify.OpenBundleSource(ctx, out, verify.DefaultLimits())
@@ -884,7 +888,7 @@ func TestAC120_ExportVerifiesRunsWithoutTheIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := schema.ValidateAPI("bundle.verify.output", wire); err != nil {
+	if err := schema.ValidateAPIVersion(2, "bundle.verify.output", wire); err != nil {
 		t.Fatal(err)
 	}
 
@@ -901,11 +905,11 @@ func TestAC120_ExportVerifiesRunsWithoutTheIndex(t *testing.T) {
 	forged := recs[0].AttemptRecord
 	n := int64(1000)
 	forged.Outcome, forged.Score, forged.FailedCriteria = speculate.OutcomeTiebreaker, &n, []string{}
-	o, err := envelope.Seal(schema.KindAttemptRecord, forged, root)
+	o, err := envelope.SealVersion(2, schema.KindAttemptRecord, forged, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := verify.OpenRepoSource(ctx, s.Store.Repo)
+	g, err := s.repositorySource()
 	if err != nil {
 		t.Fatal(err)
 	}

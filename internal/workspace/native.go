@@ -1,3 +1,5 @@
+// Package workspace implements copy-on-write workspaces over the native
+// store and their fixed-base snapshots (ADR 0026).
 package workspace
 
 import (
@@ -14,7 +16,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/store"
 )
 
-// NativeProvider implements WorkspaceProvider with copy-on-write
+// NativeProvider creates, locates, snapshots and removes copy-on-write
 // workspaces over the native store (ADR 0026). Snapshots are operation log
 // entries, so OpHead is set on every snapshot it returns.
 type NativeProvider struct {
@@ -49,9 +51,8 @@ func (p NativeProvider) exists(id string) error {
 	return nil
 }
 
-// Snapshot records the workspace's current tree in its operation log; the
-// index file of the Git provider has no equivalent.
-func (p NativeProvider) Snapshot(_ context.Context, w schema.Workspace, _ string) (Snapshot, error) {
+// Snapshot records the workspace's current tree in its operation log.
+func (p NativeProvider) Snapshot(_ context.Context, w schema.Workspace) (Snapshot, error) {
 	if err := p.exists(w.ID); err != nil {
 		return Snapshot{}, err
 	}
@@ -63,7 +64,7 @@ func (p NativeProvider) Snapshot(_ context.Context, w schema.Workspace, _ string
 }
 
 // StableSnapshot records a durable propose entry; see cow.Manager.Propose.
-func (p NativeProvider) StableSnapshot(_ context.Context, w schema.Workspace, _, session string) (Snapshot, error) {
+func (p NativeProvider) StableSnapshot(_ context.Context, w schema.Workspace, session string) (Snapshot, error) {
 	if err := p.exists(w.ID); err != nil {
 		return Snapshot{}, err
 	}

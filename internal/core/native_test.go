@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/cow"
@@ -25,7 +24,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/store"
 	"github.com/CoachCoe/Ledger/internal/symbols"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 // nativeFixture is a native repository whose initial tree holds a.ts.
@@ -36,6 +34,11 @@ func nativeFixture(t *testing.T) (*Service, string) {
 
 // nativeFixtureWith adds files to the default workspace before its import.
 func nativeFixtureWith(t *testing.T, files map[string]string) (*Service, string) {
+	t.Helper()
+	return newFixture(t, files, record.Options{})
+}
+
+func newFixture(t *testing.T, files map[string]string, opts record.Options) (*Service, string) {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -75,7 +78,7 @@ func nativeFixtureWith(t *testing.T, files map[string]string) (*Service, string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs, err := record.OpenNative(ctx, dir, record.Options{})
+	rs, err := record.OpenNative(ctx, dir, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,22 +106,18 @@ func nativeFixtureWith(t *testing.T, files map[string]string) (*Service, string)
 	return svc, tree
 }
 
-func requestV2(op, sid string, input any) api.Request {
-	r := request(op, sid, input)
-	r.Version = 2
-	return r
-}
-
 func TestNativeForkClonesTheLineHead(t *testing.T) {
 	s, tree := nativeFixture(t)
 	ctx := context.Background()
-	if _, err := s.Handle(ctx, request("intent.create", "", judgment("v1"))); !apierr.HasCode(err, "unsupported_api_version") {
+	v1 := request("intent.create", "", judgment("v1"))
+	v1.Version = 1
+	if _, err := s.Handle(ctx, v1); !apierr.HasCode(err, "unsupported_api_version") {
 		t.Fatalf("api_version 1 on a native repository: %v", err)
 	}
-	intent := call(t, s, requestV2("intent.create", "", judgment("native")))["intent_id"].(string)
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", judgment("native")))["intent_id"].(string)
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
-	fork := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+	fork := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
 	if fork["base_tree"] != tree {
 		t.Fatalf("forked from %v, want %s", fork["base_tree"], tree)
 	}
@@ -139,7 +138,7 @@ func TestNativeForkClonesTheLineHead(t *testing.T) {
 			t.Fatalf("%s written at version %d, %v", id, cr.Version, err)
 		}
 	}
-	if _, err := s.Handle(ctx, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"], "base_tree": "e" + tree[1:]})); !apierr.HasCode(err, "base_unavailable") {
+	if _, err := s.Handle(ctx, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"], "base_tree": "e" + tree[1:]})); !apierr.HasCode(err, "base_unavailable") {
 		t.Fatalf("fork from a missing tree: %v", err)
 	}
 }
@@ -148,15 +147,15 @@ func TestNativeForkClonesTheLineHead(t *testing.T) {
 // the symbol maps of that tree (P2-AC-013).
 func TestNativeProposePinsTheOperationLog(t *testing.T) {
 	s, base := nativeFixture(t)
-	intent := call(t, s, requestV2("intent.create", "", judgment("native")))["intent_id"].(string)
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", judgment("native")))["intent_id"].(string)
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
-	fork := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+	fork := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
 	wid := fork["workspace_id"].(string)
 	if err := os.WriteFile(filepath.Join(fork["path"].(string), "a.ts"), []byte("export function x() { return 2 }\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	prop := call(t, s, requestV2("workspace.propose", sid, map[string]any{"workspace_id": wid}))
+	prop := call(t, s, request("workspace.propose", sid, map[string]any{"workspace_id": wid}))
 	o, err := s.Store.Read(prop["manifest"].(string))
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +167,7 @@ func TestNativeProposePinsTheOperationLog(t *testing.T) {
 	if m.BaseTree != base || m.Tree != prop["tree"] || m.Tree == base || m.OpHead != prop["op_head"] || len(m.Files) != 1 || m.Files[0] != "a.ts" {
 		t.Fatalf("manifest %+v, proposal %v", m, prop)
 	}
-	entries, err := s.Provider.(workspace.NativeProvider).Workspaces.Log(wid)
+	entries, err := s.Provider.Workspaces.Log(wid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,13 +182,13 @@ func TestNativeProposePinsTheOperationLog(t *testing.T) {
 	if same, err := symbols.Recompute(s.Objects, id); err != nil || !same {
 		t.Fatalf("symbol map %s: %v, %v", id, same, err)
 	}
-	status := call(t, s, requestV2("system.status", "", map[string]any{}))
+	status := call(t, s, request("system.status", "", map[string]any{}))
 	for _, sub := range status["subjects"].([]any) {
 		if sub := sub.(map[string]any); sub["id"] == wid && sub["state"] != "proposed" {
 			t.Fatalf("workspace %v", sub)
 		}
 	}
-	why := call(t, s, requestV2("history.why", "", map[string]any{"symbol": map[string]any{"path": "a.ts", "language": "typescript", "name": "x", "kind": "function", "disambiguator": nil}}))
+	why := call(t, s, request("history.why", "", map[string]any{"symbol": map[string]any{"path": "a.ts", "language": "typescript", "name": "x", "kind": "function", "disambiguator": nil}}))
 	if records := why["records"].([]any); len(records) != 1 || records[0].(map[string]any)["manifest"].(map[string]any)["hash"] != prop["manifest"] {
 		t.Fatalf("history.why %v", why)
 	}
@@ -200,15 +199,15 @@ func TestNativeProposePinsTheOperationLog(t *testing.T) {
 func TestNativeCloseRecordsThenRemoves(t *testing.T) {
 	s, _ := nativeFixture(t)
 	ctx := context.Background()
-	intent := call(t, s, requestV2("intent.create", "", judgment("close")))["intent_id"].(string)
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", judgment("close")))["intent_id"].(string)
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
 	fork := func() (string, string) {
-		f := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+		f := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
 		return f["workspace_id"].(string), f["path"].(string)
 	}
 	closeWS := func(id string) error {
-		_, err := s.Handle(ctx, requestV2("workspace.close", sid, map[string]any{"workspace_id": id, "reason": "finished"}))
+		_, err := s.Handle(ctx, request("workspace.close", sid, map[string]any{"workspace_id": id, "reason": "finished"}))
 		return err
 	}
 
@@ -222,7 +221,7 @@ func TestNativeCloseRecordsThenRemoves(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("checkout kept: %v", err)
 	}
-	entries, err := s.Provider.(workspace.NativeProvider).Workspaces.Log(edited)
+	entries, err := s.Provider.Workspaces.Log(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +253,7 @@ func TestNativeCloseRecordsThenRemoves(t *testing.T) {
 	if _, err := os.ReadFile(secret); err != nil {
 		t.Fatal("ignored user data was deleted")
 	}
-	if st := call(t, s, requestV2("workspace.status", "", map[string]any{"workspace_id": kept})); st["state"] != "closed" {
+	if st := call(t, s, request("workspace.status", "", map[string]any{"workspace_id": kept})); st["state"] != "closed" {
 		t.Fatal(st)
 	}
 }
@@ -262,22 +261,22 @@ func TestNativeCloseRecordsThenRemoves(t *testing.T) {
 // Status and API writes on a native workspace report against its base tree.
 func TestNativeStatusAndWrite(t *testing.T) {
 	s, base := nativeFixture(t)
-	intent := call(t, s, requestV2("intent.create", "", judgment("write")))["intent_id"].(string)
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", judgment("write")))["intent_id"].(string)
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
-	wid := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))["workspace_id"].(string)
-	wrote := call(t, s, requestV2("workspace.write", sid, map[string]any{"workspace_id": wid, "path": "src/b.ts", "content": "export const y=2;\n", "expected_hash": nil}))
+	wid := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))["workspace_id"].(string)
+	wrote := call(t, s, request("workspace.write", sid, map[string]any{"workspace_id": wid, "path": "src/b.ts", "content": "export const y=2;\n", "expected_hash": nil}))
 	if wrote["content_hash"] == nil {
 		t.Fatalf("write %v", wrote)
 	}
-	st := call(t, s, requestV2("workspace.status", sid, map[string]any{"workspace_id": wid}))
+	st := call(t, s, request("workspace.status", sid, map[string]any{"workspace_id": wid}))
 	if st["base_tree"] != base || st["state"] != "open" {
 		t.Fatalf("status %v", st)
 	}
 	if ws := anyStrings(st["write_set"]); len(ws) != 1 || ws[0] != "src/b.ts" {
 		t.Fatalf("write set %v", st["write_set"])
 	}
-	entries, err := s.Provider.(workspace.NativeProvider).Workspaces.Log(wid)
+	entries, err := s.Provider.Workspaces.Log(wid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,18 +292,18 @@ func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
 	check := unitCheck()
 	check.Command = "test -f a.ts && ! test -e .git"
 	writeChecks(t, s, []schema.CheckDefinition{check})
-	intent := call(t, s, requestV2("intent.create", "", checkIntent()))
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", checkIntent()))
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
-	fork := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": sess["capability_id"]}))
+	fork := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": sess["capability_id"]}))
 	if err := os.WriteFile(filepath.Join(fork["path"].(string), "a.ts"), []byte("export const x=5;\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	prop := call(t, s, requestV2("workspace.propose", sid, map[string]any{"workspace_id": fork["workspace_id"]}))
-	resolved := call(t, s, requestV2("evidence.resolve", "", map[string]any{"manifest": prop["manifest"]}))
+	prop := call(t, s, request("workspace.propose", sid, map[string]any{"workspace_id": fork["workspace_id"]}))
+	resolved := call(t, s, request("evidence.resolve", "", map[string]any{"manifest": prop["manifest"]}))
 	checks := resolved["checks"].([]any)
 	def := checks[0].(map[string]any)["definition_hash"]
-	run := call(t, s, requestV2("evidence.run", "", map[string]any{"manifest": prop["manifest"], "check_definition": def}))
+	run := call(t, s, request("evidence.run", "", map[string]any{"manifest": prop["manifest"], "check_definition": def}))
 	if run["result"] != "pass" {
 		t.Fatalf("run %v", run)
 	}
@@ -318,7 +317,7 @@ func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
 	}
 	// P2-AC-022: an attestation naming any other tree is not evidence for
 	// this manifest, even when everything else about it is genuine.
-	forger := call(t, s, requestV2("session.create", "", map[string]any{}))["session_id"].(string)
+	forger := call(t, s, request("session.create", "", map[string]any{}))["session_id"].(string)
 	forged := att
 	forged.VerifierSession = forger
 	forged.Tree = base
@@ -336,7 +335,7 @@ func TestNativeEvidenceRunsOnTheManifestTree(t *testing.T) {
 	if left, _ := os.ReadDir(filepath.Join(s.runtimeDir(), "verify")); len(left) != 0 {
 		t.Fatalf("checkouts left behind: %v", left)
 	}
-	sel := call(t, s, requestV2("selection.record", "", map[string]any{"manifest": prop["manifest"], "evidence": []any{run["attestation"]}}))
+	sel := call(t, s, request("selection.record", "", map[string]any{"manifest": prop["manifest"], "evidence": []any{run["attestation"]}}))
 	o, err = s.Store.Read(sel["selection"].(string))
 	if err != nil {
 		t.Fatal(err)
@@ -369,7 +368,7 @@ func speculateNativeRun(t *testing.T, workers int) (*Service, map[string]any, st
 			EnvAllowlist: []string{"PATH"}, TimeoutSeconds: 20, OutputLimitBytes: 1024}
 	}
 	writeChecks(t, s, []schema.CheckDefinition{slow("ok", "test -f ok.txt"), slow("short", "test $(wc -c < ok.txt) -lt 10")})
-	intent := call(t, s, requestV2("intent.create", "", map[string]any{"description": "speculate", "criteria": []any{
+	intent := call(t, s, request("intent.create", "", map[string]any{"description": "speculate", "criteria": []any{
 		map[string]any{"id": "ok", "statement": "ok.txt exists", "verification": map[string]any{"kind": "check", "check": "ok"}},
 		map[string]any{"id": "short", "statement": "ok.txt is short", "verification": map[string]any{"kind": "check", "check": "short"}},
 	}}))["intent_id"].(string)
@@ -377,7 +376,7 @@ func speculateNativeRun(t *testing.T, workers int) (*Service, map[string]any, st
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		strategies = append(strategies, map[string]any{"name": name, "spec": "write ok.txt"})
 	}
-	start := call(t, s, requestV2("speculation.start", "", map[string]any{"intent_id": intent, "scorer": submissionScorer(),
+	start := call(t, s, request("speculation.start", "", map[string]any{"intent_id": intent, "scorer": submissionScorer(),
 		"deadline_seconds": 600, "strategies": strategies}))
 	if start["base_tree"] != base {
 		t.Fatalf("run base %v, want %s", start["base_tree"], base)
@@ -393,17 +392,17 @@ func speculateNativeRun(t *testing.T, workers int) (*Service, map[string]any, st
 		} else if err := os.WriteFile(filepath.Join(a["path"].(string), "other.txt"), []byte("no ok.txt"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		call(t, s, requestV2("speculation.submit", a["session_id"].(string), map[string]any{"run_id": runID, "workspace_id": a["workspace_id"]}))
+		call(t, s, request("speculation.submit", a["session_id"].(string), map[string]any{"run_id": runID, "workspace_id": a["workspace_id"]}))
 	}
 	began := time.Now()
-	out := call(t, s, requestV2("speculation.evaluate", "", map[string]any{"run_id": runID}))
+	out := call(t, s, request("speculation.evaluate", "", map[string]any{"run_id": runID}))
 	return s, out, runID, time.Since(began)
 }
 
 // P2-AC-014: speculation with 5 candidates and 2 checks runs the checks in
 // parallel, with the same results as running them one at a time.
 func TestNativeSpeculationRunsChecksInParallel(t *testing.T) {
-	parallel, fast := speculateNative(t, nativeEvidenceWorkers)
+	parallel, fast := speculateNative(t, defaultEvidenceWorkers)
 	serial, slow := speculateNative(t, 1)
 	// Each eligible candidate, by strategy, with its criteria statuses.
 	outcomes := func(res map[string]any) []string {
@@ -435,12 +434,12 @@ func TestNativeSpeculationRunsChecksInParallel(t *testing.T) {
 // A native run resolves to a v2 selection without a commit, and removes its
 // candidates' checkouts.
 func TestNativeSpeculationResolves(t *testing.T) {
-	s, evaluated, runID, _ := speculateNativeRun(t, nativeEvidenceWorkers)
+	s, evaluated, runID, _ := speculateNativeRun(t, defaultEvidenceWorkers)
 	scores := map[string]any{}
 	for i, id := range evaluated["eligible"].([]any) {
 		scores[id.(string)] = i + 1
 	}
-	out := call(t, s, requestV2("speculation.score", "", map[string]any{"run_id": runID, "scores": scores}))
+	out := call(t, s, request("speculation.score", "", map[string]any{"run_id": runID, "scores": scores}))
 	if out["state"] != "resolved" {
 		t.Fatalf("outcome %v", out)
 	}
@@ -462,7 +461,7 @@ func TestNativeSpeculationResolves(t *testing.T) {
 			t.Fatalf("losing checkout %s kept: %v", wid, err)
 		}
 	}
-	status := call(t, s, requestV2("speculation.status", "", map[string]any{"run_id": runID}))
+	status := call(t, s, request("speculation.status", "", map[string]any{"run_id": runID}))
 	if status["state"] != "resolved" || status["base_tree"] == nil {
 		t.Fatalf("status %v", status)
 	}
@@ -476,11 +475,11 @@ func TestNativeDetachDeps(t *testing.T) {
 		"package.json":                   `{"name":"app"}`,
 		"node_modules/left-pad/index.js": "module.exports = s => s\n",
 	})
-	intent := call(t, s, requestV2("intent.create", "", judgment("deps")))["intent_id"].(string)
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", judgment("deps")))["intent_id"].(string)
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
 	fork := func() (string, string) {
-		f := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
+		f := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent, "capability_id": sess["capability_id"]}))
 		return f["workspace_id"].(string), filepath.Join(f["path"].(string), "node_modules")
 	}
 	a, aDeps := fork()
@@ -501,7 +500,7 @@ func TestNativeDetachDeps(t *testing.T) {
 	if !shared(aDeps) || !shared(bDeps) {
 		t.Fatal("forks do not share the dependency tree")
 	}
-	got := call(t, s, requestV2("workspace.deps.detach", sid, map[string]any{"workspace_id": a, "path": "node_modules"}))
+	got := call(t, s, request("workspace.deps.detach", sid, map[string]any{"workspace_id": a, "path": "node_modules"}))
 	if got["workspace_id"] != a || got["path"] != "node_modules" {
 		t.Fatalf("detach %v", got)
 	}
@@ -514,8 +513,8 @@ func TestNativeDetachDeps(t *testing.T) {
 	if body, _ := os.ReadFile(filepath.Join(bDeps, "left-pad", "index.js")); string(body) != "module.exports = s => s\n" {
 		t.Fatalf("other workspace saw the install: %q", body)
 	}
-	call(t, s, requestV2("workspace.deps.detach", sid, map[string]any{"workspace_id": a}))
-	if _, err := s.Handle(context.Background(), requestV2("workspace.deps.detach", "", map[string]any{"workspace_id": a})); !apierr.HasCode(err, "unauthorized") {
+	call(t, s, request("workspace.deps.detach", sid, map[string]any{"workspace_id": a}))
+	if _, err := s.Handle(context.Background(), request("workspace.deps.detach", "", map[string]any{"workspace_id": a})); !apierr.HasCode(err, "unauthorized") {
 		t.Fatalf("detach without the session: %v", err)
 	}
 }

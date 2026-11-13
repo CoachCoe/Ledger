@@ -119,15 +119,12 @@ func Run(ctx context.Context, repo record.Repository, keys identity.IdentityProv
 		return err
 	}
 	kick := make(chan struct{}, 1)
-	watchers := observe.New(opts.DisableWatchers, func() {
+	watchers := observe.New(opts.DisableWatchers, observe.RulesFilter(svc.CaseSensitive()), func() {
 		select {
 		case kick <- struct{}{}:
 		default:
 		}
 	})
-	if repo.Native() {
-		watchers.Filter = observe.RulesFilter(svc.CaseSensitive())
-	}
 	defer func() { _ = watchers.Close() }()
 	syncWatchers := func() error {
 		paths, err := svc.Workspaces(ctx)

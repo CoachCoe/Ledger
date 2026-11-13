@@ -13,7 +13,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -253,7 +252,7 @@ func TestM2HistoricalSignatureChainAndTrust(t *testing.T) {
 				t.Fatal(err)
 			}
 			original.PublicKey = identity.EncodePublicKey(replacement.PublicKey())
-			forged, err := envelope.Seal(schema.KindSession, original, root)
+			forged, err := envelope.SealVersion(2, schema.KindSession, original, root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -288,11 +287,11 @@ func TestM2HistoricalSignatureChainAndTrust(t *testing.T) {
 				endedAt = started.Add(time.Millisecond)
 			}
 			reason := "test_revocation"
-			event, err := envelope.Seal(schema.KindLifecycleEvent, schema.LifecycleEvent{SubjectKind: "session", SubjectID: session.ID, Creation: o.Hash, FromState: "active", ToState: "ended", Actor: root.ID(), At: schema.Timestamp(endedAt), Reason: &reason}, root)
+			event, err := envelope.SealVersion(2, schema.KindLifecycleEvent, schema.LifecycleEvent{SubjectKind: "session", SubjectID: session.ID, Creation: o.Hash, FromState: "active", ToState: "ended", Actor: root.ID(), At: schema.Timestamp(endedAt), Reason: &reason}, root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			receipt, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{OperationID: schema.NewID(schema.PrefixOperation), Operation: "session.end", RequestDigest: canon.Hash(nil), Members: []string{event.Hash}, Result: []byte("{}"), At: schema.Timestamp(endedAt)}, root)
+			receipt, err := envelope.SealVersion(2, schema.KindOperationReceipt, schema.OperationReceipt{OperationID: schema.NewID(schema.PrefixOperation), Operation: "session.end", RequestDigest: canon.Hash(nil), Members: []string{event.Hash}, Result: []byte("{}"), At: schema.Timestamp(endedAt)}, root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -338,21 +337,10 @@ func TestM2RecoveryPredecessorConflictAndTerminal(t *testing.T) {
 
 func TestM2DependencyDiffKinds(t *testing.T) {
 	// AC-109, AC-108: inspect the base-relative diff, including both rename
-	// sides, deleted manifests, agent commits and mode-only changes.
-	for _, kind := range []string{"add", "modify", "delete", "rename-from", "rename-to", "mode", "agent-commit"} {
+	// sides, deleted manifests and mode-only changes.
+	for _, kind := range []string{"add", "modify", "delete", "rename-from", "rename-to", "mode"} {
 		t.Run(kind, func(t *testing.T) {
-			s := fixture(t)
-			ctx := context.Background()
-			repo := s.Store.Repo.MainDir
-			if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte("{}\n"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			env := []string{"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid"}
-			for _, args := range [][]string{{"add", "package.json"}, {"commit", "-qm", "manifest"}} {
-				if _, err := gitx.Run(ctx, repo, nil, env, args...); err != nil {
-					t.Fatal(err)
-				}
-			}
+			s, _ := nativeFixtureWith(t, map[string]string{"package.json": "{}\n"})
 			session := call(t, s, request("session.create", "", map[string]any{"may_add_dependencies": false}))
 			w := m2Workspace(t, s, session)
 			dir := w["path"].(string)
@@ -362,7 +350,7 @@ func TestM2DependencyDiffKinds(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("foo"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "modify", "agent-commit":
+			case "modify":
 				if err := os.WriteFile(manifest, []byte("{\"new\":true}"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -381,13 +369,6 @@ func TestM2DependencyDiffKinds(t *testing.T) {
 			case "mode":
 				if err := os.Chmod(manifest, 0700); err != nil {
 					t.Fatal(err)
-				}
-			}
-			if kind == "agent-commit" {
-				for _, args := range [][]string{{"add", "-A"}, {"commit", "-qm", "agent"}} {
-					if _, err := gitx.Run(ctx, dir, nil, env, args...); err != nil {
-						t.Fatal(err)
-					}
 				}
 			}
 			expectCode(t, s, "workspace.propose", session["session_id"].(string), map[string]any{"workspace_id": w["workspace_id"]}, "scope_violation")

@@ -10,6 +10,9 @@ import (
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
+// Version is the api_version this binary answers.
+const Version = 2
+
 type Request struct {
 	Version     int            `json:"api_version"`
 	Operation   string         `json:"operation"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/evidence"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -62,7 +62,7 @@ func (f *runFix) propose(t *testing.T, content string) {
 }
 
 func (f *runFix) input(extra map[string]any) map[string]any {
-	in := map[string]any{"manifest": f.proposal["manifest"], "commit": f.proposal["commit"], "check_definition": f.def}
+	in := map[string]any{"manifest": f.proposal["manifest"], "check_definition": f.def}
 	for k, v := range extra {
 		in[k] = v
 	}
@@ -131,7 +131,7 @@ func TestAC167_168_058_RunSignsAttestation(t *testing.T) {
 		t.Fatalf("retry should replay: %v %v", replay, err)
 	}
 	a := f.attestation(t, out["attestation"].(string))
-	if a.Manifest != f.proposal["manifest"] || a.Commit != f.proposal["commit"] || a.ExecutedTree != f.proposal["tree"] || a.CheckDefinition != f.def {
+	if a.Manifest != f.proposal["manifest"] || a.Tree != f.proposal["tree"] || a.CheckDefinition != f.def {
 		t.Fatalf("binding: %+v", a)
 	}
 	if a.Category != "mechanical" || a.Command != "echo verified" || len(a.Criteria) != 2 || a.Criteria[0] != "lint" || a.Criteria[1] != "tests" {
@@ -174,12 +174,12 @@ func TestEvidenceRunPrechecks(t *testing.T) {
 	ctx := context.Background()
 	other := strings.Repeat("c", 64)
 	expectCode(t, s, "evidence.run", "", f.input(map[string]any{"check_definition": other}), "check_not_pinned")
-	expectCode(t, s, "evidence.run", "", f.input(map[string]any{"commit": strings.Repeat("1", 40)}), "binding_mismatch")
 	expectCode(t, s, "evidence.run", "", f.input(map[string]any{"manifest": other}), "unknown_manifest")
 	for _, in := range []map[string]any{
-		{"manifest": f.proposal["manifest"], "commit": f.proposal["commit"]},
-		{"manifest": f.proposal["manifest"], "check_definition": f.def},
+		{"manifest": f.proposal["manifest"]},
+		{"check_definition": f.def},
 		f.input(map[string]any{"extra": 1}),
+		f.input(map[string]any{"commit": strings.Repeat("1", 40)}),
 		f.input(map[string]any{"keep_worktree": "sometimes"}),
 		f.input(map[string]any{"verifier_session": f.sid}),
 	} {
@@ -187,11 +187,6 @@ func TestEvidenceRunPrechecks(t *testing.T) {
 			t.Fatalf("input %v: %v", in, err)
 		}
 	}
-	// A rework creates a new revision: the old commit does not bind to it.
-	call(t, s, request("workspace.rework", f.sid, map[string]any{"workspace_id": f.wid}))
-	old := f.proposal
-	f.propose(t, "export const x=3;\n")
-	expectCode(t, s, "evidence.run", "", map[string]any{"manifest": f.proposal["manifest"], "commit": old["commit"], "check_definition": f.def}, "binding_mismatch")
 	if got := f.attestations(t); len(got) != 0 {
 		t.Fatalf("a refused run recorded evidence: %v", got)
 	}
@@ -235,7 +230,7 @@ func TestAC092_176_VerifierNotAuthor(t *testing.T) {
 			edit(&att)
 		}
 		key := s.signers[sid]
-		o, err := envelope.Seal(schema.KindEvidenceAttestation, att, key)
+		o, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, att, key)
 		if err != nil {
 			return err
 		}
@@ -261,8 +256,7 @@ func TestAC092_176_VerifierNotAuthor(t *testing.T) {
 		edit func(*schema.EvidenceAttestation)
 		code string
 	}{
-		"other commit":           {func(a *schema.EvidenceAttestation) { a.Commit = strings.Repeat("2", 40) }, "binding_mismatch"},
-		"other tree":             {func(a *schema.EvidenceAttestation) { a.ExecutedTree = strings.Repeat("3", 40) }, "tree_mismatch"},
+		"other tree":             {func(a *schema.EvidenceAttestation) { a.Tree = strings.Repeat("3", 64) }, "cross_revision_evidence"},
 		"unknown definition":     {func(a *schema.EvidenceAttestation) { a.CheckDefinition = strings.Repeat("4", 64) }, "unknown_entity"},
 		"unknown criterion":      {func(a *schema.EvidenceAttestation) { a.Criteria = []string{"nope"} }, "invalid_attestation"},
 		"unpinned criterion":     {func(a *schema.EvidenceAttestation) { a.Criteria = []string{"review"} }, "invalid_attestation"},
@@ -289,19 +283,19 @@ func TestAC174_175_230_LaterEvidenceAndEditedWorkspace(t *testing.T) {
 	s := fixture(t)
 	f := newRunFix(t, s, "grep -q 'x=2' a.ts && test \"$(cat a.ts)\" = 'export const x=2;'", nil)
 	ctx := context.Background()
-	refs := func() string {
-		out, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, nil, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/ledger/proposals")
+	line := func() index.LineHead {
+		head, err := s.Store.Index.LineHead(ctx, "main")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return string(out)
+		return head
 	}
 	manifestPath := s.Store.ObjectPath(f.proposal["manifest"].(string))
 	manifestBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := refs()
+	before := line()
 	// The author is still editing; the run must see the proposed content.
 	if err := os.WriteFile(filepath.Join(f.dir, "a.ts"), []byte("export const x=9;\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -311,20 +305,17 @@ func TestAC174_175_230_LaterEvidenceAndEditedWorkspace(t *testing.T) {
 		t.Fatalf("run saw the edited workspace: %v", out)
 	}
 	a := f.attestation(t, out["attestation"].(string))
-	if a.Commit != f.proposal["commit"] || a.ExecutedTree != f.proposal["tree"] {
-		t.Fatalf("attestation must name the bound commit and tree: %+v", a)
+	if a.Tree != f.proposal["tree"] {
+		t.Fatalf("attestation must name the bound tree: %+v", a)
 	}
-	if after := refs(); after != before {
-		t.Fatalf("evidence moved a ref or commit:\n%s\n%s", before, after)
+	if after := line(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("evidence moved line main: %+v -> %+v", before, after)
 	}
 	if now, _ := os.ReadFile(manifestPath); string(now) != string(manifestBytes) {
 		t.Fatal("manifest object changed")
 	}
 	if body, _ := os.ReadFile(filepath.Join(f.dir, "a.ts")); string(body) != "export const x=9;\n" {
 		t.Fatalf("author workspace was touched: %q", body)
-	}
-	if head, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, nil, "rev-parse", f.proposal["branch"].(string)); err != nil || strings.TrimSpace(string(head)) != f.proposal["commit"] {
-		t.Fatalf("branch no longer at the bound commit: %s %v", head, err)
 	}
 }
 
@@ -358,7 +349,7 @@ func TestAC004_056_ChangeRecordCarriesEvidence(t *testing.T) {
 
 func TestAC209_231_CleanCheckoutIndependentVerifier(t *testing.T) {
 	s := fixture(t)
-	f := newRunFix(t, s, "pwd -P; git rev-parse HEAD; git status --porcelain --untracked-files=no", nil)
+	f := newRunFix(t, s, "pwd -P; cat a.ts", nil)
 	out := call(t, s, request("evidence.run", "", f.input(map[string]any{"keep_worktree": "always"})))
 	kept, _ := out["kept_worktree"].(string)
 	runID := out["run_id"].(string)
@@ -371,8 +362,8 @@ func TestAC209_231_CleanCheckoutIndependentVerifier(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	realKept, _ := filepath.EvalSymlinks(kept)
-	if len(lines) != 2 || lines[0] != realKept || lines[1] != f.proposal["commit"] {
-		t.Fatalf("check ran in %v, want %s at %s", lines, realKept, f.proposal["commit"])
+	if len(lines) != 2 || lines[0] != realKept || lines[1] != "export const x=2;" {
+		t.Fatalf("check ran in %v, want %s holding the proposed a.ts", lines, realKept)
 	}
 	if strings.HasPrefix(lines[0], f.dir) {
 		t.Fatal("check ran in the author's workspace")
@@ -380,7 +371,7 @@ func TestAC209_231_CleanCheckoutIndependentVerifier(t *testing.T) {
 	if a := f.attestation(t, out["attestation"].(string)); a.VerifierSession == f.sid {
 		t.Fatal("verifier is the author")
 	}
-	if err := s.Store.Repo.WorktreeRemove(context.Background(), kept); err != nil {
+	if err := s.checkouts.Remove(context.Background(), kept); err != nil {
 		t.Fatal(err)
 	}
 	f.verifyDirEmpty(t)
@@ -453,7 +444,7 @@ func TestEvidenceFailedRunsPublishFailedAttestations(t *testing.T) {
 				t.Fatalf("result: %v", out)
 			}
 			a := f.attestation(t, out["attestation"].(string))
-			if a.Result != "fail" || a.Reason == nil || *a.Reason != c.reason || a.Isolation != "none" || a.ExecutedTree != f.proposal["tree"] {
+			if a.Result != "fail" || a.Reason == nil || *a.Reason != c.reason || a.Isolation != "none" || a.Tree != f.proposal["tree"] {
 				t.Fatalf("attestation: %+v", a)
 			}
 			if st := f.sessionState(t, a.VerifierSession); st != "ended" {
@@ -510,7 +501,7 @@ func TestEvidencePublication(t *testing.T) {
 		{"after_sign", "", evidence.StageAfterSign, false},
 		{"journal", record.StageJournal, "", false},
 	}
-	for _, stage := range []string{record.StageEffects, record.StageObjects, record.StageReceipt, record.StageRef, record.StageRefCAS, record.StageIndex, record.StageCleanup, record.StageDone} {
+	for _, stage := range []string{record.StageEffects, record.StageObjects, record.StageReceipt, record.StageLog, record.StageIndex, record.StageCleanup, record.StageDone} {
 		cases = append(cases, crash{stage, stage, "", true})
 	}
 	for _, c := range cases {
@@ -577,7 +568,7 @@ func TestEvidencePublication(t *testing.T) {
 				if !apierr.HasCode(err, "run_interrupted") {
 					t.Fatalf("retry: %v", err)
 				}
-				if d := apierr.As(err).Details; d["run_id"] != runs[0].(map[string]any)["run_id"] || d["commit"] != f.proposal["commit"] {
+				if d := apierr.As(err).Details; d["run_id"] != runs[0].(map[string]any)["run_id"] || d["manifest"] != f.proposal["manifest"] {
 					t.Fatalf("details %v", d)
 				}
 				// A new operation id starts a fresh run.

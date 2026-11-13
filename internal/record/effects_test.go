@@ -15,7 +15,7 @@ func TestJournalReplaysFrozenEffects(t *testing.T) {
 	s := newStore(t)
 	calls := 0
 	failed := false
-	w := openStore(t, s.Repo, Options{Effect: func(_ context.Context, e Effect) error {
+	w := reopen(t, s, Options{Effect: func(_ context.Context, e Effect) error {
 		if e.New != "frozen" {
 			t.Fatal(e)
 		}
@@ -39,7 +39,7 @@ func TestJournalReplaysFrozenEffects(t *testing.T) {
 	if done, _ := w.Index.Committed(ctx, object.Hash); done {
 		t.Fatal("pending object visible")
 	}
-	restarted := openStore(t, s.Repo, Options{Effect: func(_ context.Context, e Effect) error {
+	restarted := reopen(t, s, Options{Effect: func(_ context.Context, e Effect) error {
 		calls++
 		if e.New != "frozen" {
 			t.Fatal(e)
@@ -64,7 +64,7 @@ func TestJournalReplaysFrozenEffects(t *testing.T) {
 func TestCommittedEffectsAreNotReapplied(t *testing.T) {
 	s := newStore(t)
 	calls := 0
-	w := openStore(t, s.Repo, Options{Effect: func(context.Context, Effect) error { calls++; return nil }, Fault: func(stage string) error {
+	w := reopen(t, s, Options{Effect: func(context.Context, Effect) error { calls++; return nil }, Fault: func(stage string) error {
 		if stage == StageDone {
 			return errors.New("crash after commit")
 		}
@@ -76,7 +76,7 @@ func TestCommittedEffectsAreNotReapplied(t *testing.T) {
 	if err == nil {
 		t.Fatal("fault missing")
 	}
-	restarted := openStore(t, s.Repo, Options{Effect: func(context.Context, Effect) error { t.Fatal("committed ref effect reapplied"); return nil }})
+	restarted := reopen(t, s, Options{Effect: func(context.Context, Effect) error { t.Fatal("committed effect reapplied"); return nil }})
 	if _, err := restarted.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestCommittedEffectsAreNotReapplied(t *testing.T) {
 // that supply its keys are indexed again, or every later operation fails.
 func TestReindexWithPendingCleanup(t *testing.T) {
 	s := newStore(t)
-	w := openStore(t, s.Repo, Options{Effect: func(context.Context, Effect) error { return errors.New("user files remain") }})
+	w := reopen(t, s, Options{Effect: func(context.Context, Effect) error { return errors.New("user files remain") }})
 	_, err := w.DoEffects(ctx, op("cleanup"), func(*index.Index) (any, []envelope.Object, []Effect, error) {
 		return map[string]bool{"done": true}, []envelope.Object{intentRecord(t, schema.NewID(schema.PrefixIntent))}, []Effect{{Kind: "test", After: true}}, nil
 	})

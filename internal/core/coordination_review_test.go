@@ -3,8 +3,6 @@ package core
 import (
 	"context"
 	"testing"
-
-	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 func TestRewrittenCodeDropsRemovedDependencies(t *testing.T) {
@@ -29,26 +27,6 @@ func TestRewrittenCodeDropsRemovedDependencies(t *testing.T) {
 			t.Fatal("removed call leaked into frozen provenance")
 		}
 	}
-}
-
-func TestUnchangedGitlinkDoesNotBlockSymbolAnalysis(t *testing.T) {
-	s := fixture(t)
-	ctx := context.Background()
-	sha, err := s.Store.Repo.ResolveRef(ctx, "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := []string{"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid"}
-	for _, args := range [][]string{{"update-index", "--add", "--cacheinfo", "160000," + sha + ",vendor"}, {"commit", "-qm", "unchanged gitlink"}} {
-		if _, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, env, args...); err != nil {
-			t.Fatal(err)
-		}
-	}
-	a := m4Session(t, s)
-	w := m2Workspace(t, s, a)
-	m4Edit(t, w, "a.ts", "export const x=2;\n")
-	call(t, s, request("coordination.status", "", map[string]any{"workspace_id": w["workspace_id"]}))
-	call(t, s, request("workspace.propose", a["session_id"].(string), map[string]any{"workspace_id": w["workspace_id"]}))
 }
 
 func TestBatchAcknowledgmentDoesNotPartiallyAcknowledgeAnotherQueue(t *testing.T) {

@@ -33,7 +33,6 @@ type Journal struct {
 	OperationID     string `json:"operation_id,omitempty"`
 	State           string `json:"state"`
 	Manifest        string `json:"manifest"`
-	Commit          string `json:"commit,omitzero"`
 	Tree            string `json:"tree"`
 	CheckDefinition string `json:"check_definition,omitempty"`
 	WorktreePath    string `json:"worktree_path"`

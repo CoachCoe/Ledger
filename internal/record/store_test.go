@@ -1,13 +1,10 @@
 package record
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +12,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
@@ -37,9 +33,7 @@ func TestPublishAndRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !maps.Equal(refHashes(t, s), diskHashes(t, s)) {
-		t.Fatal("ref and disk differ")
-	}
+	checkLog(t, s)
 	if sub := subject(t, s, id); sub == nil || sub.State != "open" || sub.Owner != root.ID() {
 		t.Fatalf("subject %+v", sub)
 	}
@@ -109,7 +103,7 @@ func TestConcurrentTransitionsFromOnePredecessor(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
-		w := openStore(t, s.Repo, Options{})
+		w := reopen(t, s, Options{})
 		ev := closeEvent(t, id, in.Hash, []string{"completed", "abandoned"}[i%2])
 		wg.Go(func() {
 			_, errs[i] = w.Do(ctx, op("close"), members(ev))
@@ -134,194 +128,7 @@ func TestConcurrentTransitionsFromOnePredecessor(t *testing.T) {
 	}
 }
 
-// TestMultiProcessWriters runs the test binary as several writer processes
-// against one repository.
-func TestMultiProcessWriters(t *testing.T) {
-	const procs, opsEach, perOp = 6, 40, 8
-	s := newStore(t)
-	var wg sync.WaitGroup
-	for p := range procs {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestWriterProcess$")
-		cmd.Env = append(os.Environ(), "LEDGER_WRITER_REPO="+s.Repo.Dir,
-			"LEDGER_WRITER_OPS="+strconv.Itoa(opsEach), "LEDGER_WRITER_PER_OP="+strconv.Itoa(perOp))
-		wg.Go(func() {
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Errorf("writer %d: %v\n%s", p, err, out)
-			}
-		})
-	}
-	wg.Wait()
-	want := 2 + procs*opsEach*(perOp+1) // root key + receipt, then each op's records + receipt
-	disk := diskHashes(t, s)
-	if len(disk) != want {
-		t.Fatalf("%d records on disk, want %d", len(disk), want)
-	}
-	if !maps.Equal(refHashes(t, s), disk) {
-		t.Fatal("ref does not contain every record")
-	}
-	r, err := s.Recover(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Indexed != 0 || len(r.Pending) != 0 || len(r.Quarantined) != 0 || r.AddedToRef != 0 {
-		t.Fatalf("writers left work for recovery: %+v", r)
-	}
-	subjects, err := s.Index.Subjects(ctx)
-	if err != nil || len(subjects) != procs*opsEach*perOp {
-		t.Fatalf("%d subjects indexed, %v", len(subjects), err)
-	}
-}
-
-func TestWriterProcess(t *testing.T) {
-	dir := os.Getenv("LEDGER_WRITER_REPO")
-	if dir == "" {
-		t.Skip("helper process for TestMultiProcessWriters")
-	}
-	n, _ := strconv.Atoi(os.Getenv("LEDGER_WRITER_OPS"))
-	per, _ := strconv.Atoi(os.Getenv("LEDGER_WRITER_PER_OP"))
-	repo := newRepoAt(t, dir)
-	s := openStore(t, repo, Options{})
-	for range n {
-		var objs []envelope.Object
-		for range per {
-			objs = append(objs, intentRecord(t, schema.NewID(schema.PrefixIntent)))
-		}
-		if _, err := s.Do(ctx, op("write"), members(objs...)); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestCrashAtEveryStageConverges(t *testing.T) {
-	stages := []string{StageJournal, StageObjects, StageReceipt, StageRef, StageRefCAS, StageIndex, StageDone}
-	for _, stage := range stages {
-		t.Run(stage, func(t *testing.T) {
-			s := newStore(t)
-			crash := errors.New("crash")
-			crashing := openStore(t, s.Repo, Options{Fault: func(st string) error {
-				if st == stage {
-					return crash
-				}
-				return nil
-			}})
-			id := schema.NewID(schema.PrefixIntent)
-			o := op("create")
-			if _, err := crashing.Do(ctx, o, members(intentRecord(t, id))); !errors.Is(err, crash) {
-				t.Fatalf("Do = %v, want crash", err)
-			}
-			restarted := openStore(t, s.Repo, Options{})
-			if _, err := restarted.Recover(ctx); err != nil {
-				t.Fatal(err)
-			}
-			committed := subject(t, restarted, id) != nil
-			if committed == (stage == StageJournal) {
-				t.Fatalf("after crash at %s committed = %v", stage, committed)
-			}
-			res, err := restarted.Do(ctx, o, members(intentRecord(t, id)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if res.Replayed != committed {
-				t.Fatalf("retry Replayed = %v, want %v", res.Replayed, committed)
-			}
-			ops, _ := restarted.Index.Operations(ctx, o.ID)
-			if len(ops) != 1 {
-				t.Fatalf("%d receipts for one operation", len(ops))
-			}
-			if !maps.Equal(refHashes(t, restarted), diskHashes(t, restarted)) {
-				t.Fatal("ref and disk differ after recovery")
-			}
-			before := digest(t, restarted)
-			if _, err := restarted.Reindex(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if digest(t, restarted) != before {
-				t.Fatal("reindex changed durable state")
-			}
-		})
-	}
-}
-
-func TestRefMovedDuringUpdateIsMerged(t *testing.T) {
-	s := newStore(t)
-	extID := schema.NewID(schema.PrefixIntent)
-	ext := externalGroup(t, intentRecord(t, extID))
-	var external string
-	w := openStore(t, s.Repo, Options{Fault: func(st string) error {
-		if st == StageRefCAS && external == "" {
-			external = pushToRef(t, s, ext)
-		}
-		return nil
-	}})
-	id := schema.NewID(schema.PrefixIntent)
-	if _, err := w.Do(ctx, op("create"), members(intentRecord(t, id))); err != nil {
-		t.Fatal(err)
-	}
-	tip, _ := s.Repo.ResolveRef(ctx, RecordsRef)
-	if ok, _ := s.Repo.IsAncestor(ctx, external, tip); !ok {
-		t.Fatal("external commit was overwritten")
-	}
-	if !maps.Equal(refHashes(t, s), diskHashes(t, s)) {
-		t.Fatal("ref and disk differ")
-	}
-	for _, h := range []string{ext.Receipt.Hash, ext.Members[0].Hash} {
-		if !diskHashes(t, s)[h] {
-			t.Fatalf("external record %s not materialized", h)
-		}
-	}
-	if subject(t, w, extID) == nil || subject(t, w, id) == nil {
-		t.Fatal("both intents should be indexed")
-	}
-}
-
-func TestDivergentRefKeepsBothParents(t *testing.T) {
-	s := newStore(t)
-	old, _ := s.Repo.ResolveRef(ctx, RecordsRef)
-	ext := externalGroup(t, intentRecord(t, schema.NewID(schema.PrefixIntent)))
-	// Replace the ref with an unrelated history, as a forced fetch would.
-	if err := s.Repo.UpdateRefCAS(ctx, RecordsRef, emptyCommit(t, s), old); err != nil {
-		t.Fatal(err)
-	}
-	var divergent string
-	w := openStore(t, s.Repo, Options{Fault: func(st string) error {
-		if st == StageRefCAS && divergent == "" {
-			divergent = pushToRef(t, s, ext)
-		}
-		return nil
-	}})
-	if _, err := w.Do(ctx, op("create"), members(intentRecord(t, schema.NewID(schema.PrefixIntent)))); err != nil {
-		t.Fatal(err)
-	}
-	tip, err := s.Repo.ResolveRef(ctx, RecordsRef)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parents, err := gitx.Run(ctx, s.Repo.Dir, nil, nil, "rev-list", "--parents", "-n1", tip)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(strings.Fields(string(parents))) != 3 {
-		t.Fatalf("ref reconciliation did not retain two distinct tips: %s", parents)
-	}
-	if !maps.Equal(refHashes(t, s), diskHashes(t, s)) {
-		t.Fatal("records lost")
-	}
-}
-
-func emptyCommit(t *testing.T, s *Store) string {
-	t.Helper()
-	tree, err := s.Repo.BuildTree(ctx, filepath.Join(t.TempDir(), "i"), "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := s.Repo.CommitTree(ctx, tree, nil, "unrelated\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
-func TestTruncatedObjectQuarantinedAndRestored(t *testing.T) {
+func TestTruncatedObjectQuarantined(t *testing.T) {
 	s := newStore(t)
 	in := intentRecord(t, schema.NewID(schema.PrefixIntent))
 	if _, err := s.Do(ctx, op("create"), members(in)); err != nil {
@@ -342,12 +149,8 @@ func TestTruncatedObjectQuarantinedAndRestored(t *testing.T) {
 	if len(q) != 1 {
 		t.Fatalf("quarantine files %v", q)
 	}
-	// The ref still holds the intact copy, so recovery restores it.
-	if r.Materialized != 1 {
-		t.Fatalf("materialized %d", r.Materialized)
-	}
-	if _, err := s.Read(in.Hash); err != nil {
-		t.Fatal(err)
+	if _, err := s.Read(in.Hash); err == nil {
+		t.Fatal("truncated record still readable")
 	}
 }
 
@@ -393,7 +196,7 @@ func TestImportedForkIsConflictAndBlocks(t *testing.T) {
 	if _, err := s.Do(ctx, op("close"), members(local)); err != nil {
 		t.Fatal(err)
 	}
-	pushToRef(t, s, externalGroup(t, closeEvent(t, id, in.Hash, "abandoned")))
+	arrive(t, s, externalGroup(t, closeEvent(t, id, in.Hash, "abandoned")))
 	r, err := s.Recover(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -434,7 +237,7 @@ func TestImportedConflictingCreation(t *testing.T) {
 		Criteria: []schema.Criterion{{ID: "c", Statement: "s", Verification: schema.Verification{Kind: "judgment", Reviewer: "any"}}},
 		Source:   schema.Source{Kind: "human"}, Owner: root.ID(), CreatedAt: schema.Timestamp(fixedNow),
 	}, root)
-	pushToRef(t, s, externalGroup(t, other))
+	arrive(t, s, externalGroup(t, other))
 	r, err := s.Recover(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -463,7 +266,7 @@ func TestRecordsWithoutReceiptStayPending(t *testing.T) {
 	}
 }
 
-func TestTamperedRefRecordIsNotAccepted(t *testing.T) {
+func TestTamperedArrivedRecordIsNotAccepted(t *testing.T) {
 	s := newStore(t)
 	g := externalGroup(t, intentRecord(t, schema.NewID(schema.PrefixIntent)))
 	forged := g.Members[0]
@@ -476,7 +279,7 @@ func TestTamperedRefRecordIsNotAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pushToRef(t, s, externalGroup(t, f))
+	arrive(t, s, externalGroup(t, f))
 	r, err := s.Recover(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -498,12 +301,35 @@ func TestImportedMisattributedEventIgnored(t *testing.T) {
 		SubjectKind: "intent", SubjectID: id, Creation: in.Hash, FromState: "open", ToState: "closed",
 		Reason: &reason, Actor: "ses_" + strings.Repeat("u", 26), At: schema.Timestamp(fixedNow),
 	}, root)
-	pushToRef(t, s, externalGroup(t, forged))
+	arrive(t, s, externalGroup(t, forged))
 	if _, err := s.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sub := subject(t, s, id)
 	if sub.State != "open" || len(sub.Detail.Rejected) != 1 || sub.Detail.Rejected[0] != forged.Hash {
 		t.Fatalf("subject %+v", sub)
+	}
+}
+
+func TestPhase1StoreRefusesWrites(t *testing.T) {
+	s, err := OpenPhase1(newNativeDir(t), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	in := intentRecord(t, schema.NewID(schema.PrefixIntent))
+	writes := map[string]func() error{
+		"do":      func() error { _, err := s.Do(ctx, op("create"), members(in)); return err },
+		"import":  func() error { _, err := s.ImportRecords(ctx, []envelope.Object{in}); return err },
+		"recover": func() error { _, err := s.Recover(ctx); return err },
+		"reindex": func() error { _, err := s.Reindex(ctx); return err },
+	}
+	for name, write := range writes {
+		if err := write(); !apierr.HasCode(err, "migrate_required") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if s.Native() || len(diskHashes(t, s)) != 0 {
+		t.Fatal("Phase 1 store was written")
 	}
 }

@@ -8,7 +8,7 @@
       "additionalProperties": false,
       "properties": {
         "report": {
-          "$ref": "../../v1/runtime/recovery_report.json"
+          "$ref": "../runtime/recovery_report.json"
         },
         "index_digest": {
           "$ref": "../../v1/common.json#/$defs/hash"

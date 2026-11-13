@@ -13,7 +13,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/capability"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
@@ -76,10 +75,7 @@ func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
 	observation := m.(*sync.Mutex)
 	observation.Lock()
 	defer observation.Unlock()
-	writer, ok := s.Provider.(workspace.TextWriter)
-	if !ok {
-		return nil, apierr.New("unsupported_operation", "workspace provider has no text writer")
-	}
+	writer := s.Provider
 	// Runtime journals preserve retry identity across interrupted replacement.
 	// They contain only request digests and unsigned observations, never keys or
 	// source text, and are deliberately outside portable record history.
@@ -141,10 +137,6 @@ func (s *Service) detachDeps(ctx context.Context, r api.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	native, ok := s.Provider.(workspace.NativeProvider)
-	if !ok {
-		return nil, apierr.New("unsupported_operation", "only native workspaces share dependency trees")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r.SessionID == "" || s.signers[r.SessionID] == nil {
@@ -164,7 +156,7 @@ func (s *Service) detachDeps(ctx context.Context, r api.Request) (any, error) {
 	if in.Path != nil {
 		rel = *in.Path
 	}
-	if err := native.Workspaces.Detach(w.ID, rel); err != nil {
+	if err := s.Provider.Workspaces.Detach(w.ID, rel); err != nil {
 		return nil, err
 	}
 	return runtimeResult(map[string]any{"unsigned": true, "workspace_id": w.ID, "path": in.Path})

@@ -26,7 +26,6 @@ var errNotCommitted = errors.New("operation not committed")
 
 type runInput struct {
 	Manifest        string `json:"manifest"`
-	Commit          string `json:"commit"`
 	CheckDefinition string `json:"check_definition"`
 	KeepWorktree    string `json:"keep_worktree"`
 }
@@ -86,7 +85,7 @@ func (s *Service) beginRun(ctx context.Context, r api.Request, in runInput, dige
 		switch j.State {
 		case evidence.StateInterrupted:
 			return nil, none, apierr.New("run_interrupted", "evidence run %s was interrupted before a result was recorded; retry with a new operation id", j.RunID).
-				With("run_id", j.RunID).With("manifest", j.Manifest).With("commit", j.Commit).With("check_definition", j.CheckDefinition).With("reason", j.Reason)
+				With("run_id", j.RunID).With("manifest", j.Manifest).With("check_definition", j.CheckDefinition).With("reason", j.Reason)
 		case evidence.StateAborted:
 		default:
 			return nil, none, apierr.New("run_in_progress", "evidence run %s for this operation has not finished", j.RunID).With("run_id", j.RunID)
@@ -109,7 +108,7 @@ func (s *Service) beginRun(ctx context.Context, r api.Request, in runInput, dige
 			return nil, none, err
 		}
 	}
-	b, err := evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{Manifest: in.Manifest, Commit: in.Commit})
+	b, err := evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{Manifest: in.Manifest})
 	if err != nil {
 		return nil, none, err
 	}
@@ -189,7 +188,7 @@ func (s *Service) finishRun(ctx context.Context, r api.Request, digest string, p
 	if verifier == nil {
 		_ = evidence.SetState(rt, plan.RunID, evidence.StateInterrupted, "verifier_key_lost")
 		return nil, apierr.New("run_interrupted", "the verifier key for run %s was lost; no attestation was signed", plan.RunID).
-			With("run_id", plan.RunID).With("manifest", plan.Binding.Manifest).With("commit", plan.Binding.Commit).With("check_definition", plan.Check.DefinitionHash).With("reason", "verifier_key_lost")
+			With("run_id", plan.RunID).With("manifest", plan.Binding.Manifest).With("check_definition", plan.Check.DefinitionHash).With("reason", "verifier_key_lost")
 	}
 	if err := s.evidenceHooks.Stage(evidence.StageBeforeSign); err != nil {
 		return nil, err
@@ -213,7 +212,6 @@ func (s *Service) finishRun(ctx context.Context, r api.Request, digest string, p
 		"verifier_session": att.VerifierSession, "manifest": att.Manifest,
 		"check_definition": att.CheckDefinition, "setup": att.Setup, "check": att.Check, "kept_worktree": kept,
 	}
-	withCommit(result, att.Commit)
 	res, err := s.publish(pctx, record.Op{ID: r.OperationID, Name: r.Operation, Digest: digest, Signer: verifier}, func(*index.Index) (any, []envelope.Object, []record.Effect, error) {
 		return result, []envelope.Object{o}, nil, nil
 	})

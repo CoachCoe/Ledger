@@ -324,6 +324,16 @@ func locate(ctx context.Context) (record.Repository, error) {
 	return record.Locate(ctx, wd)
 }
 
+// locateNative locates a repository the daemon can serve: a Phase 1 one
+// is read-only until it is migrated.
+func locateNative(ctx context.Context) (record.Repository, error) {
+	repo, err := locate(ctx)
+	if err == nil && !repo.Native() {
+		return repo, migrateRequired(repo.Root)
+	}
+	return repo, err
+}
+
 // resolvePath resolves existing ancestors even when the final directory
 // has not been created yet, preventing an alias into the repository.
 func resolvePath(p string) (string, error) {

@@ -29,7 +29,7 @@ func (s *Service) recordSelection(ctx context.Context, c *invocation) (prepared,
 	if err != nil {
 		return prepared{}, err
 	}
-	b, sb, err := s.criteriaBinding(ctx, in.Manifest, in.Commit)
+	b, sb, err := s.criteriaBinding(ctx, in.Manifest)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -89,10 +89,10 @@ func (s *Service) recordSelection(ctx context.Context, c *invocation) (prepared,
 	if err != nil {
 		return prepared{}, err
 	}
-	return prepared{records: []envelope.Object{o}, result: withCommit(map[string]any{
+	return prepared{records: []envelope.Object{o}, result: map[string]any{
 		"selection": o.Hash, "intent_id": d.IntentID, "manifest": d.Manifest,
 		"evidence": d.Evidence, "competitors": slices.Clone(d.Competitors), "criteria": d.Criteria,
 		"outstanding": selection.OutstandingIDs(d.Criteria), "contrary_evidence": d.ContraryEvidence,
 		"accepted": false, "selector": d.Selector,
-	}, d.Commit)}, nil
+	}}, nil
 }

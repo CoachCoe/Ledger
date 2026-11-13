@@ -35,7 +35,7 @@ func (f *wtFixture) plan(d schema.CheckDefinition) Plan {
 // run executes plan and fails the test on an unexpected error.
 func (f *wtFixture) run(t *testing.T, p Plan) Outcome {
 	t.Helper()
-	out, err := Execute(context.Background(), GitCheckouts{Repo: f.repo}, f.runtimeDir, p, nil)
+	out, err := Execute(context.Background(), f.co, f.runtimeDir, p, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -45,8 +45,8 @@ func (f *wtFixture) run(t *testing.T, p Plan) Outcome {
 func (f *wtFixture) gone(t *testing.T, id string) {
 	t.Helper()
 	path := VerifyPath(f.runtimeDir, id)
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) || f.worktreeListed(t, path) {
-		t.Fatalf("verification worktree %s remains", path)
+	if exists(path) {
+		t.Fatalf("verification checkout %s remains", path)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestAC167_168_058_AttestationFields(t *testing.T) {
 	p := f.plan(d)
 	out := f.run(t, p)
 	a := out.Attestation
-	if a.Manifest != f.b.Manifest || a.Commit != f.b.Commit || a.ExecutedTree != f.b.Tree || a.CheckDefinition != p.Check.DefinitionHash {
+	if a.Manifest != f.b.Manifest || a.Tree != f.b.Tree || a.CheckDefinition != p.Check.DefinitionHash {
 		t.Fatalf("binding fields: %+v", a)
 	}
 	if a.Category != "behavioral" || a.Command != "echo checked" || len(a.Criteria) != 2 || a.Criteria[0] != "lint" || a.Criteria[1] != "tests" {
@@ -98,7 +98,7 @@ func TestAC167_168_058_AttestationFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := envelope.Seal(schema.KindEvidenceAttestation, a, key); err != nil {
+	if _, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, a, key); err != nil {
 		t.Fatalf("sealing: %v", err)
 	}
 	if raw, err := os.ReadFile(OutputPath(f.runtimeDir, p.RunID)); err != nil || string(raw) != "checked\n" {
@@ -155,7 +155,7 @@ func TestAC095_WorktreeRemoved(t *testing.T) {
 	}
 	// Abort: a dirty checkout never runs anything and leaves nothing behind.
 	p := f.plan(checkDef("echo should-not-run"))
-	_, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p, &Hooks{AfterCheckout: func(path string) {
+	_, err := Execute(ctx, f.co, f.runtimeDir, p, &Hooks{AfterCheckout: func(path string) {
 		_ = os.WriteFile(filepath.Join(path, "a.txt"), []byte("tampered\n"), 0o600)
 	}})
 	if !apierr.HasCode(err, "dirty_checkout") {
@@ -178,10 +178,10 @@ func TestAC095_WorktreeRemoved(t *testing.T) {
 			t.Fatalf("keep %s command %s: kept %q", tc.keep, tc.command, out.Kept)
 		}
 		if tc.kept {
-			if out.Kept != VerifyPath(f.runtimeDir, p.RunID) || !f.worktreeListed(t, out.Kept) {
+			if out.Kept != VerifyPath(f.runtimeDir, p.RunID) || !exists(out.Kept) {
 				t.Fatalf("kept worktree %s missing", out.Kept)
 			}
-			if err := removeVerifyWorktree(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p.RunID, out.Kept); err != nil {
+			if err := removeVerifyWorktree(ctx, f.co, f.runtimeDir, p.RunID, out.Kept); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -305,7 +305,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 	t.Run("start failure", func(t *testing.T) {
 		d := checkDef("true")
 		d.WorkingDirectory = "missing"
-		_, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.plan(d), nil)
+		_, err := Execute(ctx, f.co, f.runtimeDir, f.plan(d), nil)
 		if !apierr.HasCode(err, "invalid_working_directory") {
 			t.Fatalf("missing working directory: %v", err)
 		}
@@ -348,7 +348,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 			cancel()
 		}()
 		p := f.plan(checkDef("sleep 300 & echo $! > " + pidFile + "; sleep 300"))
-		out, err := Execute(cctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p, nil)
+		out, err := Execute(cctx, f.co, f.runtimeDir, p, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -363,7 +363,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 	t.Run("cancelled before start", func(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
-		out, err := Execute(cctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.plan(checkDef("true")), nil)
+		out, err := Execute(cctx, f.co, f.runtimeDir, f.plan(checkDef("true")), nil)
 		if err == nil {
 			expect(t, out.Attestation, ReasonCancelled)
 		}
@@ -389,8 +389,8 @@ func TestEvidenceProcessFailure(t *testing.T) {
 			// Exit 0, yet the run fails: the checkout no longer is the bound tree.
 			a := f.run(t, f.plan(checkDef(command))).Attestation
 			expect(t, a, ReasonTrackedMutation)
-			if exit(a.Check) != 0 || a.ExecutedTree != f.b.Tree {
-				t.Fatalf("check %+v tree %s", a.Check, a.ExecutedTree)
+			if exit(a.Check) != 0 || a.Tree != f.b.Tree {
+				t.Fatalf("check %+v tree %s", a.Check, a.Tree)
 			}
 		})
 		t.Run("setup mutates tracked file: "+name, func(t *testing.T) {
@@ -442,7 +442,7 @@ func TestEvidenceProcessFailure(t *testing.T) {
 	t.Run("judgment is not runnable", func(t *testing.T) {
 		d := checkDef("true")
 		d.Category = "judgment"
-		if _, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, f.plan(d), nil); !apierr.HasCode(err, "not_runnable") {
+		if _, err := Execute(ctx, f.co, f.runtimeDir, f.plan(d), nil); !apierr.HasCode(err, "not_runnable") {
 			t.Fatalf("judgment run: %v", err)
 		}
 	})
@@ -462,7 +462,7 @@ func TestAC096_237_IsolationNone(t *testing.T) {
 	}
 	for _, value := range []string{"sandbox", "container", "", "NONE"} {
 		a.Isolation = value
-		if _, err := envelope.Seal(schema.KindEvidenceAttestation, a, key); err == nil {
+		if _, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, a, key); err == nil {
 			t.Fatalf("schema accepted isolation %q", value)
 		}
 	}
@@ -490,13 +490,12 @@ func TestEvidenceExecuteRecovery(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			f := newWT(t)
 			ctx := context.Background()
-			author := filepath.Join(t.TempDir(), "author")
-			git(t, f.repo.Dir, "worktree", "add", "--detach", "-q", author, f.base)
+			author := f.author(t)
 			d := checkDef("echo checked")
 			setup := "echo setup"
 			d.Setup = &setup
 			p := f.plan(d)
-			out, err := Execute(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir, p, &Hooks{Fault: func(s string) error {
+			out, err := Execute(ctx, f.co, f.runtimeDir, p, &Hooks{Fault: func(s string) error {
 				if s == stage {
 					return errCrash
 				}
@@ -505,7 +504,7 @@ func TestEvidenceExecuteRecovery(t *testing.T) {
 			if !errors.Is(err, errCrash) || out.Attestation.Manifest != "" {
 				t.Fatalf("fault at %s: %v %+v", stage, err, out)
 			}
-			interrupted, err := Reconcile(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir)
+			interrupted, err := Reconcile(ctx, f.co, f.runtimeDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -513,14 +512,14 @@ func TestEvidenceExecuteRecovery(t *testing.T) {
 				t.Fatalf("interrupted %+v", interrupted)
 			}
 			f.gone(t, p.RunID)
-			if !f.worktreeListed(t, author) {
-				t.Fatal("reconcile removed an unrelated worktree")
+			if !exists(author) {
+				t.Fatal("reconcile removed an unrelated checkout")
 			}
 			j, err := ReadJournal(f.runtimeDir, p.RunID)
 			if err != nil || j.State != StateInterrupted {
 				t.Fatalf("journal %+v %v", j, err)
 			}
-			if again, err := Reconcile(ctx, GitCheckouts{Repo: f.repo}, f.runtimeDir); err != nil || len(again) != 0 {
+			if again, err := Reconcile(ctx, f.co, f.runtimeDir); err != nil || len(again) != 0 {
 				t.Fatalf("reconcile is not idempotent: %v %v", again, err)
 			}
 			// A fresh run after the restart succeeds.

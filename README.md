@@ -77,7 +77,7 @@ The session, capability, intent, workspace, coordination, evidence, selection, s
 
 Records, together with the trees and logs they bind, are portable: `ledger export` writes a single bundle that `ledger verify` checks in any directory, offline and without the source repository, and `ledger import` brings into another copy of the same repository. Integrity is computed from the bundle; trust comes only from your local trusted-roots list.
 
-A Phase 1 repository, whose records live on `refs/ledger/records` in Git, stays readable and verifiable. This binary creates only native repositories: `init` and `import` refuse a Phase 1 repository with `migrate_required`.
+A Phase 1 repository, whose records live on `refs/ledger/records` in Git, stays readable and verifiable. This binary writes only native repositories: in a Phase 1 repository `status`, `verify` and `export` work, and every command that would change it, the daemon and the MCP server refuse with `migrate_required`.
 
 ## Demos
 

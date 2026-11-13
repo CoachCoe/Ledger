@@ -1,8 +1,6 @@
 package record
 
 import (
-	"maps"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -240,19 +238,6 @@ func TestCheckCriteriaPinDefinitions(t *testing.T) {
 	// A committed definition can be pinned by later intents.
 	if _, err := s.Do(ctx, op("reuse"), members(intent("unit", def.Hash))); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStaleRefCacheFallsBack(t *testing.T) {
-	s := newStore(t)
-	if err := os.WriteFile(s.refTipFile(), []byte(strings.Repeat("0", 40)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Do(ctx, op("create"), members(intentRecord(t, schema.NewID(schema.PrefixIntent)))); err != nil {
-		t.Fatal(err)
-	}
-	if !maps.Equal(refHashes(t, s), diskHashes(t, s)) {
-		t.Fatal("ref and disk differ")
 	}
 }
 

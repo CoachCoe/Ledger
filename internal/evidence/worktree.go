@@ -47,7 +47,7 @@ func (h *Hooks) fault(stage string) error {
 	return h.Fault(stage)
 }
 
-// Worktree is a verified, detached checkout of the bound commit.
+// Worktree is a verified checkout of the bound tree.
 type Worktree struct {
 	RunID   string
 	Path    string
@@ -60,11 +60,8 @@ type Worktree struct {
 // Checkouts makes the fresh checkout a check runs in and reads its tracked
 // content back. Paths are always a run's own verify path.
 type Checkouts interface {
-	// Add checks b's binding and checks b.Tree out at the new path.
+	// Add checks b.Tree out at the new path.
 	Add(ctx context.Context, path string, b Binding) error
-	// Verify checks that the checkout at path is still of b before
-	// anything runs, beyond its tracked content.
-	Verify(ctx context.Context, path string, b Binding) error
 	// Tree returns the tree of the tracked content now at path.
 	Tree(ctx context.Context, path string, b Binding) (string, error)
 	// Remove deletes the checkout at path if this source made it, and
@@ -72,16 +69,15 @@ type Checkouts interface {
 	Remove(ctx context.Context, path string) error
 }
 
-// Prepare creates a fresh detached worktree at the bound commit under
-// <runtimeDir>/verify/<runID>. Before anything can run it checks the three
-// commit bindings, that the checkout's tree equals the manifest tree, and
-// that no tracked file differs. On any failure no worktree remains and the
+// Prepare creates a fresh checkout of the bound tree at
+// <runtimeDir>/verify/<runID>. Before anything can run it checks that no
+// tracked file differs from the manifest tree. On any failure no worktree remains and the
 // journal is "aborted" with a structured error. The journal template j
 // carries the run's operation, check definition and verifier for recovery.
 func Prepare(ctx context.Context, checkouts Checkouts, runtimeDir string, b Binding, j Journal, hooks *Hooks) (*Worktree, error) {
 	runID := j.RunID
 	path := VerifyPath(runtimeDir, runID)
-	j.State, j.Manifest, j.Commit, j.Tree, j.WorktreePath = StatePreparing, b.Manifest, b.Commit, b.Tree, path
+	j.State, j.Manifest, j.Tree, j.WorktreePath = StatePreparing, b.Manifest, b.Tree, path
 	if _, err := ReadJournal(runtimeDir, runID); err == nil {
 		return nil, apierr.New("run_exists", "evidence run %s already has a journal", runID)
 	} else if !apierr.HasCode(err, "unknown_run") {
@@ -128,12 +124,9 @@ func Prepare(ctx context.Context, checkouts Checkouts, runtimeDir string, b Bind
 	return w, nil
 }
 
-// verifyCheckout asserts the checkout is of the binding and its tracked
-// working files equal the manifest tree.
+// verifyCheckout asserts the checkout's tracked working files equal the
+// manifest tree.
 func (w *Worktree) verifyCheckout(ctx context.Context) error {
-	if err := w.checkouts.Verify(ctx, w.Path, w.Binding); err != nil {
-		return err
-	}
 	got, err := w.TrackedTree(ctx)
 	if err != nil {
 		return err
@@ -164,18 +157,6 @@ func removeVerifyWorktree(ctx context.Context, checkouts Checkouts, runtimeDir, 
 		return apierr.New("unsafe_worktree_path", "%s is not the verification path of run %s", path, runID)
 	}
 	return checkouts.Remove(ctx, path)
-}
-
-// realPath resolves symlinks in the longest existing prefix of p.
-func realPath(p string) string {
-	p = filepath.Clean(p)
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
-	}
-	if dir := filepath.Dir(p); dir != p {
-		return filepath.Join(realPath(dir), filepath.Base(p))
-	}
-	return p
 }
 
 // Reconcile marks every non-terminal run interrupted and removes the

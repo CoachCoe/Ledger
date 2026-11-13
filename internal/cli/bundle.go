@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -196,17 +197,7 @@ func cmdImport(args []string) (result any, err error) {
 		return nil, err
 	}
 	ctx := context.Background()
-	repo, err := locate(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !repo.Native() {
-		return nil, migrateRequired(repo.Root)
-	}
-	if _, err := os.Stat(file); err != nil {
-		return nil, apierr.New("bundle_unreadable", "%v", err)
-	}
-	s, _, err := openStore(ctx)
+	s, _, err := openStore(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +206,10 @@ func cmdImport(args []string) (result any, err error) {
 			err = cerr
 		}
 	}()
-	rep, err := verify.ImportNative(ctx, file, storePublisher{s}, repo.Root, verify.ImportOptions{Trusted: list})
+	if _, err := os.Stat(file); err != nil {
+		return nil, apierr.New("bundle_unreadable", "%v", err)
+	}
+	rep, err := verify.ImportNative(ctx, file, storePublisher{s}, filepath.Dir(s.Dir), verify.ImportOptions{Trusted: list})
 	if err != nil {
 		return nil, err
 	}

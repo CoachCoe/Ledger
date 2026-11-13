@@ -131,7 +131,7 @@ func (s *Service) history(ctx context.Context, r api.Request) (any, error) {
 	}
 	// Coverage is deliberately narrower than independent bundle verification.
 	// Unindexed or incomplete provenance must never look like a complete search.
-	src, err := s.repositorySource(ctx)
+	src, err := s.repositorySource()
 	if err != nil {
 		return nil, err
 	}

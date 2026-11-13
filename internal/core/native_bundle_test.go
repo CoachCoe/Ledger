@@ -66,18 +66,18 @@ func cloneNative(t *testing.T, s *Service) *Service {
 func nativeSelected(t *testing.T, s *Service) map[string]any {
 	t.Helper()
 	writeChecks(t, s, []schema.CheckDefinition{unitCheck()})
-	intent := call(t, s, requestV2("intent.create", "", checkIntent()))
-	sess := call(t, s, requestV2("session.create", "", map[string]any{}))
+	intent := call(t, s, request("intent.create", "", checkIntent()))
+	sess := call(t, s, request("session.create", "", map[string]any{}))
 	sid := sess["session_id"].(string)
-	fork := call(t, s, requestV2("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": sess["capability_id"]}))
+	fork := call(t, s, request("workspace.fork", sid, map[string]any{"intent_id": intent["intent_id"], "capability_id": sess["capability_id"]}))
 	if err := os.WriteFile(filepath.Join(fork["path"].(string), "a.ts"), []byte("export function x() { return 5 }\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	prop := call(t, s, requestV2("workspace.propose", sid, map[string]any{"workspace_id": fork["workspace_id"]}))
-	resolved := call(t, s, requestV2("evidence.resolve", "", map[string]any{"manifest": prop["manifest"]}))
+	prop := call(t, s, request("workspace.propose", sid, map[string]any{"workspace_id": fork["workspace_id"]}))
+	resolved := call(t, s, request("evidence.resolve", "", map[string]any{"manifest": prop["manifest"]}))
 	def := resolved["checks"].([]any)[0].(map[string]any)["definition_hash"]
-	run := call(t, s, requestV2("evidence.run", "", map[string]any{"manifest": prop["manifest"], "check_definition": def}))
-	call(t, s, requestV2("selection.record", "", map[string]any{"manifest": prop["manifest"], "evidence": []any{run["attestation"]}}))
+	run := call(t, s, request("evidence.run", "", map[string]any{"manifest": prop["manifest"], "check_definition": def}))
+	call(t, s, request("selection.record", "", map[string]any{"manifest": prop["manifest"], "evidence": []any{run["attestation"]}}))
 	return prop
 }
 
@@ -97,7 +97,7 @@ func TestNativeBundleRoundTrip(t *testing.T) {
 	clone := cloneNative(t, s)
 	prop := nativeSelected(t, s)
 
-	rep := call(t, s, requestV2("bundle.verify", "", map[string]any{"trust": []string{}, "strict": true}))
+	rep := call(t, s, request("bundle.verify", "", map[string]any{"trust": []string{}, "strict": true}))
 	m := manifestReport(t, rep)
 	if rep["integrity"] != "verified" || m["tree"] != prop["tree"] || m["op_head"] != prop["op_head"] || m["commit"] != nil {
 		t.Fatalf("repository report %v", rep)
@@ -109,25 +109,25 @@ func TestNativeBundleRoundTrip(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "native.ledger")
-	exp := call(t, s, requestV2("bundle.export", "", map[string]any{"out": out, "manifests": []string{}, "intents": []string{}, "allow_partial": false}))
+	exp := call(t, s, request("bundle.export", "", map[string]any{"out": out, "manifests": []string{}, "intents": []string{}, "allow_partial": false}))
 	if exp["complete"] != true || exp["size"].(map[string]any)["store_objects"].(float64) == 0 {
 		t.Fatalf("export %v", exp)
 	}
-	rep = call(t, s, requestV2("bundle.verify", "", map[string]any{"bundle": out, "trust": []string{}, "strict": true}))
+	rep = call(t, s, request("bundle.verify", "", map[string]any{"bundle": out, "trust": []string{}, "strict": true}))
 	if rep["integrity"] != "verified" || rep["bundle_version"].(float64) != schema.BundleVersionNative || manifestReport(t, rep)["tree"] != prop["tree"] {
 		t.Fatalf("bundle report %v", rep)
 	}
 
-	imp := call(t, clone, requestV2("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
+	imp := call(t, clone, request("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
 	logs := imp["oplogs"].([]any)
 	if imp["objects"].(float64) == 0 || len(logs) != 1 || logs[0].(map[string]any)["status"] != "created" {
 		t.Fatalf("import %v", imp)
 	}
-	rep = call(t, clone, requestV2("bundle.verify", "", map[string]any{"trust": []string{}, "strict": true}))
+	rep = call(t, clone, request("bundle.verify", "", map[string]any{"trust": []string{}, "strict": true}))
 	if rep["integrity"] != "verified" || manifestReport(t, rep)["hash"] != prop["manifest"] {
 		t.Fatalf("clone report %v", rep)
 	}
-	again := call(t, clone, requestV2("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
+	again := call(t, clone, request("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
 	if again["already_present"] != true {
 		t.Fatalf("second import %v", again)
 	}
@@ -159,7 +159,7 @@ func TestNativeEditedOpLogFailsVerification(t *testing.T) {
 	if err := os.WriteFile(path, edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rep := call(t, s, requestV2("bundle.verify", "", map[string]any{"trust": []string{}, "strict": false}))
+	rep := call(t, s, request("bundle.verify", "", map[string]any{"trust": []string{}, "strict": false}))
 	m := manifestReport(t, rep)
 	if rep["integrity"] != "invalid" || m["components"].(map[string]any)["oplog"] != "invalid" {
 		t.Fatalf("report after the edit %v", rep)
@@ -170,7 +170,7 @@ func TestNativeEditedOpLogFailsVerification(t *testing.T) {
 	}) {
 		t.Fatalf("no oplog_broken problem in %v", rep["invalid"])
 	}
-	_, err = s.Handle(context.Background(), requestV2("bundle.verify", "", map[string]any{"trust": []string{}, "strict": true}))
+	_, err = s.Handle(context.Background(), request("bundle.verify", "", map[string]any{"trust": []string{}, "strict": true}))
 	if !apierr.HasCode(err, "verification_failed") {
 		t.Fatalf("strict verify: %v", err)
 	}
@@ -190,12 +190,12 @@ func TestNativeMissingObjectIsUnavailable(t *testing.T) {
 	if err := os.Remove(filepath.Join(s.Store.Dir, "store", "objects", id[:2], id[2:])); err != nil {
 		t.Fatal(err)
 	}
-	rep := call(t, s, requestV2("bundle.verify", "", map[string]any{"trust": []string{}, "strict": false}))
+	rep := call(t, s, request("bundle.verify", "", map[string]any{"trust": []string{}, "strict": false}))
 	if c := manifestReport(t, rep)["components"].(map[string]any); rep["integrity"] != "unavailable" || c["tree"] != "unavailable" {
 		t.Fatalf("report %v", rep)
 	}
 	out := filepath.Join(t.TempDir(), "partial.ledger")
-	if _, err := s.Handle(context.Background(), requestV2("bundle.export", "", map[string]any{"out": out, "manifests": []string{}, "intents": []string{}, "allow_partial": false})); !apierr.HasCode(err, "export_incomplete") {
+	if _, err := s.Handle(context.Background(), request("bundle.export", "", map[string]any{"out": out, "manifests": []string{}, "intents": []string{}, "allow_partial": false})); !apierr.HasCode(err, "export_incomplete") {
 		t.Fatalf("export without the object: %v", err)
 	}
 }
@@ -208,17 +208,17 @@ func TestNativeImportRefusesAnotherRepository(t *testing.T) {
 	other, _ := nativeFixture(t)
 	prop := nativeSelected(t, s)
 	out := filepath.Join(t.TempDir(), "one.ledger")
-	call(t, s, requestV2("bundle.export", "", map[string]any{"out": out, "manifests": []string{prop["manifest"].(string)}, "intents": []string{}, "allow_partial": false}))
+	call(t, s, request("bundle.export", "", map[string]any{"out": out, "manifests": []string{prop["manifest"].(string)}, "intents": []string{}, "allow_partial": false}))
 
 	before := storeFiles(t, other)
-	_, err := other.Handle(context.Background(), requestV2("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))
+	_, err := other.Handle(context.Background(), request("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))
 	if !apierr.HasCode(err, "repository_mismatch") {
 		t.Fatalf("import into another repository: %v", err)
 	}
 	if after := storeFiles(t, other); !slices.Equal(before, after) {
 		t.Fatalf("refused import changed the store: %d -> %d objects", len(before), len(after))
 	}
-	imp := call(t, clone, requestV2("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
+	imp := call(t, clone, request("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
 	if imp["objects"].(float64) == 0 {
 		t.Fatalf("clone import %v", imp)
 	}

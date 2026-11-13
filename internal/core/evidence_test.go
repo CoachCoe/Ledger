@@ -10,7 +10,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/evidence"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
@@ -80,7 +79,7 @@ func TestAC110_ResolveFreezesBinding(t *testing.T) {
 	change := first["change_id"].(string)
 
 	frozen := call(t, s, request("evidence.resolve", "", map[string]any{"change_id": change}))
-	if frozen["manifest"] != first["manifest"] || frozen["commit"] != first["commit"] || frozen["tree"] != first["tree"] || frozen["frozen"] != true {
+	if frozen["manifest"] != first["manifest"] || frozen["tree"] != first["tree"] || frozen["frozen"] != true {
 		t.Fatalf("binding does not match the proposal: %v", frozen)
 	}
 	if frozen["change_id"] != change || frozen["intent_id"] != intent["intent_id"] || frozen["workspace_id"] != wid || frozen["author_session"] != sid {
@@ -103,13 +102,11 @@ func TestAC110_ResolveFreezesBinding(t *testing.T) {
 		t.Fatalf("criteria: %v", got)
 	}
 
-	// Exact lookups agree with the change-id convenience lookup.
-	exact := call(t, s, request("evidence.resolve", "", map[string]any{"manifest": first["manifest"], "commit": first["commit"]}))
-	bare := call(t, s, request("evidence.resolve", "", map[string]any{"manifest": first["manifest"]}))
+	// An exact lookup agrees with the change-id convenience lookup.
+	exact := call(t, s, request("evidence.resolve", "", map[string]any{"manifest": first["manifest"]}))
 	a, _ := canon.Marshal(frozen)
 	b, _ := canon.Marshal(exact)
-	c, _ := canon.Marshal(bare)
-	if string(a) != string(b) || string(a) != string(c) {
+	if string(a) != string(b) {
 		t.Fatal("resolve by manifest differs from resolve by change id")
 	}
 
@@ -124,23 +121,17 @@ func TestAC110_ResolveFreezesBinding(t *testing.T) {
 	// Rework and re-propose: a new manifest; the earlier binding still names the old one.
 	call(t, s, request("workspace.rework", sid, map[string]any{"workspace_id": wid}))
 	second := propose("export const x=3;\n")
-	if second["manifest"] == first["manifest"] || second["commit"] == first["commit"] {
+	if second["manifest"] == first["manifest"] || second["tree"] == first["tree"] {
 		t.Fatal("rework did not create a new revision")
 	}
-	if now := call(t, s, request("evidence.resolve", "", map[string]any{"change_id": change})); now["manifest"] != second["manifest"] || now["commit"] != second["commit"] {
+	if now := call(t, s, request("evidence.resolve", "", map[string]any{"change_id": change})); now["manifest"] != second["manifest"] || now["tree"] != second["tree"] {
 		t.Fatalf("change id should resolve to the current proposal: %v", now)
 	}
 	old := call(t, s, request("evidence.resolve", "", map[string]any{"manifest": first["manifest"]}))
-	if old["manifest"] != first["manifest"] || old["commit"] != first["commit"] || old["tree"] != first["tree"] {
+	if old["manifest"] != first["manifest"] || old["tree"] != first["tree"] {
 		t.Fatalf("earlier binding moved: %v", old)
 	}
 
-	// A commit from another revision never binds.
-	_, err = s.Handle(ctx, request("evidence.resolve", "", map[string]any{"manifest": first["manifest"], "commit": second["commit"]}))
-	if !apierr.HasCode(err, "binding_mismatch") {
-		t.Fatalf("mismatched commit: %v", err)
-	}
-	expectCode(t, s, "evidence.resolve", "", map[string]any{"manifest": second["manifest"], "commit": "0123456789012345678901234567890123456789"}, "binding_mismatch")
 	// An unknown manifest, and the author's intent object itself, are not manifests.
 	expectCode(t, s, "evidence.resolve", "", map[string]any{"manifest": "0000000000000000000000000000000000000000000000000000000000000000"}, "unknown_manifest")
 	expectCode(t, s, "evidence.resolve", "", map[string]any{"manifest": intent["object_hash"]}, "unknown_manifest")
@@ -148,7 +139,8 @@ func TestAC110_ResolveFreezesBinding(t *testing.T) {
 	// The input is closed.
 	for _, in := range []map[string]any{
 		{"change_id": change, "manifest": first["manifest"]},
-		{"change_id": change, "commit": first["commit"]},
+		{"change_id": change, "commit": strings.Repeat("1", 40)},
+		{"manifest": first["manifest"], "commit": strings.Repeat("1", 40)},
 		{"change_id": change, "definition": "x"},
 		{"manifest": first["manifest"], "extra": 1},
 		{},
@@ -162,25 +154,17 @@ func TestAC110_ResolveFreezesBinding(t *testing.T) {
 func TestVerificationSetupRecoveryReportedByStatus(t *testing.T) {
 	// A crash that leaves a verification worktree and a non-terminal run
 	// journal is reconciled by core.New and reported by system.status.
-	s := fixture(t)
+	s, tree := nativeFixture(t)
 	ctx := context.Background()
-	head, err := s.Store.Repo.ResolveRef(ctx, "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, nil, "rev-parse", "HEAD^{tree}")
-	if err != nil {
-		t.Fatal(err)
-	}
 	id := schema.NewID(schema.PrefixRun)
 	path := evidence.VerifyPath(filepath.Join(s.Store.Dir, "runtime"), id)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Store.Repo.WorktreeAddDetached(ctx, path, head); err != nil {
+	if err := s.Provider.Workspaces.Checkout(tree, path); err != nil {
 		t.Fatal(err)
 	}
-	j := evidence.Journal{RunID: id, State: evidence.StateReady, Manifest: strings.Repeat("a", 64), Commit: head, Tree: strings.TrimSpace(string(tree)), WorktreePath: path}
+	j := evidence.Journal{RunID: id, State: evidence.StateReady, Manifest: strings.Repeat("a", 64), Tree: tree, WorktreePath: path}
 	if err := evidence.WriteJournal(filepath.Join(s.Store.Dir, "runtime"), j); err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"context"
 	"io"
 	"os"
 	"path"
@@ -15,24 +14,10 @@ import (
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
-// TextWriter is an optional cooperative editing seam. Direct filesystem writes
-// remain possible in Phase 1; proposal validation is still the authority boundary.
-type TextWriter interface {
-	WriteText(context.Context, schema.Workspace, string, string, *string) (string, error)
-}
-
-// WriteText replaces one regular text file atomically. It never follows a
-// symlink or writes Git/Ledger metadata. A retry after replacement succeeds if
-// the exact desired bytes are already present; no signed history is implied.
-func (p GitProvider) WriteText(ctx context.Context, w schema.Workspace, name, content string, expected *string) (string, error) {
-	if err := p.validate(ctx, w.ID, p.Path(w.ID)); err != nil {
-		return "", err
-	}
-	return writeText(p.Path(w.ID), name, content, expected)
-}
-
-// writeText replaces name under the workspace root at workspaceDir; see
-// WriteText.
+// writeText replaces one regular text file under the workspace root at
+// workspaceDir atomically. It never follows a symlink or writes Ledger
+// metadata. A retry after replacement succeeds if the exact desired bytes are
+// already present; no signed history is implied.
 func writeText(workspaceDir, name, content string, expected *string) (string, error) {
 	if len(content) > 262144 || !utf8.ValidString(content) {
 		return "", apierr.New("invalid_content", "text must be valid UTF-8 and at most 256 KiB")

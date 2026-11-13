@@ -184,13 +184,7 @@ func Execute(ctx context.Context, checkouts Checkouts, runtimeDir string, p Plan
 		EnvironmentHash: envHash, Environment: env,
 		StartedAt: schema.Timestamp(started), EndedAt: schema.Timestamp(ended),
 		OutputDigest: out.Digest(), OutputBytes: out.Total(), OutputTruncated: out.Truncated(),
-		Isolation: "none",
-	}
-	// A v2 manifest binds no commit; its attestation names only the tree.
-	if p.Binding.Commit != "" {
-		att.Commit, att.ExecutedTree = p.Binding.Commit, p.Binding.Tree
-	} else {
-		att.Tree = p.Binding.Tree
+		Isolation: "none", Tree: p.Binding.Tree,
 	}
 	if reason != "" {
 		att.Result, att.Reason = "fail", &reason

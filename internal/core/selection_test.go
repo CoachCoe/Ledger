@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -12,18 +13,16 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/selection"
-	"github.com/CoachCoe/Ledger/internal/verify"
 )
 
 // selectIn is the closed input of selection.record for f's current proposal.
 func (f *runFix) selectIn(evidence []string, extra map[string]any) map[string]any {
-	in := map[string]any{"manifest": f.proposal["manifest"], "commit": f.proposal["commit"], "evidence": evidence}
+	in := map[string]any{"manifest": f.proposal["manifest"], "evidence": evidence}
 	for k, v := range extra {
 		in[k] = v
 	}
@@ -57,7 +56,7 @@ func (f *runFix) selections(t *testing.T) []string {
 func forgeSelection(t *testing.T, s *Service, f *runFix, signer identity.Signer, edit func(*schema.SelectionDecision)) error {
 	t.Helper()
 	ctx := context.Background()
-	_, sb, err := s.criteriaBinding(ctx, f.proposal["manifest"].(string), f.proposal["commit"].(string))
+	_, sb, err := s.criteriaBinding(ctx, f.proposal["manifest"].(string))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +77,7 @@ func forgeSelection(t *testing.T, s *Service, f *runFix, signer identity.Signer,
 		t.Fatal(err)
 	}
 	edit(&d)
-	o, err := envelope.Seal(schema.KindSelectionDecision, d, signer)
+	o, err := envelope.SealVersion(2, schema.KindSelectionDecision, d, signer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,18 +87,14 @@ func forgeSelection(t *testing.T, s *Service, f *runFix, signer identity.Signer,
 	return err
 }
 
-func (f *runFix) refs(t *testing.T) string {
+// line is the head of line main, which only a line_advance moves.
+func (f *runFix) line(t *testing.T) index.LineHead {
 	t.Helper()
-	ctx := context.Background()
-	out, err := gitx.Run(ctx, f.s.Store.Repo.Dir, nil, nil, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags", "refs/ledger/proposals")
+	head, err := f.s.Store.Index.LineHead(context.Background(), "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	head, err := gitx.Run(ctx, f.s.Store.Repo.Dir, nil, nil, "rev-parse", "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(out) + "HEAD " + string(head)
+	return head
 }
 
 func TestAC059_171_DecisionFields(t *testing.T) {
@@ -108,7 +103,7 @@ func TestAC059_171_DecisionFields(t *testing.T) {
 	att := call(t, s, request("evidence.run", "", f.input(nil)))["attestation"].(string)
 
 	out := call(t, s, request("selection.record", "", f.selectIn([]string{att}, nil)))
-	if out["accepted"] != false || out["manifest"] != f.proposal["manifest"] || out["commit"] != f.proposal["commit"] || out["intent_id"] != f.intent["intent_id"] {
+	if out["accepted"] != false || out["manifest"] != f.proposal["manifest"] || out["commit"] != nil || out["intent_id"] != f.intent["intent_id"] {
 		t.Fatalf("result: %v", out)
 	}
 	if !slices.Equal(hashesOf(out["outstanding"]), []string{"review"}) {
@@ -126,7 +121,7 @@ func TestAC059_171_DecisionFields(t *testing.T) {
 	if err := o.Verify(root.PublicKey()); err != nil || o.Envelope.Signer != root.ID() {
 		t.Fatalf("the decision is signed by the root key: %v signer %s", err, o.Envelope.Signer)
 	}
-	if d.IntentID != f.intent["intent_id"] || d.Manifest != f.proposal["manifest"] || d.Commit != f.proposal["commit"] ||
+	if d.IntentID != f.intent["intent_id"] || d.Manifest != f.proposal["manifest"] || d.Commit != "" ||
 		!slices.Equal(d.Evidence, []string{att}) || d.Competitors == nil || len(d.Competitors) != 0 ||
 		d.ContraryEvidence == nil || len(d.ContraryEvidence) != 0 || string(d.Scoring) != "null" ||
 		d.Selector != (schema.Selector{Kind: "root", ID: root.ID()}) || d.At == "" {
@@ -198,7 +193,7 @@ func TestAC060_232_247_SelectionIsNotAcceptance(t *testing.T) {
 	f := newRunFix(t, s, "true", nil)
 	att := call(t, s, request("evidence.run", "", f.input(nil)))["attestation"].(string)
 	ctx := context.Background()
-	before := f.refs(t)
+	before := f.line(t)
 	manifestBytes, err := os.ReadFile(s.Store.ObjectPath(f.proposal["manifest"].(string)))
 	if err != nil {
 		t.Fatal(err)
@@ -216,12 +211,9 @@ func TestAC060_232_247_SelectionIsNotAcceptance(t *testing.T) {
 			t.Fatalf("an unreviewed criterion was recorded as %s", c.Status)
 		}
 	}
-	// Nothing in Git moved: no branch, tag, proposal ref or HEAD, no merge commit.
-	if after := f.refs(t); after != before {
-		t.Fatalf("selection changed Git refs:\n%s\n%s", before, after)
-	}
-	if parents, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, nil, "rev-list", "--merges", "--all"); err != nil || strings.TrimSpace(string(parents)) != "" {
-		t.Fatalf("merge commits exist: %q %v", parents, err)
+	// The line did not move: selection writes no line_advance.
+	if after := f.line(t); !reflect.DeepEqual(after, before) {
+		t.Fatalf("selection moved line main: %+v -> %+v", before, after)
 	}
 	if now, _ := os.ReadFile(s.Store.ObjectPath(f.proposal["manifest"].(string))); string(now) != string(manifestBytes) {
 		t.Fatal("manifest object changed")
@@ -265,15 +257,15 @@ func TestAC171_RejectsFabricatedAndCrossRevision(t *testing.T) {
 		}
 	}
 	// A missing evidence member is not "no evidence".
-	if _, err := s.Handle(ctx, request("selection.record", "", map[string]any{"manifest": f.proposal["manifest"], "commit": f.proposal["commit"]})); !apierr.HasCode(err, "schema_invalid") {
+	if _, err := s.Handle(ctx, request("selection.record", "", map[string]any{"manifest": f.proposal["manifest"]})); !apierr.HasCode(err, "schema_invalid") {
 		t.Fatalf("missing evidence: %v", err)
 	}
-	// Unknown evidence and a commit that is not the manifest's.
+	// Unknown evidence, and a commit, which v2 bindings do not name.
 	if _, err := s.Handle(ctx, request("selection.record", "", f.selectIn([]string{strings.Repeat("ab", 32)}, nil))); !apierr.HasCode(err, "unknown_evidence") {
 		t.Fatalf("unknown evidence: %v", err)
 	}
 	newRival(t, s, f)
-	if _, err := s.Handle(ctx, request("selection.record", "", f.selectIn([]string{rev1}, map[string]any{"commit": strings.Repeat("1", 40)}))); !apierr.HasCode(err, "binding_mismatch") {
+	if _, err := s.Handle(ctx, request("selection.record", "", f.selectIn([]string{rev1}, map[string]any{"commit": strings.Repeat("1", 40)}))); !apierr.HasCode(err, "schema_invalid") {
 		t.Fatalf("wrong commit: %v", err)
 	}
 	// Competitors must be other manifests of the same intent.
@@ -301,7 +293,7 @@ func TestAC171_RejectsFabricatedAndCrossRevision(t *testing.T) {
 	f.propose(t, "export const x=3;\n")
 
 	// Revision 1 is stale; revision 1's evidence on revision 2 is cross-revision.
-	stale := map[string]any{"manifest": oldProposal["manifest"], "commit": oldProposal["commit"], "evidence": []string{rev1}}
+	stale := map[string]any{"manifest": oldProposal["manifest"], "evidence": []string{rev1}}
 	if _, err := s.Handle(ctx, request("selection.record", "", stale)); !apierr.HasCode(err, "stale_revision") {
 		t.Fatalf("stale revision: %v", err)
 	}
@@ -338,9 +330,8 @@ func TestAC171_RejectsFabricatedAndCrossRevision(t *testing.T) {
 		"cross revision":   {root, func(d *schema.SelectionDecision) { d.Evidence = []string{rev1} }, "cross_revision_evidence"},
 		"unknown evidence": {root, func(d *schema.SelectionDecision) { d.Evidence = []string{strings.Repeat("ef", 32)} }, "unknown_evidence"},
 		"stale manifest": {root, func(d *schema.SelectionDecision) {
-			d.Manifest, d.Commit = oldProposal["manifest"].(string), oldProposal["commit"].(string)
+			d.Manifest = oldProposal["manifest"].(string)
 		}, "stale_revision"},
-		"wrong commit":     {root, func(d *schema.SelectionDecision) { d.Commit = strings.Repeat("2", 40) }, "binding_mismatch"},
 		"wrong intent":     {root, func(d *schema.SelectionDecision) { d.IntentID = foreign.intent["intent_id"].(string) }, "invalid_selection"},
 		"selector forgery": {root, func(d *schema.SelectionDecision) { d.Selector = schema.Selector{Kind: "session", ID: reviewer} }, "unauthorized"},
 		"unsorted":         {root, func(d *schema.SelectionDecision) { d.Evidence = []string{rev2, strings.Repeat("0", 64)} }, "invalid_selection"},
@@ -405,37 +396,30 @@ func TestAC113_SelectionKeepsContraryEvidence(t *testing.T) {
 }
 
 func TestAC210_SelectedWinnerVerifiesSeparately(t *testing.T) {
-	// Core-level chain: the branch's trailer binds the manifest, evidence
-	// binds the manifest, the selection binds the evidence. Each link is
-	// checkable on its own; export/import verification of the chain is M3.6.
+	// Core-level chain: the manifest binds the tree, evidence binds the
+	// manifest and tree, the selection binds the evidence. Each link is
+	// checkable on its own, and the winner stays a manifest: no line moves.
 	s := fixture(t)
 	f := newRunFix(t, s, "true", nil)
 	ctx := context.Background()
+	before := f.line(t)
 	att := call(t, s, request("evidence.run", "", f.input(nil)))["attestation"].(string)
 	sel := call(t, s, request("selection.record", "", f.selectIn([]string{att}, nil)))["selection"].(string)
 
-	commit, err := s.Store.Repo.ReadCommit(ctx, f.proposal["commit"].(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tip, err := gitx.Run(ctx, s.Store.Repo.Dir, nil, nil, "rev-parse", f.proposal["branch"].(string))
-	if err != nil || strings.TrimSpace(string(tip)) != commit.SHA {
-		t.Fatalf("the winner is an ordinary branch at the bound commit: %s %v", tip, err)
-	}
 	m, err := s.Store.Index.Manifest(ctx, f.proposal["manifest"].(string))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || m.Tree != f.proposal["tree"] {
+		t.Fatalf("the manifest binds the proposed tree: %+v %v", m, err)
 	}
-	if b := verify.CheckBinding(commit, f.proposal["manifest"].(string), m); !b.OK() {
-		t.Fatalf("branch commit does not bind the manifest: %+v", b)
+	if after := f.line(t); !reflect.DeepEqual(after, before) {
+		t.Fatalf("selecting the winner moved line main: %+v -> %+v", before, after)
 	}
 	a := f.attestation(t, att)
 	d := f.decision(t, sel)
-	if a.Manifest != d.Manifest || a.Commit != d.Commit || d.Manifest != f.proposal["manifest"] || !slices.Contains(d.Evidence, att) {
+	if a.Manifest != d.Manifest || a.Tree != m.Tree || d.Manifest != f.proposal["manifest"] || !slices.Contains(d.Evidence, att) {
 		t.Fatalf("chain: attestation %+v decision %+v", a, d)
 	}
 	// The decision re-derives from the stored records alone.
-	_, sb, err := s.criteriaBinding(ctx, d.Manifest, d.Commit)
+	_, sb, err := s.criteriaBinding(ctx, d.Manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +437,7 @@ func TestSelectionPublication(t *testing.T) {
 	// selection. After a restart the same operation id either replays one
 	// committed decision or commits exactly one; rebuilding the index from
 	// the record files changes nothing.
-	stages := []string{record.StageJournal, record.StageEffects, record.StageObjects, record.StageReceipt, record.StageRef, record.StageRefCAS, record.StageIndex, record.StageCleanup, record.StageDone}
+	stages := []string{record.StageJournal, record.StageEffects, record.StageObjects, record.StageReceipt, record.StageLog, record.StageIndex, record.StageCleanup, record.StageDone}
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {
 			armed := false
@@ -467,7 +451,7 @@ func TestSelectionPublication(t *testing.T) {
 			f := newRunFix(t, s, "true", nil)
 			att := call(t, s, request("evidence.run", "", f.input(nil)))["attestation"].(string)
 			ctx := context.Background()
-			before := f.refs(t)
+			before := f.line(t)
 			req := request("selection.record", "", f.selectIn([]string{att}, nil))
 			armed = true
 			if _, err := s.Handle(ctx, req); !errors.Is(err, errCrash) {
@@ -500,8 +484,8 @@ func TestSelectionPublication(t *testing.T) {
 			if err != nil || !replay.(*record.Result).Replayed {
 				t.Fatalf("second retry: %v", err)
 			}
-			if after := f.refs(t); after != before {
-				t.Fatalf("recovery moved Git refs:\n%s\n%s", before, after)
+			if after := f.line(t); !reflect.DeepEqual(after, before) {
+				t.Fatalf("recovery moved line main: %+v -> %+v", before, after)
 			}
 			if _, err := restarted.Store.Reindex(ctx); err != nil {
 				t.Fatal(err)

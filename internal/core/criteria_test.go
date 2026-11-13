@@ -18,7 +18,7 @@ import (
 
 // binding names a proposal for the criteria queries.
 func binding(p map[string]any, extra map[string]any) map[string]any {
-	in := map[string]any{"manifest": p["manifest"], "commit": p["commit"]}
+	in := map[string]any{"manifest": p["manifest"]}
 	for k, v := range extra {
 		in[k] = v
 	}
@@ -241,7 +241,7 @@ func forgeEvidence(t *testing.T, s *Service, f *runFix, sid string, edit func(*s
 		edit(&att)
 	}
 	key := s.signers[sid]
-	o, err := envelope.Seal(schema.KindEvidenceAttestation, att, key)
+	o, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, att, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func replayEvidence(t *testing.T, s *Service, f *runFix, sid string, edit func(*
 	if edit != nil {
 		edit(&att)
 	}
-	o, err := envelope.Seal(schema.KindEvidenceAttestation, att, s.signers[sid])
+	o, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, att, s.signers[sid])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func replayEvidence(t *testing.T, s *Service, f *runFix, sid string, edit func(*
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{
+	receipt, err := envelope.SealVersion(2, schema.KindOperationReceipt, schema.OperationReceipt{
 		OperationID: schema.NewID(schema.PrefixOperation), Operation: "test.replay", RequestDigest: canon.Hash([]byte(o.Hash)),
 		Result: []byte(`{}`), Members: []string{o.Hash}, At: now(),
 	}, root)
@@ -307,8 +307,8 @@ func TestAC112_JudgmentBindsCriterionAndRevision(t *testing.T) {
 	expectCode(t, s, "evidence.judge", "", binding(f.proposal, map[string]any{"criterion_id": "tests", "result": "pass"}), "not_judgment")
 	expectCode(t, s, "evidence.judge", "", binding(f.proposal, map[string]any{"criterion_id": "nope", "result": "pass"}), "unknown_criterion")
 	// It binds the exact commit of the manifest.
-	expectCode(t, s, "evidence.judge", "", map[string]any{"manifest": f.proposal["manifest"], "commit": strings.Repeat("1", 40), "criterion_id": "review", "result": "pass"}, "binding_mismatch")
-	expectCode(t, s, "evidence.judge", "", map[string]any{"manifest": strings.Repeat("2", 64), "commit": f.proposal["commit"], "criterion_id": "review", "result": "pass"}, "unknown_manifest")
+	expectCode(t, s, "evidence.judge", "", map[string]any{"manifest": f.proposal["manifest"], "commit": strings.Repeat("1", 40), "criterion_id": "review", "result": "pass"}, "schema_invalid")
+	expectCode(t, s, "evidence.judge", "", map[string]any{"manifest": strings.Repeat("2", 64), "criterion_id": "review", "result": "pass"}, "unknown_manifest")
 	// The author and a rebound holder cannot judge their own change.
 	expectCode(t, s, "evidence.judge", f.sid, binding(f.proposal, map[string]any{"criterion_id": "review", "result": "pass"}), "unauthorized")
 	if got := f.attestations(t); len(got) != 0 {
@@ -324,7 +324,7 @@ func TestAC112_JudgmentBindsCriterionAndRevision(t *testing.T) {
 		t.Fatalf("retry should replay: %v %v", replay, err)
 	}
 	a := f.attestation(t, one["attestation"].(string))
-	if a.Manifest != first["manifest"] || a.Commit != first["commit"] || a.ExecutedTree != first["tree"] || a.Reason == nil || *a.Reason != "reads well" {
+	if a.Manifest != first["manifest"] || a.Tree != first["tree"] || a.Reason == nil || *a.Reason != "reads well" {
 		t.Fatalf("binding: %+v", a)
 	}
 	if st, _ := statuses(t, s, first, nil); st["review"]["status"] != "satisfied" {
@@ -352,10 +352,10 @@ func TestAC112_JudgmentBindsCriterionAndRevision(t *testing.T) {
 
 	// An author-signed judgment cannot be published.
 	genuine := f.attestation(t, one["attestation"].(string))
-	genuine.Manifest, genuine.Commit, genuine.ExecutedTree = second["manifest"].(string), second["commit"].(string), second["tree"].(string)
+	genuine.Manifest, genuine.Tree = second["manifest"].(string), second["tree"].(string)
 	genuine.VerifierSession = f.sid
 	key := s.signers[f.sid]
-	o, err := envelope.Seal(schema.KindEvidenceAttestation, genuine, key)
+	o, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, genuine, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,10 +370,10 @@ func TestAC112_JudgmentBindsCriterionAndRevision(t *testing.T) {
 	third := sessionOfKind(t, s, "agent")
 	shaped := func(edit func(*schema.EvidenceAttestation)) error {
 		att := f.attestation(t, one["attestation"].(string))
-		att.Manifest, att.Commit, att.ExecutedTree, att.VerifierSession = second["manifest"].(string), second["commit"].(string), second["tree"].(string), third
+		att.Manifest, att.Tree, att.VerifierSession = second["manifest"].(string), second["tree"].(string), third
 		edit(&att)
 		k := s.signers[third]
-		o, err := envelope.Seal(schema.KindEvidenceAttestation, att, k)
+		o, err := envelope.SealVersion(2, schema.KindEvidenceAttestation, att, k)
 		if err != nil {
 			return err
 		}
@@ -452,10 +452,10 @@ func TestAC169_IndependenceQuery(t *testing.T) {
 		t.Fatalf("rejected: %v", status["rejected"])
 	}
 
-	// An unrelated session is independent; the commit must match the manifest.
-	expectCode(t, s, "evidence.isIndependent", "", map[string]any{"manifest": f.proposal["manifest"], "commit": strings.Repeat("1", 40)}, "binding_mismatch")
-	expectCode(t, s, "evidence.isIndependent", "", map[string]any{"manifest": strings.Repeat("2", 64), "commit": f.proposal["commit"]}, "unknown_manifest")
-	for _, in := range []map[string]any{{"manifest": f.proposal["manifest"]}, binding(f.proposal, map[string]any{"extra": 1})} {
+	// An unrelated session is independent; v2 bindings name no commit.
+	expectCode(t, s, "evidence.isIndependent", "", map[string]any{"manifest": f.proposal["manifest"], "commit": strings.Repeat("1", 40)}, "schema_invalid")
+	expectCode(t, s, "evidence.isIndependent", "", map[string]any{"manifest": strings.Repeat("2", 64)}, "unknown_manifest")
+	for _, in := range []map[string]any{{}, binding(f.proposal, map[string]any{"extra": 1})} {
 		if _, err := s.Handle(ctx, request("evidence.isIndependent", "", in)); !apierr.HasCode(err, "schema_invalid") {
 			t.Fatalf("input %v: %v", in, err)
 		}
@@ -519,10 +519,10 @@ func TestAC170_180_CriteriaStatusQuery(t *testing.T) {
 	}
 
 	// The binding and schema are strict.
-	expectCode(t, s, "intent.criteriaStatus", "", map[string]any{"manifest": first["manifest"], "commit": second["commit"]}, "binding_mismatch")
-	expectCode(t, s, "intent.criteriaStatus", "", map[string]any{"manifest": strings.Repeat("2", 64), "commit": first["commit"]}, "unknown_manifest")
+	expectCode(t, s, "intent.criteriaStatus", "", map[string]any{"manifest": first["manifest"], "commit": strings.Repeat("1", 40)}, "schema_invalid")
+	expectCode(t, s, "intent.criteriaStatus", "", map[string]any{"manifest": strings.Repeat("2", 64)}, "unknown_manifest")
 	for _, in := range []map[string]any{
-		{"manifest": first["manifest"]},
+		{},
 		binding(first, map[string]any{"status": "satisfied"}),
 		binding(first, map[string]any{"evidence": []string{"not-a-hash"}}),
 		binding(first, map[string]any{"evidence": []string{pass, pass}}),

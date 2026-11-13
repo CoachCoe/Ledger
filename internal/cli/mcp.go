@@ -28,10 +28,10 @@ func runMCP(args []string) int {
 		err = apierr.New("usage", "ledger mcp --session ses_...")
 	}
 	if err == nil {
-		repo, e := locate(ctx)
+		repo, e := locateNative(ctx)
 		err = e
 		if err == nil {
-			s, e := adapter.New(*session, repo.APIVersion(), func(ctx context.Context, r api.Request) (any, error) { return client.Call(ctx, repo.Root, r) })
+			s, e := adapter.New(*session, api.Version, func(ctx context.Context, r api.Request) (any, error) { return client.Call(ctx, repo.Root, r) })
 			err = e
 			if err == nil {
 				err = s.Run(ctx, &mcp.StdioTransport{})

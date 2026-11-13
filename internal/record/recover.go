@@ -25,12 +25,6 @@ type Report struct {
 	// Quarantined lists files moved to .ledger/quarantine because their
 	// content does not match their name.
 	Quarantined []string `json:"quarantined"`
-	// Materialized counts ref objects copied to disk.
-	Materialized int `json:"materialized"`
-	// AddedToRef counts disk objects committed to the records ref.
-	AddedToRef int `json:"added_to_ref"`
-	// InvalidInRef lists ref entries that failed verification.
-	InvalidInRef []string `json:"invalid_in_ref"`
 	// Logged counts accepted groups added to the records head log because
 	// a crash or an import left them out.
 	Logged int `json:"logged,omitzero"`
@@ -67,12 +61,13 @@ type Conflict struct {
 	Records []string     `json:"records,omitempty"`
 }
 
-// Recover reconciles the record files, the records ref, and the index:
-// it finishes journaled operations, quarantines corrupt files, copies
-// objects in both directions between disk and ref, and indexes every
-// complete group. It never deletes records or overwrites external ref
-// changes.
+// Recover reconciles the record files, the records head log and the
+// index: it finishes journaled operations, quarantines corrupt files, and
+// indexes every complete group. It never deletes records.
 func (s *Store) Recover(ctx context.Context) (*Report, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
 	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
@@ -85,6 +80,9 @@ func (s *Store) Recover(ctx context.Context) (*Report, error) {
 // state (notifications, leases, observations) cannot be rebuilt and is
 // reported as discarded.
 func (s *Store) Reindex(ctx context.Context) (*Report, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
 	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
@@ -128,13 +126,6 @@ func (s *Store) recoverLocked(ctx context.Context) (*Report, error) {
 		if !ok {
 			r.Quarantined = append(r.Quarantined, h)
 		}
-	}
-	if s.log == nil {
-		sync, err := s.syncRef(ctx)
-		if err != nil {
-			return nil, err
-		}
-		r.Materialized, r.AddedToRef, r.InvalidInRef = len(sync.Materialized), sync.Added, sync.Invalid
 	}
 	if err := s.indexAll(ctx, r); err != nil {
 		return nil, err
@@ -273,9 +264,6 @@ func (s *Store) indexAll(ctx context.Context, r *Report) error {
 // in receipt hash order, and logged receipts whose group is no longer
 // accepted are reported as missing rather than dropped from the log.
 func (s *Store) reconcileLog(ctx context.Context, r *Report) error {
-	if s.log == nil {
-		return nil
-	}
 	if err := s.log.load(); err != nil {
 		return err
 	}
@@ -333,4 +321,31 @@ func (s *Store) conflicts(ctx context.Context, r *Report) error {
 	}
 	slices.SortFunc(r.Conflicts, func(a, b Conflict) int { return strings.Compare(a.ID, b.ID) })
 	return nil
+}
+
+func hashFromObjectPath(p string) (string, bool) {
+	dir, file, ok := strings.Cut(p, "/")
+	h := dir + strings.TrimSuffix(file, ".json")
+	return h, ok && len(dir) == 2 && strings.HasSuffix(file, ".json") && isHash(h)
+}
+
+// listObjects returns the hashes of all well-named object files on disk.
+func (s *Store) listObjects() ([]string, error) {
+	var out []string
+	root := filepath.Join(s.Dir, "objects")
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		if h, ok := hashFromObjectPath(filepath.ToSlash(rel)); ok {
+			out = append(out, h)
+		}
+		return nil
+	})
+	slices.Sort(out)
+	return out, err
 }

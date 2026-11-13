@@ -20,16 +20,12 @@ type CheckRef struct {
 }
 
 // Binding is the exact revision evidence applies to: manifest, bound
-// commit and the pinned definitions. Once returned it never changes; a
+// tree and the pinned definitions. Once returned it never changes; a
 // reworked proposal is a different manifest and a different Binding.
 type Binding struct {
-	Manifest string `json:"manifest"`
-	// Commit and BaseCommit bind a v1 manifest; a v2 one binds BaseTree
-	// and Tree only.
-	Commit        string     `json:"commit,omitzero"`
+	Manifest      string     `json:"manifest"`
 	Tree          string     `json:"tree"`
-	BaseCommit    string     `json:"base_commit,omitzero"`
-	BaseTree      string     `json:"base_tree,omitzero"`
+	BaseTree      string     `json:"base_tree"`
 	ChangeID      string     `json:"change_id"`
 	IntentID      string     `json:"intent_id"`
 	WorkspaceID   string     `json:"workspace_id"`
@@ -39,21 +35,20 @@ type Binding struct {
 }
 
 // ResolveInput selects a binding by change id (convenience) or by exact
-// manifest id with an optional commit that must agree.
+// manifest id.
 type ResolveInput struct {
 	ChangeID string
 	Manifest string
-	Commit   string
 }
 
 // Resolve returns the frozen binding. A change id resolves once to the
-// workspace's current proposal; callers use the returned manifest, commit
+// workspace's current proposal; callers use the returned manifest, tree
 // and definition hashes from then on.
 func Resolve(ctx context.Context, idx *index.Index, in ResolveInput) (Binding, error) {
-	manifest, commit := in.Manifest, in.Commit
+	manifest := in.Manifest
 	if in.ChangeID != "" {
-		if manifest != "" || commit != "" {
-			return Binding{}, apierr.New("invalid_binding", "change_id cannot be combined with manifest or commit")
+		if manifest != "" {
+			return Binding{}, apierr.New("invalid_binding", "change_id cannot be combined with manifest")
 		}
 		wid, err := idx.ChangeWorkspace(ctx, in.ChangeID)
 		if err != nil {
@@ -75,30 +70,12 @@ func Resolve(ctx context.Context, idx *index.Index, in ResolveInput) (Binding, e
 	if err != nil {
 		return Binding{}, err
 	}
-	// A v2 manifest binds its tree directly, and is indexed only as part of
-	// its proposal.
-	bound := ""
-	if m.BaseTree != "" {
-		if commit != "" {
-			return Binding{}, apierr.New("binding_mismatch", "manifest %s binds a tree, not commit %s", manifest, commit)
-		}
-	} else {
-		if bound, err = idx.ManifestCommit(ctx, manifest); err != nil {
-			return Binding{}, err
-		}
-		if bound == "" {
-			return Binding{}, apierr.New("not_proposed", "manifest %s has no proposal commit", manifest)
-		}
-		if commit != "" && commit != bound {
-			return Binding{}, apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", commit, manifest).With("bound_commit", bound)
-		}
-	}
 	checks, err := pinnedChecks(ctx, idx, m.IntentID)
 	if err != nil {
 		return Binding{}, err
 	}
 	return Binding{
-		Manifest: manifest, Commit: bound, Tree: m.Tree, BaseCommit: m.BaseCommit, BaseTree: m.BaseTree,
+		Manifest: manifest, Tree: m.Tree, BaseTree: m.BaseTree,
 		ChangeID: m.ChangeID, IntentID: m.IntentID, WorkspaceID: m.WorkspaceID, AuthorSession: m.AuthorSession,
 		Checks: checks, Frozen: true,
 	}, nil

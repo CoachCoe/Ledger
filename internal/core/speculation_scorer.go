@@ -14,7 +14,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/evidence"
 	"github.com/CoachCoe/Ledger/internal/speculate"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 // Scorer result files larger than this are a scorer failure.
@@ -26,9 +25,9 @@ const scorerLogLimit = 8 << 10
 // runScorer runs a command scorer in a scratch directory with a reduced
 // environment: the definition's allowlist plus LEDGER_SCORER_INPUT (the
 // frozen candidate JSON), LEDGER_SCORER_OUTPUT (where it writes
-// {"scores": {...}}), LEDGER_REPOSITORY and LEDGER_RUN_ID. In a native
-// repository, which has no Git to read candidates from, LEDGER_CANDIDATES
-// holds a checkout of each candidate's tree named by its id. Like checks,
+// {"scores": {...}}), LEDGER_REPOSITORY, LEDGER_RUN_ID and
+// LEDGER_CANDIDATES, which holds a checkout of each candidate's tree named by
+// its id. Like checks,
 // it runs as the local user without isolation. Any failure is a structured
 // error and never a winner.
 func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, trees map[string]string) (map[string]int64, error) {
@@ -47,18 +46,16 @@ func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, tre
 		return nil, err
 	}
 	env := []string{"LEDGER_SCORER_INPUT=" + in, "LEDGER_SCORER_OUTPUT=" + out, "LEDGER_REPOSITORY=" + s.repositoryDir(), "LEDGER_RUN_ID=" + rs.run.ID}
-	if s.native() {
-		candidates := filepath.Join(dir, "candidates")
-		if err := os.Mkdir(candidates, 0o700); err != nil {
+	candidates := filepath.Join(dir, "candidates")
+	if err := os.Mkdir(candidates, 0o700); err != nil {
+		return nil, err
+	}
+	for id, tree := range trees {
+		if err := s.Provider.Workspaces.Checkout(tree, filepath.Join(candidates, id)); err != nil {
 			return nil, err
 		}
-		for id, tree := range trees {
-			if err := s.Provider.(workspace.NativeProvider).Workspaces.Checkout(tree, filepath.Join(candidates, id)); err != nil {
-				return nil, err
-			}
-		}
-		env = append(env, "LEDGER_CANDIDATES="+candidates)
 	}
+	env = append(env, "LEDGER_CANDIDATES="+candidates)
 	allowed := map[string]bool{}
 	for _, name := range def.EnvAllowlist {
 		allowed[name] = true

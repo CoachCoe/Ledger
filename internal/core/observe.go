@@ -29,15 +29,14 @@ type workspaceView struct {
 	Tree        string            `json:"tree,omitzero"`
 }
 
-// observe captures w through its persistent private index and saves the
-// write set. The per-workspace lock keeps concurrent observers off the same
-// private index and stops an older capture overwriting a newer one.
+// observe snapshots w into its operation log and saves the write set. The
+// per-workspace lock stops an older snapshot overwriting a newer one.
 func (s *Service) observe(ctx context.Context, w schema.Workspace) (workspace.Snapshot, string, error) {
 	m, _ := s.observing.LoadOrStore(w.ID, new(sync.Mutex))
 	mu := m.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
-	snap, err := s.Provider.Snapshot(ctx, w, workspace.IndexPath(s.runtimeDir(), w.ID))
+	snap, err := s.Provider.Snapshot(ctx, w)
 	if err != nil {
 		return snap, "", err
 	}

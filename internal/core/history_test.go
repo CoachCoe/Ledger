@@ -65,7 +65,7 @@ func TestM6HistoryReportsMissingAndPendingProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := strings.Repeat("a", 64)
-	receipt, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{OperationID: schema.NewID(schema.PrefixOperation), Operation: "intent.create", RequestDigest: canon.Hash([]byte("missing")), Result: []byte(`{}`), Members: []string{missing}, At: now()}, root)
+	receipt, err := envelope.SealVersion(2, schema.KindOperationReceipt, schema.OperationReceipt{OperationID: schema.NewID(schema.PrefixOperation), Operation: "intent.create", RequestDigest: canon.Hash([]byte("missing")), Result: []byte(`{}`), Members: []string{missing}, At: now()}, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestAC202_SelectedDependentsOnly(t *testing.T) {
 		t.Fatal("unselected change included")
 	}
 	v := call(t, s, request("session.create", "", map[string]any{"participant_kind": "human"}))
-	call(t, s, request("selection.record", v["session_id"].(string), map[string]any{"manifest": p["manifest"], "commit": p["commit"], "evidence": []string{}}))
+	call(t, s, request("selection.record", v["session_id"].(string), map[string]any{"manifest": p["manifest"], "evidence": []string{}}))
 	out := call(t, s, request("history.dependents", "", in))["records"].([]any)
 	if len(out) != 1 || out[0].(map[string]any)["confidence"] != "manifest_cooccurrence" {
 		t.Fatal(out)

@@ -24,25 +24,14 @@ const independenceNote = "independence describes who signed the evidence; it doe
 // judgeGrace bounds the human verifier session a root judgment provisions.
 const judgeGrace = 10 * time.Minute
 
-// withCommit adds the commit a v1 binding names to result; a v2 binding
-// names none.
-func withCommit(result map[string]any, commit string) map[string]any {
-	if commit != "" {
-		result["commit"] = commit
-	}
-	return result
-}
-
 type bindingInput struct {
 	Manifest string `json:"manifest"`
-	Commit   string `json:"commit"`
 }
 
-// criteriaBinding resolves the exact revision named by manifest and commit
-// (binding_mismatch if the commit is not the one bound to the manifest) and
-// the intent's criteria.
-func (s *Service) criteriaBinding(ctx context.Context, manifest, commit string) (evidence.Binding, selection.Binding, error) {
-	b, err := evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{Manifest: manifest, Commit: commit})
+// criteriaBinding resolves the exact revision named by manifest and the
+// intent's criteria.
+func (s *Service) criteriaBinding(ctx context.Context, manifest string) (evidence.Binding, selection.Binding, error) {
+	b, err := evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{Manifest: manifest})
 	if err != nil {
 		return b, selection.Binding{}, err
 	}
@@ -50,7 +39,7 @@ func (s *Service) criteriaBinding(ctx context.Context, manifest, commit string) 
 	if err != nil {
 		return b, selection.Binding{}, err
 	}
-	return b, selection.Binding{Manifest: b.Manifest, Commit: b.Commit, Tree: b.Tree, Criteria: intent.Criteria}, nil
+	return b, selection.Binding{Manifest: b.Manifest, Tree: b.Tree, Criteria: intent.Criteria}, nil
 }
 
 // evidenceIsIndependent lists the attestations recorded for a revision with
@@ -60,7 +49,7 @@ func (s *Service) evidenceIsIndependent(ctx context.Context, r api.Request) (any
 	if err != nil {
 		return nil, err
 	}
-	_, sb, err := s.criteriaBinding(ctx, in.Manifest, in.Commit)
+	_, sb, err := s.criteriaBinding(ctx, in.Manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -82,15 +71,15 @@ func (s *Service) evidenceIsIndependent(ctx context.Context, r api.Request) (any
 			"hash": e.Hash, "signer": e.Signer, "signer_kind": kind, "independent": e.Independent,
 			"reason": reason, "result": e.Att.Result, "category": e.Att.Category, "criteria": e.Att.Criteria,
 		})
-		if e.Independent && e.Att.Result == "pass" && e.Att.Commit == sb.Commit && e.Att.ExecutedOn() == sb.Tree && selection.Consistent(e.Att) == "" {
+		if e.Independent && e.Att.Result == "pass" && e.Att.ExecutedOn() == sb.Tree && selection.Consistent(e.Att) == "" {
 			passing = append(passing, e.Hash)
 		}
 	}
 	slices.Sort(passing)
-	return withCommit(map[string]any{
+	return map[string]any{
 		"manifest": in.Manifest, "attestations": attestations,
 		"independent_passing": passing, "note": independenceNote,
-	}, in.Commit), nil
+	}, nil
 }
 
 // criteriaStatus evaluates every criterion of the intent for one revision
@@ -104,7 +93,7 @@ func (s *Service) criteriaStatus(ctx context.Context, r api.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
-	b, sb, err := s.criteriaBinding(ctx, in.Manifest, in.Commit)
+	b, sb, err := s.criteriaBinding(ctx, in.Manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -124,10 +113,10 @@ func (s *Service) criteriaStatus(ctx context.Context, r api.Request) (any, error
 		hashes = append(hashes, e.Hash)
 	}
 	slices.Sort(hashes)
-	return withCommit(map[string]any{
+	return map[string]any{
 		"intent_id": b.IntentID, "manifest": b.Manifest, "evidence_set": slices.Compact(hashes),
 		"criteria": res.Criteria, "contrary_evidence": res.Contrary, "rejected": res.Rejected,
-	}, b.Commit), nil
+	}, nil
 }
 
 // explicitSet loads the named attestations. An unknown hash is
@@ -147,7 +136,7 @@ func (s *Service) explicitSet(ctx context.Context, sb selection.Binding, hashes 
 		switch {
 		case !ok:
 			return nil, apierr.New("unknown_evidence", "no committed evidence attestation %s", h).With("evidence", h)
-		case e.Att.Manifest != sb.Manifest || e.Att.Commit != sb.Commit || e.Att.ExecutedOn() != sb.Tree:
+		case e.Att.Manifest != sb.Manifest || e.Att.ExecutedOn() != sb.Tree:
 			return nil, apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", h, e.Att.Manifest, sb.Manifest).
 				With("evidence", h).With("evidence_manifest", e.Att.Manifest)
 		}
@@ -189,7 +178,7 @@ func (s *Service) evidenceJudge(ctx context.Context, r api.Request) (any, error)
 	if !errors.Is(err, errNotCommitted) {
 		return nil, err
 	}
-	b, sb, err := s.criteriaBinding(ctx, in.Manifest, in.Commit)
+	b, sb, err := s.criteriaBinding(ctx, in.Manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -235,21 +224,16 @@ func (s *Service) evidenceJudge(ctx context.Context, r api.Request) (any, error)
 		Manifest: b.Manifest, CheckDefinition: defRecord.Hash,
 		Category: "judgment", Criteria: []string{in.CriterionID}, Command: def.Command,
 		Result: in.Result, Reason: in.Reason, EnvironmentHash: envHash, Environment: env,
-		VerifierSession: reviewer, StartedAt: at, EndedAt: at, OutputDigest: canon.Hash(nil), Isolation: "none",
-	}
-	if b.Commit != "" {
-		att.Commit, att.ExecutedTree = b.Commit, b.Tree
-	} else {
-		att.Tree = b.Tree
+		VerifierSession: reviewer, StartedAt: at, EndedAt: at, OutputDigest: canon.Hash(nil), Isolation: "none", Tree: b.Tree,
 	}
 	o, err := s.seal(schema.KindEvidenceAttestation, att, signer)
 	if err != nil {
 		return nil, err
 	}
-	result := withCommit(map[string]any{
+	result := map[string]any{
 		"attestation": o.Hash, "check_definition": defRecord.Hash, "manifest": b.Manifest,
 		"criterion_id": in.CriterionID, "result": in.Result, "reviewer_session": reviewer, "reviewer_kind": sess.ParticipantKind,
-	}, b.Commit)
+	}
 	return s.publish(context.WithoutCancel(ctx), record.Op{ID: r.OperationID, Name: r.Operation, Digest: digest, Signer: signer}, func(*index.Index) (any, []envelope.Object, []record.Effect, error) {
 		return result, []envelope.Object{defRecord, o}, nil, nil
 	})

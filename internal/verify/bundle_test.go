@@ -17,6 +17,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
+	"github.com/CoachCoe/Ledger/internal/oplog"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/verify"
@@ -72,7 +73,7 @@ func TestAC088_089_179_IntegrityAndTrustSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, err := envelope.Seal(schema.KindRootKey, schema.RootKey{PublicKey: identity.EncodePublicKey(other.PublicKey()), CreatedAt: "2026-11-05T12:00:00Z"}, other)
+	o, err := envelope.SealVersion(2, schema.KindRootKey, schema.RootKey{PublicKey: identity.EncodePublicKey(other.PublicKey()), CreatedAt: "2026-11-05T12:00:00Z"}, other)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,23 +111,16 @@ func TestAC088_UnavailableNotInvalid(t *testing.T) {
 		"record":  func(p *parts) { delete(p.Records, p.byKind(t, schema.KindCheckDefinition)[0]) },
 		"session": func(p *parts) { delete(p.Records, p.byKind(t, schema.KindSession)[0]) },
 		"receipt": func(p *parts) { delete(p.Records, receiptOf(p)) },
-		"commit": func(p *parts) {
-			tmp := filepath.Join(t.TempDir(), "only-records.bundle")
-			if _, err := gitx.Run(context.Background(), c.repo.Dir, nil, gitEnv, "bundle", "create", "-q", tmp, record.RecordsRef); err != nil {
-				t.Fatal(err)
+		"store": func(p *parts) {
+			for name := range p.Files {
+				if strings.HasPrefix(name, "store/") {
+					delete(p.Files, name)
+				}
 			}
-			raw, err := os.ReadFile(tmp)
-			if err != nil {
-				t.Fatal(err)
-			}
-			p.Git = raw
 		},
 	}
 	for name, mutate := range cases {
 		for _, refresh := range []bool{false, true} {
-			if name == "commit" && !refresh {
-				continue // a stale digest is tampering, not absence
-			}
 			t.Run(name, func(t *testing.T) {
 				p := readParts(t, path)
 				mutate(p)
@@ -137,10 +131,9 @@ func TestAC088_UnavailableNotInvalid(t *testing.T) {
 				if len(rep.Manifests) != 1 {
 					t.Fatalf("components are still reported: %+v", rep.Manifests)
 				}
-				if name == "commit" {
-					b := *rep.Manifests[0].Binding
-					if b.Trailer != verify.BindingUnavailable || b.Tree != verify.BindingUnavailable || b.Parent != verify.BindingUnavailable {
-						t.Fatalf("a missing commit is unavailable on all three conditions: %+v", b)
+				if name == "store" {
+					if got := rep.Manifests[0].Components["tree"]; got != verify.Unavailable {
+						t.Fatalf("a missing tree is unavailable: %v", rep.Manifests[0].Components)
 					}
 					if rep.Manifests[0].Components["authority"] != verify.Verified {
 						t.Fatalf("authority still verifies: %v", rep.Manifests[0].Components)
@@ -162,7 +155,7 @@ func mustField(t *testing.T, m map[string]any, k string) []byte {
 
 // rewrittenGit returns a Git bundle whose retained commit for manifest is
 // replaced by a commit that breaks exactly one binding condition.
-func (c *chain) rewrittenGit(t *testing.T, what string) (bundle []byte, sha, tree string) {
+func (r *v1repo) rewrittenGit(t *testing.T, manifest, what string) (bundle []byte, sha, tree string) {
 	t.Helper()
 	ctx := context.Background()
 	tmp := t.TempDir()
@@ -177,9 +170,10 @@ func (c *chain) rewrittenGit(t *testing.T, what string) (bundle []byte, sha, tre
 	if _, err := gitx.Run(ctx, tmp, nil, gitEnv, "init", "--bare", "-q", bare); err != nil {
 		t.Fatal(err)
 	}
-	ref := verify.ProposalRefPrefix + c.manifest
-	run("", "fetch", "-q", "--no-tags", c.repo.Dir, "+"+ref+":"+ref)
-	orig, err := (&gitx.Repo{Dir: bare, CommonDir: bare, MainDir: bare}).ReadCommit(ctx, c.commit)
+	ref := verify.ProposalRefPrefix + manifest
+	commit := r.commit(t, manifest)
+	run("", "fetch", "-q", "--no-tags", r.repo.Dir, "+"+ref+":"+ref)
+	orig, err := (&gitx.Repo{Dir: bare, CommonDir: bare, MainDir: bare}).ReadCommit(ctx, commit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +184,7 @@ func (c *chain) rewrittenGit(t *testing.T, what string) (bundle []byte, sha, tre
 	case "tree":
 		tree = run("", "mktree")
 	case "parent":
-		parent = c.commit
+		parent = commit
 	}
 	sha = run(message, "commit-tree", tree, "-p", parent, "-F", "-")
 	run("", "update-ref", ref, sha)
@@ -239,24 +233,35 @@ func TestAC177_TamperDetected(t *testing.T) {
 	t.Run("changed manifest tree", func(t *testing.T) {
 		p := readParts(t, path)
 		p.forge(t, c.manifest, func(env map[string]any) {
-			env["payload"].(map[string]any)["tree"] = strings.Repeat("1", 40)
+			env["payload"].(map[string]any)["tree"] = strings.Repeat("1", 64)
 		})
 		if rep := verifyBundle(t, p.write(t, true)); rep.Integrity != verify.Invalid {
 			t.Fatalf("%s", rep.Integrity)
 		}
 	})
+}
+
+// The v1 path still reports each commit binding condition separately.
+func TestPhase1CommitBindingTamper(t *testing.T) {
+	r := newV1Repo(t)
+	path := r.mustExport(t)
+	manifest := r.manifests[1]
 	for _, what := range []string{"trailer", "tree", "parent"} {
 		t.Run("commit "+what, func(t *testing.T) {
-			raw, sha, tree := c.rewrittenGit(t, what)
+			raw, sha, tree := r.rewrittenGit(t, manifest, what)
 			p := readParts(t, path)
-			p.Git = raw
-			commits := p.Inv["git"].(map[string]any)["commits"].([]any)
-			commits[0].(map[string]any)["commit"], commits[0].(map[string]any)["tree"] = sha, tree
+			p.Files[verify.GitName] = raw
+			for _, cm := range p.Inv["git"].(map[string]any)["commits"].([]any) {
+				if cm := cm.(map[string]any); cm["manifest"] == manifest {
+					cm["commit"], cm["tree"] = sha, tree
+				}
+			}
 			rep := verifyBundle(t, p.write(t, true))
-			if rep.Integrity != verify.Invalid || len(rep.Manifests) != 1 {
+			i := slices.IndexFunc(rep.Manifests, func(m verify.ManifestReport) bool { return m.Hash == manifest })
+			if rep.Integrity != verify.Invalid || i < 0 {
 				t.Fatalf("%s: %s", what, rep.Integrity)
 			}
-			b := *rep.Manifests[0].Binding
+			b := *rep.Manifests[i].Binding
 			got := map[string]string{"trailer": b.Trailer, "tree": b.Tree, "parent": b.Parent}
 			for cond, v := range got {
 				want := verify.BindingOK
@@ -267,8 +272,8 @@ func TestAC177_TamperDetected(t *testing.T) {
 					t.Fatalf("%s rewrite: condition %s is %s, want %s (%+v)", what, cond, v, want, b)
 				}
 			}
-			if rep.Manifests[0].Components["authority"] != verify.Verified {
-				t.Fatalf("authority is independent of the binding: %v", rep.Manifests[0].Components)
+			if rep.Manifests[i].Components["authority"] != verify.Verified {
+				t.Fatalf("authority is independent of the binding: %v", rep.Manifests[i].Components)
 			}
 		})
 	}
@@ -279,7 +284,7 @@ func TestAC078_099_114_BundleInventoryAndClosure(t *testing.T) {
 	path := c.mustExport()
 	p := readParts(t, path)
 	inv := p.Inv
-	if inv["bundle_version"].(float64) != 1 || inv["complete"] != true {
+	if inv["bundle_version"].(float64) != 2 || inv["complete"] != true {
 		t.Fatalf("inventory: %v", inv)
 	}
 	ids := inv["ids"].(map[string]any)
@@ -297,32 +302,19 @@ func TestAC078_099_114_BundleInventoryAndClosure(t *testing.T) {
 	if !haveRoot || !haveSession || len(inv["roots"].([]any)) != 1 {
 		t.Fatalf("public keys: %v", inv["keys"])
 	}
-	for _, k := range []schema.Kind{schema.KindOperationReceipt, schema.KindLifecycleEvent, schema.KindEvidenceAttestation, schema.KindSelectionDecision, schema.KindCheckDefinition} {
+	for _, k := range []schema.Kind{schema.KindRepository, schema.KindOperationReceipt, schema.KindLifecycleEvent, schema.KindEvidenceAttestation, schema.KindSelectionDecision, schema.KindCheckDefinition} {
 		if len(p.byKind(t, k)) == 0 {
 			t.Fatalf("no %s in the bundle", k)
 		}
 	}
-	git := inv["git"].(map[string]any)
-	refs := git["refs"].([]any)
-	if !slices.Contains(refs, any(verify.ProposalRefPrefix+c.manifest)) || !slices.Contains(refs, any(record.RecordsRef)) {
-		t.Fatalf("git refs: %v", refs)
+	// The store part carries the trees, and the workspace's operation log
+	// travels up to the head the manifest pinned.
+	if len(inv["store"].([]any)) == 0 {
+		t.Fatalf("no store objects: %v", inv["store"])
 	}
-	cm := git["commits"].([]any)[0].(map[string]any)
-	if cm["manifest"] != c.manifest || cm["commit"] != c.commit || cm["tree"] != c.tree {
-		t.Fatalf("commits: %v", cm)
-	}
-	// The Git bundle needs nothing from the source: it verifies in an empty repository.
-	empty := t.TempDir()
-	ctx := context.Background()
-	if _, err := gitx.Run(ctx, empty, nil, gitEnv, "init", "-q"); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(t.TempDir(), "objects.bundle")
-	if err := os.WriteFile(file, p.Git, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gitx.Run(ctx, empty, nil, gitEnv, "bundle", "verify", file); err != nil {
-		t.Fatalf("the git part has prerequisites: %v", err)
+	logs := inv["oplogs"].([]any)
+	if len(logs) != 1 || logs[0].(map[string]any)["workspace"] != c.wid || p.Files["oplog/"+c.wid+".log"] == nil {
+		t.Fatalf("operation logs: %v", logs)
 	}
 	// Unknown versions fail explicitly instead of being reinterpreted.
 	q := readParts(t, path)
@@ -351,13 +343,12 @@ func TestAC078_099_114_BundleInventoryAndClosure(t *testing.T) {
 		t.Fatal("an unknown manifest must not export")
 	}
 	// A missing dependency is never silently partial.
-	ref := verify.ProposalRefPrefix + c.manifest
-	if _, err := gitx.Run(ctx, c.repo.Dir, nil, gitEnv, "update-ref", "-d", ref); err != nil {
+	if err := os.Remove(oplog.Path(filepath.Join(c.dir, record.DirName, "oplog"), c.wid)); err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.export(verify.ExportOptions{})
 	if code(t, err) != "export_incomplete" {
-		t.Fatalf("missing retention ref: %v", err)
+		t.Fatalf("missing operation log: %v", err)
 	}
 	partial, err := c.export(verify.ExportOptions{AllowPartial: true})
 	if err != nil || partial.Complete || len(partial.Missing) == 0 {
@@ -365,6 +356,44 @@ func TestAC078_099_114_BundleInventoryAndClosure(t *testing.T) {
 	}
 	if rep := verifyBundle(t, partial.Out); rep.Integrity != verify.Unavailable || rep.Complete {
 		t.Fatalf("a partial bundle never verifies complete: %s %v", rep.Integrity, rep.Complete)
+	}
+}
+
+// A v1 bundle's Git part carries the retained proposal commits and the
+// records ref, and needs nothing from the source repository.
+func TestPhase1BundleGitPart(t *testing.T) {
+	r := newV1Repo(t)
+	p := readParts(t, r.mustExport(t))
+	if p.Inv["bundle_version"].(float64) != 1 {
+		t.Fatalf("inventory: %v", p.Inv)
+	}
+	git := p.Inv["git"].(map[string]any)
+	refs := git["refs"].([]any)
+	for _, m := range r.manifests {
+		if !slices.Contains(refs, any(verify.ProposalRefPrefix+m)) {
+			t.Fatalf("git refs lack %s: %v", m, refs)
+		}
+	}
+	if !slices.Contains(refs, any(verify.RecordsRef)) {
+		t.Fatalf("git refs: %v", refs)
+	}
+	for _, cm := range git["commits"].([]any) {
+		cm := cm.(map[string]any)
+		if cm["commit"] != r.commit(t, cm["manifest"].(string)) {
+			t.Fatalf("commits: %v", cm)
+		}
+	}
+	ctx := context.Background()
+	empty := t.TempDir()
+	if _, err := gitx.Run(ctx, empty, nil, gitEnv, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "objects.bundle")
+	if err := os.WriteFile(file, p.Files[verify.GitName], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(ctx, empty, nil, gitEnv, "bundle", "verify", file); err != nil {
+		t.Fatalf("the git part has prerequisites: %v", err)
 	}
 }
 
@@ -400,16 +429,6 @@ func TestAC033_178_235_VerifyWithoutSQLite(t *testing.T) {
 	if _, err := os.Stat(db); err == nil {
 		t.Fatal("verify and export created or opened the SQLite index")
 	}
-	// Verification reads the records ref, not the object files.
-	if err := os.Rename(filepath.Join(c.store.Dir, "objects"), filepath.Join(c.store.Dir, "objects.away")); err != nil {
-		t.Fatal(err)
-	}
-	if v := run(t, "verify", "--strict"); v["ok"] != true {
-		t.Fatalf("verify from the ref: %v", v)
-	}
-	if err := os.Rename(filepath.Join(c.store.Dir, "objects.away"), filepath.Join(c.store.Dir, "objects")); err != nil {
-		t.Fatal(err)
-	}
 	// --strict turns a non-verified outcome into an error, with the report.
 	broken := readParts(t, out)
 	delete(broken.Records, broken.byKind(t, schema.KindCheckDefinition)[0])
@@ -427,19 +446,15 @@ func TestAC033_178_235_VerifyWithoutSQLite(t *testing.T) {
 }
 
 func TestAC107_ProposalRefsPreserved(t *testing.T) {
-	c := newChain(t, "true")
-	first := c.manifest
-	c.call("workspace.rework", c.sid, map[string]any{"workspace_id": c.wid})
-	c.propose("export const x=3;\n")
-	if c.manifest == first {
-		t.Fatal("rework produced no new revision")
-	}
-	if _, err := gitx.Run(context.Background(), c.repo.Dir, nil, gitEnv, "gc", "-q", "--prune=now"); err != nil {
+	// Phase 1 retained every revision at its own ref, so both revisions of
+	// the pinned repository survive garbage collection and verify.
+	r := newV1Repo(t)
+	if _, err := gitx.Run(context.Background(), r.dir, nil, gitEnv, "gc", "-q", "--prune=now"); err != nil {
 		t.Fatal(err)
 	}
-	path := c.mustExport()
+	path := r.mustExport(t)
 	refs := readParts(t, path).Inv["git"].(map[string]any)["refs"].([]any)
-	for _, m := range []string{first, c.manifest} {
+	for _, m := range r.manifests {
 		if !slices.Contains(refs, any(verify.ProposalRefPrefix+m)) {
 			t.Fatalf("revision %s is not retained: %v", m, refs)
 		}
@@ -447,6 +462,14 @@ func TestAC107_ProposalRefsPreserved(t *testing.T) {
 	rep := verifyBundle(t, path)
 	if rep.Integrity != verify.Verified || len(rep.Manifests) != 2 {
 		t.Fatalf("both revisions verify after gc: %s %d", rep.Integrity, len(rep.Manifests))
+	}
+	// A native rework keeps both revisions too: each tree stays in the store.
+	c := newChain(t, "true")
+	first := c.manifest
+	c.call("workspace.rework", c.sid, map[string]any{"workspace_id": c.wid})
+	c.propose("export const x=3;\n")
+	if rep := verifyBundle(t, c.mustExport()); rep.Integrity != verify.Verified || len(rep.Manifests) != 2 || c.manifest == first {
+		t.Fatalf("native revisions: %s %d", rep.Integrity, len(rep.Manifests))
 	}
 	doc, err := os.ReadFile("../../docs/workflow.md")
 	if err != nil {

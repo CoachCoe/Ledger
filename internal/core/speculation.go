@@ -6,7 +6,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"maps"
 	"slices"
 	"strconv"
 	"sync"
@@ -46,7 +45,6 @@ type startInput struct {
 	Scorer             scorerInput       `json:"scorer"`
 	Deadline           string            `json:"deadline"`
 	DeadlineSeconds    int64             `json:"deadline_seconds"`
-	BaseCommit         string            `json:"base_commit"`
 	BaseTree           string            `json:"base_tree"`
 	Allow              []string          `json:"allow"`
 	Deny               []string          `json:"deny"`
@@ -130,7 +128,7 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 	if err != nil {
 		return prepared{}, err
 	}
-	base, err := s.forkBase(ctx, in.BaseCommit, in.BaseTree)
+	base, err := s.forkBase(ctx, in.BaseTree)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -171,7 +169,7 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 		})
 	}
 	run := schema.SpeculationRun{ID: runID, IntentID: in.IntentID, Strategies: in.Strategies, Attempts: bindings, Checks: checks,
-		Scorer: scorerHash, ScorerDefinition: scorer, BaseCommit: base.commit, BaseTree: base.tree, Deadline: deadline, CreatedAt: created}
+		Scorer: scorerHash, ScorerDefinition: scorer, BaseTree: base.tree, Deadline: deadline, CreatedAt: created}
 	ro, err := s.seal(schema.KindSpeculationRun, run, c.signer)
 	if err != nil {
 		return prepared{}, err
@@ -191,21 +189,8 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 	}, nil
 }
 
-// phase1 adds fields that only a Phase 1 repository reports, such as the
-// commit and branch a proposal publishes; a native proposal has neither.
-func (s *Service) phase1(m, fields map[string]any) map[string]any {
-	return phase1(!s.native(), m, fields)
-}
-
-func phase1(git bool, m, fields map[string]any) map[string]any {
-	if git {
-		maps.Copy(m, fields)
-	}
-	return m
-}
-
 // runBase is the base a run's workspaces were forked from.
-func runBase(r schema.SpeculationRun) baseRef { return baseRef{commit: r.BaseCommit, tree: r.BaseTree} }
+func runBase(r schema.SpeculationRun) baseRef { return baseRef{tree: r.BaseTree} }
 
 func runDeadline(in startInput, start time.Time) (string, error) {
 	var at time.Time
@@ -394,7 +379,7 @@ func (s *Service) evaluateCandidates(ctx context.Context, rs *runState, execute 
 	}
 	out := map[string]*candidate{}
 	for i, a := range submitted {
-		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Commit: a.proposal.Commit, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
+		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
 		for _, hashes := range found[i] {
 			c.evidence = append(c.evidence, hashes...)
 		}
@@ -422,10 +407,9 @@ func (s *Service) evaluateCandidates(ctx context.Context, rs *runState, execute 
 	return out, nil
 }
 
-// nativeEvidenceWorkers bounds the checks one evaluation runs at once in a
-// native repository, whose copy-on-write checkouts take no repository-wide
-// lock (ADR 0026). Phase 1 worktrees are added one at a time.
-const nativeEvidenceWorkers = 4
+// defaultEvidenceWorkers bounds the checks one evaluation runs at once; the
+// copy-on-write checkouts they run in take no repository-wide lock (ADR 0026).
+const defaultEvidenceWorkers = 4
 
 // runAllEvidence runs runEvidence for every attempt and check, returning
 // the attestations by attempt and check index.
@@ -493,11 +477,11 @@ func (s *Service) runEvidence(ctx context.Context, runID string, a *attemptState
 		if !execute {
 			return nil, apierr.New("evidence_incomplete", "candidate %s has no committed evidence for check %s; evaluate the run first", a.proposal.Manifest, check)
 		}
-		input, err := canon.Marshal(s.phase1(map[string]any{"manifest": a.proposal.Manifest, "check_definition": check}, map[string]any{"commit": a.proposal.Commit}))
+		input, err := canon.Marshal(map[string]any{"manifest": a.proposal.Manifest, "check_definition": check})
 		if err != nil {
 			return nil, err
 		}
-		res, err := s.evidenceRun(ctx, api.Request{Version: s.apiVersion(), Operation: "evidence.run", OperationID: id, Input: input})
+		res, err := s.evidenceRun(ctx, api.Request{Version: api.Version, Operation: "evidence.run", OperationID: id, Input: input})
 		if apierr.HasCode(err, "run_interrupted") {
 			continue
 		}
@@ -538,11 +522,11 @@ func scorerDocument(rs *runState, cands map[string]*candidate) ([]byte, error) {
 			if c.binding.Manifest != id {
 				continue
 			}
-			list = append(list, runBase(rs.run.SpeculationRun).result(phase1(rs.run.BaseCommit != "", map[string]any{
+			list = append(list, runBase(rs.run.SpeculationRun).result(map[string]any{
 				"id": id, "workspace_id": c.attempt.binding.WorkspaceID, "strategy": c.attempt.binding.Strategy,
 				"manifest": id, "tree": c.binding.Tree,
 				"files": c.attempt.manifest.Files, "evidence": c.evidence, "criteria": c.eval.Criteria,
-			}, map[string]any{"commit": c.binding.Commit, "branch": c.attempt.proposal.Branch})))
+			}))
 		}
 	}
 	return canon.Marshal(map[string]any{"run_id": rs.run.ID, "intent_id": rs.run.IntentID, "scorer": rs.run.Scorer, "candidates": list})
@@ -790,7 +774,7 @@ func (s *Service) committedCandidates(ctx context.Context, rs *runState) (map[st
 		if a.proposal.Manifest == "" {
 			continue
 		}
-		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Commit: a.proposal.Commit, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
+		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
 		for _, check := range rs.run.Checks {
 			hashes, err := s.runEvidence(ctx, rs.run.ID, a, check, false)
 			if apierr.HasCode(err, "evidence_incomplete") {
@@ -836,10 +820,9 @@ func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer
 	for _, a := range rs.attempts {
 		c := cands[a.binding.WorkspaceID]
 		wid := a.binding.WorkspaceID
-		row := s.phase1(map[string]any{"workspace_id": wid, "strategy": a.binding.Strategy, "manifest": nil, "attempt_record": nil, "score": nil, "failed_criteria": []string{}}, map[string]any{"commit": nil})
+		row := map[string]any{"workspace_id": wid, "strategy": a.binding.Strategy, "manifest": nil, "attempt_record": nil, "score": nil, "failed_criteria": []string{}}
 		if c != nil {
 			row["manifest"] = c.binding.Manifest
-			s.phase1(row, map[string]any{"commit": c.binding.Commit})
 		}
 		if c != nil && c.binding.Manifest == winner {
 			competitors := []string{}
@@ -867,7 +850,7 @@ func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer
 			}
 			records = append(records, sel, wev)
 			result["selection"] = sel.Hash
-			result["winner"] = s.phase1(map[string]any{"workspace_id": wid, "manifest": c.binding.Manifest}, map[string]any{"commit": c.binding.Commit, "branch": a.proposal.Branch})
+			result["winner"] = map[string]any{"workspace_id": wid, "manifest": c.binding.Manifest}
 			row["outcome"], row["score"] = "selected", scores[winner]
 			row["selection"] = sel.Hash
 			outcomes = append(outcomes, row)
@@ -907,13 +890,7 @@ func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer
 			return prepared{}, err
 		}
 		records = append(records, ar, wev)
-		cleanup := record.Effect{Kind: record.EffectWorktreeRemove, WorkspaceID: wid, Path: s.Provider.Path(wid), After: true}
-		if s.native() {
-			cleanup.Kind = record.EffectWorkspaceRemove
-		} else if c != nil {
-			cleanup.Base, cleanup.Tree = rs.run.BaseCommit, c.binding.Tree
-		}
-		effects = append(effects, cleanup)
+		effects = append(effects, record.Effect{Kind: record.EffectWorkspaceRemove, WorkspaceID: wid, Path: s.Provider.Path(wid), After: true})
 		row["outcome"], row["attempt_record"], row["failed_criteria"] = rec.Outcome, ar.Hash, rec.FailedCriteria
 		if rec.Score != nil {
 			row["score"] = *rec.Score
@@ -1011,10 +988,8 @@ func (s *Service) runStatus(ctx context.Context, id string) (any, error) {
 			"session_id": a.sub.Owner, "submitted": a.proposal.Manifest != "", "manifest": nil,
 			"attempt_record": nil, "outcome": nil,
 		}
-		s.phase1(row, map[string]any{"commit": nil, "branch": nil})
 		if a.proposal.Manifest != "" {
 			row["manifest"] = a.proposal.Manifest
-			s.phase1(row, map[string]any{"commit": a.proposal.Commit, "branch": a.proposal.Branch})
 		}
 		if a.sub.State == "selected" {
 			row["outcome"] = "selected"

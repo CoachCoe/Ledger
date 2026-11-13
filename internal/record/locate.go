@@ -26,20 +26,12 @@ type Repository struct {
 // Native reports whether the repository runs on the native store.
 func (r Repository) Native() bool { return r.Git == nil }
 
-// APIVersion is the api_version the repository's daemon answers.
-func (r Repository) APIVersion() int {
-	if r.Native() {
-		return 2
-	}
-	return 1
-}
-
 // Open opens the repository's RecordStore.
 func (r Repository) Open(ctx context.Context, opts Options) (*Store, error) {
 	if r.Native() {
 		return OpenNative(ctx, r.Root, opts)
 	}
-	return Open(ctx, r.Git, opts)
+	return OpenPhase1(r.Root, opts)
 }
 
 // IsNative reports whether root holds a native repository.

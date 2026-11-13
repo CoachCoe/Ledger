@@ -75,10 +75,7 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 	}
 	if r.Operation == "bundle.export" {
 		opts := verify.ExportOptions{Out: local(in.Out), Manifests: in.Manifests, Intents: in.Intents, AllowPartial: in.AllowPartial}
-		if s.native() {
-			return verify.ExportNative(root, opts)
-		}
-		return verify.Export(ctx, s.Store.Repo, opts)
+		return verify.ExportNative(root, opts)
 	}
 	trust := identity.NewTrustList()
 	file := local(in.TrustFile)
@@ -102,12 +99,7 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 	}
 	if r.Operation == "bundle.import" {
 		opts := verify.ImportOptions{Trusted: trust}
-		var report *verify.ImportReport
-		if s.native() {
-			report, err = verify.ImportNative(ctx, local(in.Bundle), publisher{s.Store}, root, opts)
-		} else {
-			report, err = verify.Import(ctx, local(in.Bundle), publisher{s.Store}, s.Store.Repo, opts)
-		}
+		report, err := verify.ImportNative(ctx, local(in.Bundle), publisher{s.Store}, root, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +111,7 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 	}
 	var src *verify.Source
 	if in.Bundle == "" {
-		src, err = s.repositorySource(ctx)
+		src, err = s.repositorySource()
 	} else {
 		src, err = verify.OpenBundleSource(ctx, local(in.Bundle), verify.DefaultLimits())
 	}
@@ -138,9 +130,6 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 }
 
 // repositorySource reads this repository's own records for verification.
-func (s *Service) repositorySource(ctx context.Context) (*verify.Source, error) {
-	if s.native() {
-		return verify.OpenNativeSource(filepath.Dir(s.Store.Dir))
-	}
-	return verify.OpenRepoSource(ctx, s.Store.Repo)
+func (s *Service) repositorySource() (*verify.Source, error) {
+	return verify.OpenNativeSource(s.repositoryDir())
 }

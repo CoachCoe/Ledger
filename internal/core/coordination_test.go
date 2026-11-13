@@ -10,25 +10,13 @@ import (
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
 
 func m4Service(t *testing.T, files map[string]string) *Service {
 	t.Helper()
-	s := fixture(t)
-	for p, src := range files {
-		if err := os.WriteFile(filepath.Join(s.Store.Repo.MainDir, p), []byte(src), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	env := []string{"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid"}
-	for _, args := range [][]string{{"add", "-A"}, {"commit", "-qm", "M4 fixture"}} {
-		if _, err := gitx.Run(context.Background(), s.Store.Repo.Dir, nil, env, args...); err != nil {
-			t.Fatal(err)
-		}
-	}
+	s, _ := nativeFixtureWith(t, files)
 	return s
 }
 func m4Session(t *testing.T, s *Service) map[string]any {

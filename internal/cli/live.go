@@ -32,7 +32,7 @@ func cmdDaemon(args []string) (any, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	repo, err := locate(ctx)
+	repo, err := locateNative(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +65,12 @@ func liveCommand(group string) func([]string) (any, error) {
 			*opid = schema.NewID(schema.PrefixOperation)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		repo, err := locate(ctx)
+		repo, err := locateNative(ctx)
 		if err != nil {
 			cancel()
 			return nil, err
 		}
-		request := api.Request{Version: repo.APIVersion(), Operation: operation, OperationID: *opid, SessionID: *sid, Input: input}
+		request := api.Request{Version: api.Version, Operation: operation, OperationID: *opid, SessionID: *sid, Input: input}
 		// A check may legitimately run for hours (its own timeout bounds it), so
 		// evidence.run has no client deadline; Ctrl-C disconnects, which
 		// cancels the run on the daemon and records a failed attestation.
