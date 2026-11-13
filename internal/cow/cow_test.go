@@ -58,8 +58,16 @@ func setup(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Shared dependency trees are read-only; pruning them is not built yet.
-	t.Cleanup(func() { _ = setWritable(m.depPath(""), true) })
+	// Shared dependency copies are read-only, so the temporary directory
+	// can only be deleted once removing the last workspace has pruned them.
+	t.Cleanup(func() {
+		entries, _ := os.ReadDir(filepath.Join(dir, "runtime", "workspaces"))
+		for _, e := range entries {
+			if err := m.Remove(e.Name()); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	base, err := m.Import(human)
 	if err != nil {
 		t.Fatal(err)
@@ -281,6 +289,51 @@ func TestDependencyTreesAreSharedReadOnly(t *testing.T) {
 	}
 	if _, err := os.Lstat(link(wsp(7))); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("workspace with unmatched manifests got dependencies: %v", err)
+	}
+}
+
+func TestUnlinkedDependencyTreesArePruned(t *testing.T) {
+	f := setup(t)
+	a, b, c := wsp(8), wsp(9), wsp(10)
+	for _, id := range []string{a, b, c} {
+		if _, err := f.m.Create(id, f.base, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copies := func() int {
+		entries, err := os.ReadDir(f.m.depPath(""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+	if copies() != 1 {
+		t.Fatalf("%d shared copies, want 1", copies())
+	}
+	if err := f.m.Remove(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.Detach(b, ""); err != nil {
+		t.Fatal(err)
+	}
+	if copies() != 1 {
+		t.Fatal("a copy c still links was pruned")
+	}
+	if got, err := os.ReadFile(filepath.Join(f.m.Path(c), "node_modules", "left-pad", "index.js")); err != nil || len(got) == 0 {
+		t.Fatalf("c lost its dependencies: %v", err)
+	}
+	if err := f.m.Remove(c); err != nil {
+		t.Fatal(err)
+	}
+	if copies() != 0 {
+		t.Fatal("an unlinked copy was kept")
+	}
+	if err := f.m.Remove(b); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing read-only is left, so an ordinary recursive delete succeeds.
+	if err := os.RemoveAll(f.m.cfg.Runtime); err != nil {
+		t.Fatal(err)
 	}
 }
 

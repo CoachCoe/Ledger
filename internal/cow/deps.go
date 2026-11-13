@@ -92,15 +92,10 @@ func (m *Manager) humanMatches(ms map[string]string) (bool, error) {
 }
 
 // shared returns the template a workspace's dependency directory rel is
-// cloned from for manifests ms, capturing the read-only shared copy from
-// the default workspace on first use. It returns "" when there is nothing
-// to share.
-func (m *Manager) shared(rel string, ms map[string]string) (string, error) {
-	key, err := depKey(rel, ms)
-	if err != nil {
-		return "", err
-	}
-	defer m.lock("deps:" + key)()
+// cloned from for key, capturing the read-only shared copy from the
+// default workspace on first use. It returns "" when there is nothing to
+// share. The caller holds the key's lock.
+func (m *Manager) shared(rel, key string, ms map[string]string) (string, error) {
 	template := filepath.Join(m.depPath(key), "links")
 	if _, err := os.Lstat(template); err == nil {
 		return template, nil
@@ -167,33 +162,106 @@ const sharedMarker = ".ledger-shared"
 // entries other than .bin are private clones.
 func (m *Manager) linkDeps(id string, ms map[string]string) error {
 	for _, rel := range m.depDirs(ms) {
-		template, err := m.shared(rel, ms)
+		key, err := depKey(rel, ms)
 		if err != nil {
 			return err
 		}
-		if template == "" {
-			continue
-		}
-		dir := filepath.Join(m.Path(id), filepath.FromSlash(rel))
-		if _, err := os.Lstat(dir); err == nil {
-			continue // tracked content or an earlier link already there
-		}
-		if _, err := os.Lstat(filepath.Dir(dir)); err != nil {
-			continue
-		}
-		tmp, err := m.tmpPath("link")
-		if err != nil {
-			return err
-		}
-		if err := cloneTree(template, tmp); err != nil {
-			_ = os.RemoveAll(tmp)
-			return err
-		}
-		if err := os.Rename(tmp, dir); err != nil {
+		if err := m.linkDep(id, rel, key, ms); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// linkDep links one dependency directory. It holds the key's lock until
+// the link is in place, so pruning never removes a copy being linked.
+func (m *Manager) linkDep(id, rel, key string, ms map[string]string) error {
+	defer m.lock("deps:" + key)()
+	template, err := m.shared(rel, key, ms)
+	if err != nil || template == "" {
+		return err
+	}
+	dir := filepath.Join(m.Path(id), filepath.FromSlash(rel))
+	if _, err := os.Lstat(dir); err == nil {
+		return nil // tracked content or an earlier link already there
+	}
+	if _, err := os.Lstat(filepath.Dir(dir)); err != nil {
+		return nil //nolint:nilerr // the tree has no directory to link into
+	}
+	tmp, err := m.tmpPath("link")
+	if err != nil {
+		return err
+	}
+	if err := cloneTree(template, tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		return err
+	}
+	return os.Rename(tmp, dir)
+}
+
+// referenced returns the keys of the shared copies some workspace still
+// links to.
+func (m *Manager) referenced() (map[string]bool, error) {
+	entries, err := os.ReadDir(filepath.Join(m.cfg.Runtime, "workspaces"))
+	if err != nil {
+		return nil, err
+	}
+	deps := m.depPath("")
+	out := map[string]bool{}
+	for _, e := range entries {
+		if !e.IsDir() || !validWorkspace(e.Name()) {
+			continue
+		}
+		links, err := m.linked(e.Name())
+		if err != nil {
+			return nil, err
+		}
+		for _, target := range links {
+			if rel, err := filepath.Rel(deps, target); err == nil {
+				out[strings.Split(filepath.ToSlash(rel), "/")[0]] = true
+			}
+		}
+	}
+	return out, nil
+}
+
+// PruneDeps removes the shared dependency copies no workspace links to.
+// They are read-only, so a plain recursive delete cannot remove them.
+func (m *Manager) PruneDeps() error {
+	entries, err := os.ReadDir(m.depPath(""))
+	if err != nil {
+		return err
+	}
+	used, err := m.referenced()
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !used[e.Name()] {
+			if err := m.pruneDep(e.Name()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// pruneDep removes the copy for key unless a workspace linked it after
+// PruneDeps looked.
+func (m *Manager) pruneDep(key string) error {
+	defer m.lock("deps:" + key)()
+	used, err := m.referenced()
+	if err != nil || used[key] {
+		return err
+	}
+	dir := m.depPath(key)
+	if err := setWritable(dir, true); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return os.RemoveAll(dir)
 }
 
 // buildTemplate writes, at dst, the dependency directory each workspace
@@ -285,6 +353,13 @@ func (m *Manager) manifestsChanged(base string, files []store.File) (bool, error
 // private, writable clones, so installing into them changes no other
 // workspace. rel names one dependency directory; empty means all.
 func (m *Manager) Detach(id, rel string) error {
+	if err := m.detachLocked(id, rel); err != nil {
+		return err
+	}
+	return m.PruneDeps()
+}
+
+func (m *Manager) detachLocked(id, rel string) error {
 	defer m.lock(id)()
 	return m.detach(id, rel)
 }

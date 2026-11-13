@@ -393,11 +393,19 @@ func (m *Manager) capture(id string) (string, []store.File, error) {
 	return tree, res.files, nil
 }
 
-// Remove deletes the workspace checkout and cache; its log is kept.
+// Remove deletes the workspace checkout and cache, and the shared
+// dependency copies nothing links to any more; its log is kept.
 func (m *Manager) Remove(id string) error {
 	if !validWorkspace(id) {
 		return apierr.New("invalid_workspace", "invalid workspace id %q", id)
 	}
+	if err := m.remove(id); err != nil {
+		return err
+	}
+	return m.PruneDeps()
+}
+
+func (m *Manager) remove(id string) error {
 	defer m.lock(id)()
 	if err := os.RemoveAll(m.Path(id)); err != nil {
 		return err

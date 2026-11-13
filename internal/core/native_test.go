@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -483,15 +482,15 @@ func TestNativeDetachDeps(t *testing.T) {
 		return f["workspace_id"].(string), filepath.Join(f["path"].(string), "node_modules")
 	}
 	a, aDeps := fork()
-	_, bDeps := fork()
+	b, bDeps := fork()
+	// Removing the last workspace prunes the read-only shared copy, which
+	// the temporary directory's cleanup could not delete.
 	t.Cleanup(func() {
-		deps := filepath.Join(s.Store.Dir, "runtime", "deps")
-		_ = filepath.WalkDir(deps, func(p string, d fs.DirEntry, err error) error {
-			if err == nil && d.IsDir() {
-				_ = os.Chmod(p, 0700)
+		for _, id := range []string{a, b} {
+			if err := s.Provider.Workspaces.Remove(id); err != nil {
+				t.Error(err)
 			}
-			return nil
-		})
+		}
 	})
 	shared := func(dir string) bool {
 		_, err := os.Stat(filepath.Join(dir, ".ledger-shared"))

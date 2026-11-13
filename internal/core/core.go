@@ -100,6 +100,11 @@ func New(ctx context.Context, records *record.Store, keys identity.IdentityProvi
 	if _, err := evidence.Reconcile(ctx, s.checkouts, s.runtimeDir()); err != nil {
 		return nil, err
 	}
+	// A crash between removing a workspace and pruning, or a detach on a
+	// manifest change, can leave a shared copy nothing links to.
+	if err := p.Workspaces.PruneDeps(); err != nil {
+		return nil, err
+	}
 	if err := s.settleRuns(ctx); err != nil {
 		return nil, err
 	}
