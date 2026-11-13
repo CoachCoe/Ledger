@@ -14,13 +14,15 @@ const StageImportObjects = "import_objects"
 
 // ImportRecords publishes already-staged, already-verified records through
 // the same recovery path as a fetch followed by reindex: write the missing
-// object files atomically (members before receipts), add them to the
-// records ref with compare-and-swap, index every complete group, and scan
-// for conflicts. Records that fail group verification stay on disk
+// object files atomically (members before receipts), index them, append
+// them to the head log, and scan for conflicts. Records that fail group verification stay on disk
 // unindexed and are reported in Unverifiable. It never signs, never
 // resolves a conflict, and importing the same records again changes
 // nothing.
 func (s *Store) ImportRecords(ctx context.Context, objs []envelope.Object) (*Report, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
 	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
@@ -68,18 +70,17 @@ func (s *Store) ImportRecords(ctx context.Context, objs []envelope.Object) (*Rep
 	if err := write(receipts); err != nil {
 		return nil, err
 	}
-	if err := s.fault(StageRef); err != nil {
-		return nil, err
-	}
-	sync, err := s.syncRef(ctx)
-	if err != nil {
-		return nil, err
-	}
+	r := &Report{Imported: imported}
 	if err := s.fault(StageIndex); err != nil {
 		return nil, err
 	}
-	r := &Report{Imported: imported, Materialized: len(sync.Materialized), AddedToRef: sync.Added, InvalidInRef: sync.Invalid}
 	if err := s.indexAll(ctx, r); err != nil {
+		return nil, err
+	}
+	if err := s.fault(StageLog); err != nil {
+		return nil, err
+	}
+	if err := s.reconcileLog(ctx, r); err != nil {
 		return nil, err
 	}
 	if err := s.completeJournals(ctx, false); err != nil {

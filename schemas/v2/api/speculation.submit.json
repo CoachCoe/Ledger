@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/speculation.submit.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "$ref": "../../v1/common.json#/$defs/run_id"
+    },
+    "workspace_id": {
+      "$ref": "../../v1/common.json#/$defs/workspace_id"
+    },
+    "plan": {
+      "$ref": "../../v1/common.json#/$defs/text"
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    }
+  },
+  "required": [
+    "run_id",
+    "workspace_id"
+  ]
+}

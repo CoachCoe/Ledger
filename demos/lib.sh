@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for demos/m3.sh and demos/governance.sh (sourced, not run).
-# Requires: bash, git, jq. Sets ROOT; callers create WORK and a trap.
+# Requires: bash, jq. Sets ROOT; callers create WORK and a trap.
 
 need() { command -v "$1" >/dev/null || { echo "demo needs $1" >&2; exit 1; }; }
 
@@ -18,15 +18,19 @@ mkwork() { mktemp -d /tmp/ldg.XXXXXX; }
 # build_ledger DIR builds the real binary into DIR/ledger.
 build_ledger() { (cd "$ROOT" && go build -o "$1/ledger" ./cmd/ledger); }
 
-# new_fixture DIR copies the polyglot fixture into a fresh git repository.
+# new_fixture DIR copies the polyglot fixture into a fresh directory, which
+# ledger init turns into a native repository; no Git is involved.
 new_fixture() {
   mkdir -p "$1"
   cp -R "$ROOT/testdata/fixtures/polyglot/." "$1/"
-  git -C "$1" init -q
-  git -C "$1" config user.email demo@example.invalid
-  git -C "$1" config user.name demo
-  git -C "$1" add -A
-  git -C "$1" commit -qm base
+}
+
+# copy_repository SRC DST copies a native repository as another machine
+# holding it would: its files, records, store and operation logs, without
+# the index or runtime state.
+copy_repository() {
+  mkdir -p "$2"
+  (cd "$1" && tar --exclude ./.ledger/runtime --exclude ./.ledger/index.db --exclude ./.ledger/index.db-wal --exclude ./.ledger/index.db-shm --exclude ./.ledger/lock -cf - .) | (cd "$2" && tar -xf -)
 }
 
 # lg runs the ledger binary (LEDGER) in the repository REPO and prints stdout.

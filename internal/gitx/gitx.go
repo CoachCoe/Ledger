@@ -1,6 +1,7 @@
-// Package gitx is a thin wrapper over the git command line (ADR 0004).
-// Ledger never changes repository or user Git configuration; anything it
-// needs is passed per command.
+// Package gitx is a thin wrapper over the git command line (ADR 0004),
+// which Ledger uses only to read Phase 1 repositories. It never changes
+// repository or user Git configuration; anything it needs is passed per
+// command.
 package gitx
 
 import (
@@ -13,15 +14,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 )
-
-// MinVersion is the oldest Git release Ledger supports.
-var MinVersion = [3]int{2, 25, 0}
 
 // Repo is a Git working tree.
 type Repo struct {
@@ -44,13 +41,6 @@ type Error struct {
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("git %s: exit %d: %s", strings.Join(e.Args, " "), e.ExitCode, strings.TrimSpace(e.Stderr))
-}
-
-// Commit identity for Ledger-authored commits, so commit creation never
-// depends on the user's configuration.
-var ledgerIdentity = []string{
-	"GIT_AUTHOR_NAME=Ledger", "GIT_AUTHOR_EMAIL=ledger@localhost",
-	"GIT_COMMITTER_NAME=Ledger", "GIT_COMMITTER_EMAIL=ledger@localhost",
 }
 
 // Run executes git in dir with optional stdin and extra environment, and
@@ -101,49 +91,6 @@ var gitBinary = sync.OnceValue(func() string {
 	return "git"
 })
 
-// Version returns the installed Git version.
-func Version(ctx context.Context) ([3]int, error) {
-	out, err := Run(ctx, "", nil, nil, "version")
-	if err != nil {
-		return [3]int{}, err
-	}
-	return parseVersion(string(out))
-}
-
-var versionRE = regexp.MustCompile(`git version (\d+)\.(\d+)(?:\.(\d+))?`)
-
-func parseVersion(s string) ([3]int, error) {
-	m := versionRE.FindStringSubmatch(s)
-	if m == nil {
-		return [3]int{}, apierr.New("git_unavailable", "unrecognized git version %q", strings.TrimSpace(s))
-	}
-	var v [3]int
-	for i := range 3 {
-		if m[i+1] != "" {
-			v[i], _ = strconv.Atoi(m[i+1])
-		}
-	}
-	return v, nil
-}
-
-// CheckVersion fails with code "git_too_old" if Git is older than MinVersion.
-func CheckVersion(ctx context.Context) error {
-	v, err := Version(ctx)
-	if err != nil {
-		return err
-	}
-	for i := range 3 {
-		if v[i] != MinVersion[i] {
-			if v[i] < MinVersion[i] {
-				return apierr.New("git_too_old", "git %d.%d.%d is older than the required %d.%d.%d",
-					v[0], v[1], v[2], MinVersion[0], MinVersion[1], MinVersion[2])
-			}
-			break
-		}
-	}
-	return nil
-}
-
 // Open finds the working tree containing dir. It fails with code
 // "not_a_git_repo" outside a working tree.
 func Open(ctx context.Context, dir string) (*Repo, error) {
@@ -169,8 +116,8 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	return &Repo{Dir: top, CommonDir: common, MainDir: filepath.Dir(common)}, nil
 }
 
-func (r *Repo) git(ctx context.Context, stdin io.Reader, env []string, args ...string) ([]byte, error) {
-	return Run(ctx, r.Dir, stdin, env, args...)
+func (r *Repo) git(ctx context.Context, args ...string) ([]byte, error) {
+	return Run(ctx, r.Dir, nil, nil, args...)
 }
 
 func trim(b []byte, err error) (string, error) {
@@ -179,7 +126,7 @@ func trim(b []byte, err error) (string, error) {
 
 // ResolveRef returns the object a ref points to, or "" if it does not exist.
 func (r *Repo) ResolveRef(ctx context.Context, ref string) (string, error) {
-	out, err := r.git(ctx, nil, nil, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	out, err := r.git(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	if err != nil {
 		var ge *Error
 		if errors.As(err, &ge) && ge.ExitCode == 1 {
@@ -190,54 +137,16 @@ func (r *Repo) ResolveRef(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// WriteBlobs stores files as blobs and returns their object ids in order.
-func (r *Repo) WriteBlobs(ctx context.Context, paths []string) ([]string, error) {
-	if len(paths) == 0 {
-		return nil, nil
-	}
-	quoted := make([]string, len(paths))
-	escape := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n", "\r", "\\r", "\t", "\\t")
-	for i, p := range paths {
-		quoted[i] = "\"" + escape.Replace(p) + "\""
-	}
-	out, err := r.git(ctx, strings.NewReader(strings.Join(quoted, "\n")+"\n"), nil, "hash-object", "-w", "--no-filters", "--stdin-paths")
-	if err != nil {
-		return nil, err
-	}
-	ids := strings.Fields(string(out))
-	if len(ids) != len(paths) {
-		return nil, fmt.Errorf("gitx: hash-object returned %d ids for %d paths", len(ids), len(paths))
-	}
-	return ids, nil
-}
-
 // TreeEntry is one blob in a tree listing.
 type TreeEntry struct {
 	Path string
 	Blob string
 	Mode string
-	Size int64 // populated by ListTreeDetails
 }
 
 // ListTree returns every blob reachable from the tree of commit.
 func (r *Repo) ListTree(ctx context.Context, commit string) ([]TreeEntry, error) {
-	return r.listTree(ctx, commit, false)
-}
-
-// ListTreeDetails includes blob sizes and submodule entries. Consumers can skip
-// large blobs and conservatively handle gitlinks without reading their contents.
-func (r *Repo) ListTreeDetails(ctx context.Context, commit string) ([]TreeEntry, error) {
-	return r.listTree(ctx, commit, true)
-}
-
-func (r *Repo) listTree(ctx context.Context, commit string, gitlinks bool) ([]TreeEntry, error) {
-	args := []string{"ls-tree", "-r", "-z", "--full-tree"}
-	fields := 3
-	if gitlinks {
-		args = append(args, "-l")
-		fields = 4
-	}
-	out, err := r.git(ctx, nil, nil, append(args, commit)...)
+	out, err := r.git(ctx, "ls-tree", "-r", "-z", "--full-tree", commit)
 	if err != nil {
 		return nil, err
 	}
@@ -248,91 +157,12 @@ func (r *Repo) listTree(ctx context.Context, commit string, gitlinks bool) ([]Tr
 		}
 		meta, path, ok := strings.Cut(rec, "\t")
 		f := strings.Fields(meta)
-		if !ok || len(f) != fields || f[1] != "blob" && (!gitlinks || f[0] != "160000" || f[1] != "commit") {
+		if !ok || len(f) != 3 || f[1] != "blob" {
 			return nil, fmt.Errorf("gitx: unexpected ls-tree entry %q", rec)
 		}
-		var size int64
-		if gitlinks && f[1] == "blob" {
-			size, err = strconv.ParseInt(f[3], 10, 64)
-			if err != nil || size < 0 {
-				return nil, fmt.Errorf("gitx: invalid blob size in %q", rec)
-			}
-		}
-		entries = append(entries, TreeEntry{Path: path, Blob: f[2], Mode: f[0], Size: size})
+		entries = append(entries, TreeEntry{Path: path, Blob: f[2], Mode: f[0]})
 	}
 	return entries, nil
-}
-
-// ReadBlob returns the content of a blob.
-func (r *Repo) ReadBlob(ctx context.Context, blob string) ([]byte, error) {
-	return r.git(ctx, nil, nil, "cat-file", "blob", blob)
-}
-
-// BuildTree writes a tree containing base's tree (if base is not empty)
-// plus the given entries, using a private index file so the user's index
-// is never touched. The index file is left matching the returned tree.
-func (r *Repo) BuildTree(ctx context.Context, indexFile, base string, add []TreeEntry) (string, error) {
-	readArgs := []string{"read-tree", "--empty"}
-	if base != "" {
-		readArgs = []string{"read-tree", base}
-	}
-	if _, err := r.git(ctx, nil, []string{"GIT_INDEX_FILE=" + indexFile}, readArgs...); err != nil {
-		return "", err
-	}
-	return r.ExtendTree(ctx, indexFile, add)
-}
-
-// ExtendTree adds entries to the private index file and writes its tree.
-func (r *Repo) ExtendTree(ctx context.Context, indexFile string, add []TreeEntry) (string, error) {
-	env := []string{"GIT_INDEX_FILE=" + indexFile}
-	if len(add) > 0 {
-		var info strings.Builder
-		for _, e := range add {
-			fmt.Fprintf(&info, "100644 %s\t%s\x00", e.Blob, e.Path)
-		}
-		if _, err := r.git(ctx, strings.NewReader(info.String()), env, "update-index", "-z", "--add", "--index-info"); err != nil {
-			return "", err
-		}
-	}
-	return trim(r.git(ctx, nil, env, "write-tree"))
-}
-
-// CommitTree creates a commit of tree with the given parents and message.
-func (r *Repo) CommitTree(ctx context.Context, tree string, parents []string, message string) (string, error) {
-	args := []string{"commit-tree", tree}
-	for _, p := range parents {
-		args = append(args, "-p", p)
-	}
-	return trim(r.git(ctx, strings.NewReader(message), ledgerIdentity, args...))
-}
-
-// IsAncestor reports whether a is an ancestor of (or equal to) b.
-func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
-	_, err := r.git(ctx, nil, nil, "merge-base", "--is-ancestor", a, b)
-	var ge *Error
-	if errors.As(err, &ge) && ge.ExitCode == 1 {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-// UpdateRefCAS moves ref from old to new atomically. old == "" requires
-// that the ref does not exist. If the ref is not at old, it fails with
-// code "ref_moved" and leaves the ref unchanged.
-func (r *Repo) UpdateRefCAS(ctx context.Context, ref, newID, old string) error {
-	expected := old
-	if expected == "" {
-		expected = strings.Repeat("0", len(newID))
-	}
-	_, err := r.git(ctx, nil, nil, "update-ref", ref, newID, expected)
-	if err == nil {
-		return nil
-	}
-	current, rerr := r.ResolveRef(ctx, ref)
-	if rerr == nil && current != old {
-		return apierr.New("ref_moved", "%s is at %q, expected %q", ref, current, old).With("current", current)
-	}
-	return err
 }
 
 // Commit is the parsed content of a commit object.
@@ -352,14 +182,14 @@ func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
 	if !objectID.MatchString(sha) {
 		return Commit{}, apierr.New("invalid_commit", "%q is not a full object id", sha)
 	}
-	if _, err := r.git(ctx, nil, nil, "cat-file", "-e", sha+"^{commit}"); err != nil {
+	if _, err := r.git(ctx, "cat-file", "-e", sha+"^{commit}"); err != nil {
 		var ge *Error
 		if errors.As(err, &ge) {
 			return Commit{}, apierr.New("dependency_unavailable", "commit %s is not available", sha)
 		}
 		return Commit{}, err
 	}
-	out, err := r.git(ctx, nil, nil, "cat-file", "commit", sha)
+	out, err := r.git(ctx, "cat-file", "commit", sha)
 	if err != nil {
 		return Commit{}, err
 	}
@@ -379,53 +209,4 @@ func (r *Repo) ReadCommit(ctx context.Context, sha string) (Commit, error) {
 		return Commit{}, apierr.New("invalid_commit", "commit %s has no tree", sha)
 	}
 	return c, nil
-}
-
-// WorktreeInfo is one entry of `git worktree list`.
-type WorktreeInfo struct {
-	Path     string
-	Head     string
-	Detached bool
-}
-
-// WorktreeAddDetached creates a linked worktree at path with a detached HEAD
-// at commit. The path must not exist.
-func (r *Repo) WorktreeAddDetached(ctx context.Context, path, commit string) error {
-	_, err := Run(ctx, r.MainDir, nil, nil, "worktree", "add", "--detach", "--quiet", path, commit)
-	return err
-}
-
-// WorktreeRemove force-removes the linked worktree at path and prunes its
-// administrative entry.
-func (r *Repo) WorktreeRemove(ctx context.Context, path string) error {
-	if _, err := Run(ctx, r.MainDir, nil, nil, "worktree", "remove", "--force", path); err != nil {
-		return err
-	}
-	_, err := Run(ctx, r.MainDir, nil, nil, "worktree", "prune")
-	return err
-}
-
-// Worktrees lists every worktree of the repository.
-func (r *Repo) Worktrees(ctx context.Context) ([]WorktreeInfo, error) {
-	out, err := Run(ctx, r.MainDir, nil, nil, "worktree", "list", "--porcelain")
-	if err != nil {
-		return nil, err
-	}
-	var list []WorktreeInfo
-	for line := range strings.SplitSeq(string(out), "\n") {
-		key, value, _ := strings.Cut(line, " ")
-		switch key {
-		case "worktree":
-			list = append(list, WorktreeInfo{Path: value})
-		case "HEAD":
-			if len(list) > 0 {
-				list[len(list)-1].Head = value
-			}
-		case "detached":
-			if len(list) > 0 {
-				list[len(list)-1].Detached = true
-			}
-		}
-	}
-	return list, nil
 }

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/common.json",
+  "title": "Definitions added in schema_version 2",
+  "$defs": {
+    "object_id": {
+      "description": "A native store object id (ADR 0025).",
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "repository_id": {
+      "type": "string",
+      "pattern": "^rep_[0-9a-v]{26}$"
+    },
+    "line": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$"
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "language",
+        "name",
+        "kind",
+        "disambiguator",
+        "revision"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "../v1/common.json#/$defs/path"
+        },
+        "language": {
+          "enum": [
+            "javascript",
+            "typescript",
+            "tsx",
+            "python"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "kind": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,32}$"
+        },
+        "disambiguator": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "revision": {
+          "$ref": "../v1/common.json#/$defs/hash"
+        }
+      }
+    },
+    "symbols": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/symbol"
+      }
+    }
+  }
+}

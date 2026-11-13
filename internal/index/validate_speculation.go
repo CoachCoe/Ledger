@@ -27,14 +27,14 @@ func (v *validator) intent(id string) (schema.Intent, error) {
 	if o, ok := v.local[id]; ok && o.Envelope.Kind == schema.KindIntent {
 		return p, o.Decode(&p)
 	}
-	kind, raw, err := creation(v.ctx, v.q, id)
+	cr, err := creation(v.ctx, v.q, id)
 	if err != nil {
 		return p, err
 	}
-	if kind != schema.KindIntent {
+	if cr.Kind != schema.KindIntent {
 		return p, apierr.New("unknown_entity", "no intent %s", id)
 	}
-	return p, json.Unmarshal(raw, &p)
+	return p, cr.Decode(&p)
 }
 
 func (v *validator) checkRun(p *schema.SpeculationRun, signer string) error {
@@ -60,7 +60,7 @@ func (v *validator) checkRun(p *schema.SpeculationRun, signer string) error {
 		if err := o.Decode(&w); err != nil {
 			return err
 		}
-		if w.IntentID != p.IntentID || w.BaseCommit != p.BaseCommit {
+		if w.IntentID != p.IntentID || w.BaseCommit != p.BaseCommit || w.BaseTree != p.BaseTree {
 			return apierr.New("invalid_run", "attempt workspace %s differs from the run's intent or base", a.WorkspaceID)
 		}
 	}

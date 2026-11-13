@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/change_manifest.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "change_id",
+    "intent_id",
+    "workspace_id",
+    "author_session",
+    "context_refs",
+    "plan",
+    "base_tree",
+    "tree",
+    "files",
+    "symbols_read",
+    "symbols_written",
+    "op_head",
+    "symbol_maps"
+  ],
+  "properties": {
+    "change_id": {
+      "$ref": "../v1/common.json#/$defs/change_id"
+    },
+    "intent_id": {
+      "$ref": "../v1/common.json#/$defs/intent_id"
+    },
+    "workspace_id": {
+      "$ref": "../v1/common.json#/$defs/workspace_id"
+    },
+    "author_session": {
+      "$ref": "../v1/common.json#/$defs/session_id"
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "../v1/common.json#/$defs/text"
+      }
+    },
+    "plan": {
+      "$ref": "../v1/common.json#/$defs/nullable_text"
+    },
+    "base_tree": {
+      "$ref": "common.json#/$defs/object_id"
+    },
+    "tree": {
+      "$ref": "common.json#/$defs/object_id"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "../v1/common.json#/$defs/path"
+      },
+      "uniqueItems": true
+    },
+    "symbols_read": {
+      "$ref": "common.json#/$defs/symbols"
+    },
+    "symbols_written": {
+      "$ref": "common.json#/$defs/symbols"
+    },
+    "op_head": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "symbol_maps": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "../v1/common.json#/$defs/path"
+      },
+      "additionalProperties": {
+        "$ref": "common.json#/$defs/object_id"
+      }
+    }
+  },
+  "title": "Change manifest"
+}

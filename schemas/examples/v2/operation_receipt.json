@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "kind": "operation_receipt",
+  "payload": {
+    "operation_id": "op_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "operation": "workspace.propose",
+    "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "result": {
+      "manifest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "members": [
+      "3333333333333333333333333333333333333333333333333333333333333333",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "signature": "AAol1ub0iD-pL048vcVy6ocsmBz97TbkEvrfcxdx4_erjOMlLm2oJEvbTLP1CIfvUGEPowcwhcnrYUAZaCd7CA"
+}

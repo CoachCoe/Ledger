@@ -1,6 +1,6 @@
 module github.com/CoachCoe/Ledger
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/fsnotify/fsevents v0.2.0

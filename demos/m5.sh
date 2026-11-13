@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # M5: speculation runs with scripted attempts (no model): evaluation against
 # a pinned check, a command scorer, every way a run can end, and offline
-# verification. Nothing is merged.
+# verification, in a native repository. Nothing is merged.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 source "$ROOT/demos/lib.sh"
-need git; need jq; need python3
+need jq; need python3
 WORK=$(mkwork)
 REPO="$WORK/repo"
 LEDGER="$WORK/ledger"
 cleanup() { if [ -d "$REPO/.ledger" ]; then lg daemon stop >/dev/null 2>&1 || true; fi; rm -rf "$WORK"; }
 trap cleanup EXIT
 export XDG_CONFIG_HOME="$WORK/config"
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 step 'M5 acceptance: run validation, scoring, recovery and publication atomicity'
 (cd "$ROOT" && go test -race ./internal/speculate ./internal/core -run 'TestAC(119|120|188|189|190|194|196)_|Test(ParseScores|WinnerTieRule|CheckScoring|CheckAttempt|ValidateRun)$' -count=1)
@@ -26,13 +25,12 @@ EOF
 # The scorer prefers the longer ok.txt. It refuses to score while the
 # outage marker exists, to show an interrupted resolution.
 cat >"$WORK/score.py" <<'EOF'
-import json, os, subprocess, sys
+import json, os, sys
 if os.path.exists(os.environ["SCORER_OUTAGE"]):
     sys.exit("scoring service unavailable")
 doc = json.load(open(os.environ["LEDGER_SCORER_INPUT"]))
 def size(c):
-    out = subprocess.run(["git", "-C", os.environ["LEDGER_REPOSITORY"], "show", c["commit"] + ":ok.txt"], capture_output=True, check=True)
-    return len(out.stdout)
+    return os.path.getsize(os.path.join(os.environ["LEDGER_CANDIDATES"], c["id"], "ok.txt"))
 json.dump({"scores": {c["id"]: size(c) for c in doc["candidates"]}}, open(os.environ["LEDGER_SCORER_OUTPUT"], "w"))
 EOF
 export SCORER_OUTAGE="$WORK/outage"
@@ -68,10 +66,9 @@ expect_eq 'loser outcome' "$(jq -r '.result.result.attempts[] | select(.strategy
 expect_eq 'ineligible outcome' "$(jq -r '.result.result.attempts[] | select(.strategy=="forgetful") | .outcome' <<<"$out")" failed_criteria
 expect_eq 'accepted' "$(jq -r '.result.result.accepted' <<<"$out")" false
 expect_eq 'merged' "$(jq -r '.result.result.merged' <<<"$out")" false
-branch=$(jq -r '.result.result.winner.branch' <<<"$out")
-git -C "$REPO" rev-parse --verify -q "$branch" >/dev/null || fail "winner branch $branch missing"
-[ -z "$(git -C "$REPO" rev-list --merges --all)" ] || fail 'a merge commit exists'
-echo "ok: winner retained on $branch; losers closed with signed attempt records"
+winner=$(jq -r '.result.result.winner.manifest' <<<"$out")
+expect_eq 'winner binding frozen' "$(lg evidence resolve "$(jq -cn --arg m "$winner" '{manifest:$m}')" | jq -r .result.frozen)" true
+echo "ok: winner $winner keeps its frozen tree; losers closed with signed attempt records"
 
 step 'All attempts fail the check: the run resolves with no winner'
 h=$(start 2 600 "$scorer")
@@ -94,11 +91,12 @@ until lg speculation status "$(run_of "$h")" | jq -e '.result.deadline_passed' >
 printf 'late\n' >"$(attempt "$h" 1 path)/ok.txt"
 late=$(lg_fail speculation submit --session "$(attempt "$h" 1 session_id)" "$(jq -cn --arg r "$(jq -r '.result.result.run_id' <<<"$h")" --arg w "$(attempt "$h" 1 workspace_id)" '{run_id:$r,workspace_id:$w}')")
 expect_eq 'late submission' "$(jq -r '.error.code' <<<"$late")" deadline_passed
-out=$(lg_fail speculation evaluate "$(run_of "$h")")
-# The late edit is never discarded: the run is committed and the worktree
-# is left for the user.
-expect_eq 'cleanup' "$(jq -r '.error.code' <<<"$out")" cleanup_pending
-expect_eq 'committed' "$(jq -r '.error.details.committed' <<<"$out")" true
+# The late edit is never discarded: closing the timed-out workspace records
+# it in the workspace's operation log before the checkout is removed.
+lg speculation evaluate "$(run_of "$h")" >/dev/null
+[ -e "$(attempt "$h" 1 path)" ] && fail 'the timed-out checkout was kept'
+# Its log holds more than the creation entry: a snapshot of the late edit.
+[ "$(wc -l <"$REPO/.ledger/oplog/$(attempt "$h" 1 workspace_id).log")" -gt 1 ] || fail 'the late edit was not recorded'
 expect_eq 'timed out' "$(outcomes "$(run_of "$h")" | jq -r '.[] | select(.strategy=="quick") | .outcome')" timeout
 expect_eq 'selected' "$(outcomes "$(run_of "$h")" | jq -r '.[] | select(.strategy=="careful") | .outcome')" selected
 

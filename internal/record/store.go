@@ -1,6 +1,6 @@
 // Package record implements the RecordStore: content-addressed record
-// files under .ledger/objects, their mirror on refs/ledger/records, and
-// publication of operation groups with recovery (ADR 0009,
+// files under .ledger/objects, the records head log of accepted groups,
+// and publication of operation groups with recovery (ADR 0009, ADR 0027,
 // docs/contracts/recovery.md).
 package record
 
@@ -20,15 +20,11 @@ import (
 	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/lock"
 	"github.com/CoachCoe/Ledger/internal/schema"
 )
-
-// RecordsRef mirrors .ledger/objects.
-const RecordsRef = "refs/ledger/records"
 
 // DirName is the Ledger directory at the top of the main working tree.
 const DirName = ".ledger"
@@ -39,8 +35,7 @@ const (
 	StageEffects = "effects"
 	StageObjects = "objects"
 	StageReceipt = "receipt"
-	StageRef     = "ref"
-	StageRefCAS  = "ref_cas"
+	StageLog     = "log"
 	StageIndex   = "index"
 	StageCleanup = "cleanup"
 	StageDone    = "done"
@@ -60,18 +55,50 @@ type Options struct {
 // Store is an open RecordStore.
 type Store struct {
 	Dir   string // the .ledger directory
-	Repo  *gitx.Repo
 	Index *index.Index
 	opts  Options
+	// log is nil in a Phase 1 store, which is only read.
+	log *headLog
 }
 
-// Open opens the RecordStore of repo, which must have been initialized.
-// It does not run recovery; call Recover when a full reconciliation is
-// wanted (daemon start, reindex).
-func Open(ctx context.Context, repo *gitx.Repo, opts Options) (*Store, error) {
-	dir := filepath.Join(repo.MainDir, DirName)
+// Version is the schema_version this store writes (ADR 0027).
+const Version = 2
+
+// OpenPhase1 opens the RecordStore of the Phase 1 repository at root for
+// reading. Every operation that would change it is refused with
+// migrate_required.
+func OpenPhase1(root string, opts Options) (*Store, error) {
+	return open(root, opts)
+}
+
+// Native reports whether the store is a native one, which can be written.
+func (s *Store) Native() bool { return s.log != nil }
+
+func (s *Store) writable() error {
+	if s.log == nil {
+		return apierr.New("migrate_required", "this is a Phase 1 repository; run ledger migrate before changing it")
+	}
+	return nil
+}
+
+// OpenNative opens the RecordStore of the native repository at root,
+// whose accepted groups are listed by the records head log.
+func OpenNative(ctx context.Context, root string, opts Options) (*Store, error) {
+	s, err := open(root, opts)
+	if err != nil {
+		return nil, err
+	}
+	if s.log, err = openLog(s.Dir); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func open(root string, opts Options) (*Store, error) {
+	dir := filepath.Join(root, DirName)
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return nil, apierr.New("not_initialized", "%s has no %s directory; run ledger init", repo.MainDir, DirName)
+		return nil, apierr.New("not_initialized", "%s has no %s directory; run ledger init", root, DirName)
 	}
 	for _, sub := range []string{"objects", "quarantine", "journal", "runtime"} {
 		if err := atomicfile.MakeDir(filepath.Join(dir, sub), 0o700); err != nil {
@@ -85,7 +112,7 @@ func Open(ctx context.Context, repo *gitx.Repo, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{Dir: dir, Repo: repo, Index: idx, opts: opts}, nil
+	return &Store{Dir: dir, Index: idx, opts: opts}, nil
 }
 
 // lock takes the exclusive RecordStore lock, which the kernel releases if
@@ -140,6 +167,9 @@ func (s *Store) Do(ctx context.Context, op Op, build BuildFunc) (*Result, error)
 }
 
 func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, error) {
+	if err := s.writable(); err != nil {
+		return nil, err
+	}
 	unlock, err := s.lock()
 	if err != nil {
 		return nil, err
@@ -172,7 +202,7 @@ func (s *Store) do(ctx context.Context, op Op, build EffectsFunc) (*Result, erro
 		hashes = append(hashes, m.Hash)
 	}
 	slices.Sort(hashes)
-	receipt, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{
+	receipt, err := envelope.SealVersion(Version, schema.KindOperationReceipt, schema.OperationReceipt{
 		OperationID:   op.ID,
 		Operation:     op.Name,
 		RequestDigest: op.Digest,
@@ -280,35 +310,17 @@ func (s *Store) finish(ctx context.Context, g index.Group, effects []Effect) err
 	if err := s.writeObject(g.Receipt); err != nil {
 		return err
 	}
-	if err := s.fault(StageRef); err != nil {
+	if err := s.fault(StageLog); err != nil {
 		return err
 	}
-	hashes := []string{g.Receipt.Hash}
-	for _, m := range g.Members {
-		hashes = append(hashes, m.Hash)
-	}
-	sync := &refSync{}
-	previous, applied, err := s.appendToRef(ctx, hashes)
-	if err != nil {
+	if err := s.log.append(g.Receipt.Hash); err != nil {
 		return err
-	}
-	if !applied {
-		var err error
-		if sync, err = s.syncRef(ctx, previous); err != nil {
-			return err
-		}
 	}
 	if err := s.fault(StageIndex); err != nil {
 		return err
 	}
 	if err := s.Index.Apply(ctx, g); err != nil {
 		return err
-	}
-	if len(sync.Materialized) > 0 {
-		// Groups fetched onto the ref by others become visible too.
-		if err := s.indexAll(ctx, &Report{}); err != nil {
-			return err
-		}
 	}
 	return s.cleanup(ctx, g, effects)
 }

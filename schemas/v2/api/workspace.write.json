@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/workspace.write.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "workspace_id": {
+      "$ref": "../../v1/common.json#/$defs/workspace_id"
+    },
+    "path": {
+      "$ref": "../../v1/common.json#/$defs/path"
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 65536
+    },
+    "expected_hash": {
+      "anyOf": [
+        {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "workspace_id",
+    "path",
+    "content",
+    "expected_hash"
+  ]
+}

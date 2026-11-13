@@ -64,14 +64,14 @@ func verifyAuthority(ctx context.Context, q querier, g Group, r schema.Operation
 					return err
 				}
 			} else {
-				kind, raw, err := creation(ctx, q, o.Envelope.Signer)
+				cr, err := creation(ctx, q, o.Envelope.Signer)
 				if err != nil {
 					return err
 				}
-				if kind != schema.KindSession {
+				if cr.Kind != schema.KindSession {
 					return unauthorized("signer is not a session")
 				}
-				if err := json.Unmarshal(raw, &session); err != nil {
+				if err := cr.Decode(&session); err != nil {
 					return err
 				}
 			}
@@ -169,21 +169,21 @@ func verifyAuthority(ctx context.Context, q querier, g Group, r schema.Operation
 			}
 			// Recover the binding that existed at this operation time. Immutable prior
 			// manifests retain their original holder when later recovery appends a bind.
-			kind, raw, err := creation(ctx, q, m.WorkspaceID)
+			cr, err := creation(ctx, q, m.WorkspaceID)
 			if err != nil {
 				return err
 			}
-			if kind == "" {
+			if cr.Kind == "" {
 				return apierr.New(CodeUnavailable, "missing manifest workspace %s", m.WorkspaceID)
 			}
-			if kind != schema.KindWorkspace {
+			if cr.Kind != schema.KindWorkspace {
 				return unauthorized("manifest has no workspace")
 			}
 			var w schema.Workspace
-			if err := json.Unmarshal(raw, &w); err != nil {
+			if err := cr.Decode(&w); err != nil {
 				return err
 			}
-			if m.BaseCommit != w.BaseCommit || m.IntentID != w.IntentID || m.ChangeID != w.ChangeID {
+			if m.BaseCommit != w.BaseCommit || m.BaseTree != w.BaseTree || m.IntentID != w.IntentID || m.ChangeID != w.ChangeID {
 				return unauthorized("manifest workspace binding differs")
 			}
 			owner, cid, err := historicalBinding(ctx, q, w, at)
@@ -276,13 +276,14 @@ func historicalBinding(ctx context.Context, q querier, w schema.Workspace, at ti
 func eventOwner(ctx context.Context, q querier, e schema.LifecycleEvent) (string, error) {
 	var kind schema.Kind
 	var raw string
-	if err := q.QueryRowContext(ctx, `SELECT kind,payload FROM objects WHERE hash=?`, e.Creation).Scan(&kind, &raw); err != nil {
+	var version int
+	if err := q.QueryRowContext(ctx, `SELECT kind,payload,version FROM objects WHERE hash=?`, e.Creation).Scan(&kind, &raw, &version); err != nil {
 		return "", err
 	}
 	switch kind {
 	case schema.KindWorkspace:
 		var w schema.Workspace
-		if err := json.Unmarshal([]byte(raw), &w); err != nil {
+		if err := schema.Decode(version, kind, []byte(raw), &w); err != nil {
 			return "", err
 		}
 		at, err := schema.ParseTimestamp(e.At)

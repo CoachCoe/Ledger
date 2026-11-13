@@ -66,14 +66,16 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 	}
 	// Resolve filesystem arguments against the served repository, never the
 	// adapter or daemon process's incidental current directory.
+	root := filepath.Dir(s.Store.Dir)
 	local := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
 			return p
 		}
-		return filepath.Join(s.Store.Repo.MainDir, p)
+		return filepath.Join(root, p)
 	}
 	if r.Operation == "bundle.export" {
-		return verify.Export(ctx, s.Store.Repo, verify.ExportOptions{Out: local(in.Out), Manifests: in.Manifests, Intents: in.Intents, AllowPartial: in.AllowPartial})
+		opts := verify.ExportOptions{Out: local(in.Out), Manifests: in.Manifests, Intents: in.Intents, AllowPartial: in.AllowPartial}
+		return verify.ExportNative(root, opts)
 	}
 	trust := identity.NewTrustList()
 	file := local(in.TrustFile)
@@ -96,7 +98,8 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		return nil, err
 	}
 	if r.Operation == "bundle.import" {
-		report, err := verify.Import(ctx, local(in.Bundle), publisher{s.Store}, s.Store.Repo, verify.ImportOptions{Trusted: trust})
+		opts := verify.ImportOptions{Trusted: trust}
+		report, err := verify.ImportNative(ctx, local(in.Bundle), publisher{s.Store}, root, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +111,7 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 	}
 	var src *verify.Source
 	if in.Bundle == "" {
-		src, err = verify.OpenRepoSource(ctx, s.Store.Repo)
+		src, err = s.repositorySource()
 	} else {
 		src, err = verify.OpenBundleSource(ctx, local(in.Bundle), verify.DefaultLimits())
 	}
@@ -124,4 +127,9 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		return nil, apierr.New("verification_failed", "integrity is %s", report.Integrity).With("report", report)
 	}
 	return report, nil
+}
+
+// repositorySource reads this repository's own records for verification.
+func (s *Service) repositorySource() (*verify.Source, error) {
+	return verify.OpenNativeSource(s.repositoryDir())
 }

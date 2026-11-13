@@ -1,4 +1,4 @@
-exec git init -q repo
+mkdir repo
 cd repo
 ! exec ledger status
 stdout '"code": "not_initialized"'

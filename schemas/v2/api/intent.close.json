@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "intent_id": {
+      "$ref": "../../v1/common.json#/$defs/intent_id"
+    },
+    "reason": {
+      "enum": [
+        "completed",
+        "abandoned",
+        "superseded"
+      ]
+    },
+    "replacement_id": {
+      "$ref": "../../v1/common.json#/$defs/intent_id"
+    }
+  },
+  "required": [
+    "intent_id",
+    "reason"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/intent.close.json"
+}

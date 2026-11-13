@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/repository.json",
+  "title": "Repository creation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "hash_algorithm",
+    "case_policy",
+    "analyzers",
+    "tree",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "common.json#/$defs/repository_id"
+    },
+    "hash_algorithm": {
+      "const": "sha256"
+    },
+    "case_policy": {
+      "enum": [
+        "sensitive",
+        "insensitive"
+      ]
+    },
+    "analyzers": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "javascript",
+          "typescript",
+          "tsx",
+          "python"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "tree": {
+      "$ref": "common.json#/$defs/object_id"
+    },
+    "created_at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    }
+  }
+}

@@ -8,9 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/CoachCoe/Ledger/internal/mockagent"
 )
@@ -20,15 +17,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: mock-agent /absolute/path/to/ledger (run inside an initialized fixture repository)")
 		os.Exit(1)
 	}
-	ctx := context.Background()
-	command := exec.Command(os.Args[1], "mcp") //nolint:gosec // the user explicitly supplies the Ledger executable, without a shell
-	s, err := mcp.NewClient(&mcp.Implementation{Name: "ledger-external-mock", Version: "1"}, nil).Connect(ctx, &mcp.CommandTransport{Command: command}, nil)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	out, err := (mockagent.Client{Session: s}).Lifecycle(ctx)
-	_ = s.Close()
+	out, err := mockagent.Ledger{Binary: os.Args[1]}.Lifecycle(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

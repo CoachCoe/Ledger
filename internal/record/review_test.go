@@ -47,7 +47,7 @@ func TestRecoveryRejectsForgedJournal(t *testing.T) {
 
 func TestReindexPreservesOtherOpenStore(t *testing.T) {
 	s := newStore(t)
-	other := openStore(t, s.Repo, Options{})
+	other := reopen(t, s, Options{})
 	if _, err := s.Reindex(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestImportedSessionMustMatchCapability(t *testing.T) {
 	a := startSession(t, s)
 	sid := schema.NewID(schema.PrefixSession)
 	bad := sessionRecord(t, sid, a.capID, a, root)
-	pushToRef(t, s, externalGroup(t, bad))
+	arrive(t, s, externalGroup(t, bad))
 	report, err := s.Recover(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestMembersMustMatchTheirStoredBytes(t *testing.T) {
 
 func TestJournalFaultLeavesNoAcceptedState(t *testing.T) {
 	s := newStore(t)
-	w := openStore(t, s.Repo, Options{Fault: func(stage string) error {
+	w := reopen(t, s, Options{Fault: func(stage string) error {
 		if stage == StageJournal {
 			return errors.New("crash")
 		}
@@ -130,7 +130,7 @@ func TestConflictingReceiptBlocksBothSubjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := seal(t, schema.KindOperationReceipt, schema.OperationReceipt{OperationID: o.ID, Operation: o.Name, RequestDigest: o.Digest, Result: []byte(`{}`), Members: []string{b.Hash}, At: schema.Timestamp(fixedNow)}, root)
-	pushToRef(t, s, index.Group{Receipt: receipt, Members: []envelope.Object{b}})
+	arrive(t, s, index.Group{Receipt: receipt, Members: []envelope.Object{b}})
 	if _, err := s.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestConflictingReceiptBlocksBothSubjects(t *testing.T) {
 func TestRootKeyRepublicationKeepsOneAuthority(t *testing.T) {
 	s := newStore(t)
 	key := seal(t, schema.KindRootKey, schema.RootKey{PublicKey: identity.EncodePublicKey(root.PublicKey()), CreatedAt: schema.Timestamp(fixedNow.Add(time.Hour))}, root)
-	pushToRef(t, s, externalGroup(t, key))
+	arrive(t, s, externalGroup(t, key))
 	if _, err := s.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -178,21 +178,6 @@ func TestIntentCannotParentOrSupersedeItself(t *testing.T) {
 	event := seal(t, schema.KindLifecycleEvent, schema.LifecycleEvent{SubjectKind: "intent", SubjectID: id, Creation: valid.Hash, FromState: "open", ToState: "closed", Reason: &reason, ReplacementID: &id, Actor: root.ID(), At: schema.Timestamp(fixedNow)}, root)
 	if _, err := s.Do(ctx, op("self-supersede"), members(event)); err == nil {
 		t.Fatal("self-supersession accepted")
-	}
-}
-
-func TestSingleRefFaultStopsPublication(t *testing.T) {
-	s := newStore(t)
-	failed := false
-	writer := openStore(t, s.Repo, Options{Fault: func(stage string) error {
-		if stage == StageRefCAS && !failed {
-			failed = true
-			return errors.New("single CAS interruption")
-		}
-		return nil
-	}})
-	if _, err := writer.Do(ctx, op("single-ref-fault"), members(intentRecord(t, schema.NewID(schema.PrefixIntent)))); err == nil {
-		t.Fatal("one-shot fault was swallowed by ref fallback")
 	}
 }
 

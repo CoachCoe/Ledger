@@ -16,14 +16,14 @@ import (
 // not corrupted bytes or broken signatures.
 func TestSelectionClaimsMatchProposal(t *testing.T) {
 	c := newChain(t, "true")
-	for _, name := range []string{"valid_empty_set", "commit", "intent", "self_competitor", "missing_competitor", "wrong_competitor_kind", "wrong_evidence_kind"} {
+	for _, name := range []string{"valid_empty_set", "intent", "self_competitor", "missing_competitor", "wrong_competitor_kind", "wrong_evidence_kind"} {
 		t.Run(name, func(t *testing.T) {
-			src, err := verify.OpenRepoSource(context.Background(), c.repo)
+			src, err := verify.OpenNativeSource(c.dir)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer src.Close()
-			var d schema.SelectionDecision
+			var d schema.SelectionDecisionV2
 			if err := src.Corpus.Objects[c.choice].Decode(&d); err != nil {
 				t.Fatal(err)
 			}
@@ -34,8 +34,6 @@ func TestSelectionClaimsMatchProposal(t *testing.T) {
 				d.Criteria[i].Conflicting = []string{}
 			}
 			switch name {
-			case "commit":
-				d.Commit = strings.Repeat("1", 40)
 			case "intent":
 				d.IntentID = schema.NewID(schema.PrefixIntent)
 			case "self_competitor":
@@ -47,11 +45,11 @@ func TestSelectionClaimsMatchProposal(t *testing.T) {
 			case "wrong_evidence_kind":
 				d.Evidence = []string{c.manifest}
 			}
-			o, err := envelope.Seal(schema.KindSelectionDecision, d, c.root)
+			o, err := envelope.SealVersion(2, schema.KindSelectionDecision, d, c.root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			r, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{
+			r, err := envelope.SealVersion(2, schema.KindOperationReceipt, schema.OperationReceipt{
 				OperationID: schema.NewID(schema.PrefixOperation), Operation: "selection.record",
 				RequestDigest: canon.Hash([]byte(name)), Result: []byte("{}"), Members: []string{o.Hash}, At: d.At,
 			}, c.root)
@@ -91,7 +89,7 @@ func TestEvidenceClaimsMatchPinnedCriteria(t *testing.T) {
 	}
 	for _, name := range []string{"valid", "category", "unknown_criterion", "judgment_criterion", "wrong_definition", "wrong_definition_kind"} {
 		t.Run(name, func(t *testing.T) {
-			src, err := verify.OpenRepoSource(context.Background(), c.repo)
+			src, err := verify.OpenNativeSource(c.dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +121,7 @@ func TestEvidenceClaimsMatchPinnedCriteria(t *testing.T) {
 			capability.ID, capability.SessionID = session.CapabilityID, session.ID
 			add := func(kind schema.Kind, payload any, key identity.Signer) envelope.Object {
 				t.Helper()
-				o, err := envelope.Seal(kind, payload, key)
+				o, err := envelope.SealVersion(2, kind, payload, key)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -181,14 +179,14 @@ func TestEvidenceClaimsMatchPinnedCriteria(t *testing.T) {
 func TestSelectionSurvivesLaterContraryEvidence(t *testing.T) {
 	c := newChain(t, "true")
 	c.call("evidence.judge", "", map[string]any{
-		"manifest": c.manifest, "commit": c.commit, "criterion_id": "review",
+		"manifest": c.manifest, "criterion_id": "review",
 		"result": "fail", "reason": "later review found a problem",
 	})
 	rep := verifyBundle(t, c.mustExport())
 	if rep.Integrity != verify.Verified {
 		t.Fatalf("later evidence invalidated an earlier selection: %+v", rep.Manifests[0].Selections)
 	}
-	dst := newSite(t)
+	dst := c.earlier()
 	dst.mustImport(c.mustExport())
 	before := dst.digest()
 	if _, err := dst.store.Reindex(context.Background()); err != nil {

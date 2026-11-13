@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/envelope.json",
+  "title": "Signed record envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "payload",
+    "signer",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "kind": {
+      "enum": [
+        "root_key",
+        "intent",
+        "check_definition",
+        "capability",
+        "session",
+        "workspace",
+        "lifecycle_event",
+        "workspace_binding",
+        "change_manifest",
+        "evidence_attestation",
+        "selection_decision",
+        "attempt_record",
+        "speculation_run",
+        "operation_receipt",
+        "repository",
+        "line_advance"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "signer": {
+      "$ref": "../v1/common.json#/$defs/principal"
+    },
+    "signature": {
+      "$ref": "../v1/common.json#/$defs/signature"
+    }
+  }
+}

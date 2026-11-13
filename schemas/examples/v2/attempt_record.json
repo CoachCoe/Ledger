@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "kind": "attempt_record",
+  "payload": {
+    "run_id": "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "intent_id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workspace_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "approach": "Inline handler",
+    "evidence": [
+      "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "outcome": "lost_tiebreaker",
+    "failed_criteria": [],
+    "score": 17,
+    "target_symbols": [
+      {
+        "path": "src/app.ts",
+        "language": "typescript",
+        "name": "AppService.getHello",
+        "kind": "method",
+        "disambiguator": null
+      }
+    ]
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "Na_4xfq-vgJFL0t4XxEY_NDwsq7oRGy_nMBotPFIvvGus8ZjP1fD7BmjV0qAm5oNO8s9Xi2ZryiOvBJfTRwwCw"
+}

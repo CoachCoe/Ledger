@@ -178,14 +178,14 @@ func verify(ctx context.Context, q querier, g Group, sensitive bool) error {
 			}
 		}
 		if !found {
-			kind, payload, err := creation(ctx, q, p.CapabilityID)
+			cr, err := creation(ctx, q, p.CapabilityID)
 			if err != nil {
 				return err
 			}
-			if kind != schema.KindCapability {
+			if cr.Kind != schema.KindCapability {
 				return apierr.New(CodeUnavailable, "no capability %s", p.CapabilityID)
 			}
-			if err := json.Unmarshal(payload, &c); err != nil {
+			if err := cr.Decode(&c); err != nil {
 				return err
 			}
 			if err := q.QueryRowContext(ctx, `SELECT signer FROM creations WHERE entity_id=?`, p.CapabilityID).Scan(&issuer); err != nil {
@@ -260,8 +260,8 @@ func (x *Index) Apply(ctx context.Context, g Group) error {
 	}
 	touched := map[string]bool{}
 	for _, o := range append(slices.Clone(g.Members), g.Receipt) {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO objects (hash, kind, signer, payload) VALUES (?, ?, ?, ?)`,
-			o.Hash, o.Envelope.Kind, o.Envelope.Signer, string(o.Envelope.Payload)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO objects (hash, kind, signer, payload, version) VALUES (?, ?, ?, ?, ?)`,
+			o.Hash, o.Envelope.Kind, o.Envelope.Signer, string(o.Envelope.Payload), o.Envelope.SchemaVersion); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO members (receipt, hash) VALUES (?, ?)`,
@@ -336,8 +336,8 @@ func index1(ctx context.Context, q querier, o envelope.Object) (string, error) {
 	if err != nil || id == "" {
 		return "", err
 	}
-	_, err = q.ExecContext(ctx, `INSERT OR IGNORE INTO creations (entity_id, hash, kind, signer, payload) VALUES (?, ?, ?, ?, ?)`,
-		id, o.Hash, o.Envelope.Kind, o.Envelope.Signer, string(o.Envelope.Payload))
+	_, err = q.ExecContext(ctx, `INSERT OR IGNORE INTO creations (entity_id, hash, kind, signer, payload, version) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, o.Hash, o.Envelope.Kind, o.Envelope.Signer, string(o.Envelope.Payload), o.Envelope.SchemaVersion)
 	return id, err
 }
 
@@ -347,7 +347,7 @@ func entityID(o envelope.Object) (string, error) {
 	switch o.Envelope.Kind {
 	case schema.KindRootKey:
 		return o.Envelope.Signer, nil
-	case schema.KindIntent, schema.KindCapability, schema.KindSession, schema.KindWorkspace, schema.KindSpeculationRun:
+	case schema.KindIntent, schema.KindCapability, schema.KindSession, schema.KindWorkspace, schema.KindSpeculationRun, schema.KindRepository:
 		var p struct {
 			ID string `json:"id"`
 		}
@@ -384,15 +384,18 @@ type Detail struct {
 }
 
 func recompute(ctx context.Context, q querier, id string) error {
-	rows, err := q.QueryContext(ctx, `SELECT hash, kind, signer, payload FROM creations WHERE entity_id = ? ORDER BY hash`, id)
+	rows, err := q.QueryContext(ctx, `SELECT hash, kind, signer, payload, version FROM creations WHERE entity_id = ? ORDER BY hash`, id)
 	if err != nil {
 		return err
 	}
-	type creation struct{ hash, kind, signer, payload string }
+	type creation struct {
+		hash, kind, signer, payload string
+		version                     int
+	}
 	var cs []creation
 	for rows.Next() {
 		var c creation
-		if err := rows.Scan(&c.hash, &c.kind, &c.signer, &c.payload); err != nil {
+		if err := rows.Scan(&c.hash, &c.kind, &c.signer, &c.payload, &c.version); err != nil {
 			rows.Close()
 			return err
 		}
@@ -442,7 +445,7 @@ func recompute(ctx context.Context, q querier, id string) error {
 		s.Owner = c.signer
 	case lifecycle.Workspace:
 		var p schema.Workspace
-		if err := json.Unmarshal([]byte(c.payload), &p); err != nil {
+		if err := schema.Decode(c.version, schema.KindWorkspace, []byte(c.payload), &p); err != nil {
 			return err
 		}
 		s.Owner, s.BindingHead = p.SessionID, c.hash
@@ -644,34 +647,46 @@ func (x *Index) HasReceipt(ctx context.Context, receipt string) (bool, error) {
 // Creation returns the payload of an entity's unique creation record. It
 // fails with "conflicting_creation" if there is more than one, and returns
 // "" if there is none.
-func (x *Index) Creation(ctx context.Context, id string) (kind schema.Kind, payload []byte, err error) {
+func (x *Index) Creation(ctx context.Context, id string) (Stored, error) {
 	return creation(ctx, x.conn(), id)
 }
 
-func creation(ctx context.Context, q querier, id string) (schema.Kind, []byte, error) {
-	rows, err := q.QueryContext(ctx, `SELECT kind, payload FROM creations WHERE entity_id = ?`, id)
+// Stored is an indexed record's payload with the kind and schema_version
+// needed to decode it.
+type Stored struct {
+	Kind    schema.Kind
+	Version int
+	Payload []byte
+}
+
+// Decode decodes the payload into v; see schema.Decode.
+func (s Stored) Decode(v any) error { return schema.Decode(s.Version, s.Kind, s.Payload, v) }
+
+func creation(ctx context.Context, q querier, id string) (Stored, error) {
+	rows, err := q.QueryContext(ctx, `SELECT kind, version, payload FROM creations WHERE entity_id = ?`, id)
 	if err != nil {
-		return "", nil, err
+		return Stored{}, err
 	}
 	defer rows.Close()
 	var kind, payload string
+	var version int
 	n := 0
 	for rows.Next() {
-		if err := rows.Scan(&kind, &payload); err != nil {
-			return "", nil, err
+		if err := rows.Scan(&kind, &version, &payload); err != nil {
+			return Stored{}, err
 		}
 		n++
 	}
 	if err := rows.Err(); err != nil {
-		return "", nil, err
+		return Stored{}, err
 	}
 	if n > 1 && kind != string(schema.KindRootKey) {
-		return "", nil, apierr.New("conflicting_creation", "%s has %d creation records", id, n)
+		return Stored{}, apierr.New("conflicting_creation", "%s has %d creation records", id, n)
 	}
 	if n == 0 {
-		return "", nil, nil
+		return Stored{}, nil
 	}
-	return schema.Kind(kind), []byte(payload), nil
+	return Stored{Kind: schema.Kind(kind), Version: version, Payload: []byte(payload)}, nil
 }
 
 // Committed reports whether an object belongs to an indexed group.
@@ -696,6 +711,24 @@ func (x *Index) ConflictingOperations(ctx context.Context) (map[string][]string,
 			return nil, err
 		}
 		out[id] = append(out[id], receipt)
+	}
+	return out, rows.Err()
+}
+
+// Receipts lists the receipts of every indexed group, sorted.
+func (x *Index) Receipts(ctx context.Context) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT receipt FROM operations ORDER BY receipt`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
 	}
 	return out, rows.Err()
 }

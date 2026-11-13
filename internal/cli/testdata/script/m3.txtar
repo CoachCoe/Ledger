@@ -1,10 +1,8 @@
-# M3 evidence through the shipped binary: resolve a frozen binding, run a
-# pinned check in a verification worktree, and read the signed attestation.
+# M3 evidence through the shipped binary in a native repository: resolve a
+# frozen binding, run a pinned check in a copy-on-write checkout of the
+# manifest's tree, and read the signed attestation.
 fixture polyglot repo
 cd repo
-exec git init -q
-exec git add -A
-exec git commit -qm base
 exec ledger init
 jsonvar FP result.root_fingerprint
 cp $WORK/checks.json .ledger/checks.json
@@ -20,12 +18,11 @@ cp tools/report.py $WPATH/tools/extra.py
 exec ledger workspace propose --session $SID {"workspace_id":"$WSP"}
 jsonvar CHANGE result.result.change_id
 jsonvar MANIFEST result.result.manifest
-jsonvar COMMIT result.result.commit
 jsonvar TREE result.result.tree
 exec ledger evidence resolve {"change_id":"$CHANGE"}
 jsonvar DEF result.checks.0.definition_hash
 # Run: a signed attestation by a verifier session that is not the author.
-exec ledger evidence run --operation-id op_0000000000000000000000run1 {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
+exec ledger evidence run --operation-id op_0000000000000000000000run1 {"manifest":"$MANIFEST","check_definition":"$DEF"}
 stdout '"result": "pass"'
 stdout '"replayed": false'
 ! stdout $SID
@@ -33,62 +30,57 @@ jsonvar ATT result.result.attestation
 jsonvar RUN result.result.run_id
 jsonvar VERIFIER result.result.verifier_session
 # A retry returns the frozen result.
-exec ledger evidence run --operation-id op_0000000000000000000000run1 {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
+exec ledger evidence run --operation-id op_0000000000000000000000run1 {"manifest":"$MANIFEST","check_definition":"$DEF"}
 stdout '"replayed": true'
 stdout '"attestation": "'$ATT'"'
-# The verification worktree is gone; the proposal branch is untouched.
+# The checkout the check ran in is gone.
 ! exists .ledger/runtime/verify/$RUN
-exec git rev-parse refs/ledger/proposals/$MANIFEST
-stdout $COMMIT
 # The run input is closed and must name a pinned definition.
-! exec ledger evidence run {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF","isolation":"container"}
+! exec ledger evidence run {"manifest":"$MANIFEST","check_definition":"$DEF","isolation":"container"}
 stdout '"code": "schema_invalid"'
-! exec ledger evidence run {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"0000000000000000000000000000000000000000000000000000000000000000"}
+! exec ledger evidence run {"manifest":"$MANIFEST","check_definition":"0000000000000000000000000000000000000000000000000000000000000000"}
 stdout '"code": "check_not_pinned"'
 # The author cannot request verification of its own change.
-! exec ledger evidence run --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","check_definition":"$DEF"}
+! exec ledger evidence run --session $SID {"manifest":"$MANIFEST","check_definition":"$DEF"}
 stdout '"code": "unauthorized"'
 # Independence and criteria status: the check passed, the review is open.
-exec ledger evidence isIndependent {"manifest":"$MANIFEST","commit":"$COMMIT"}
+exec ledger evidence isIndependent {"manifest":"$MANIFEST"}
 stdout '"independent": true'
 stdout '"signer_kind": "service"'
 stdout 'does not establish'
-exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT"}
+exec ledger intent criteriaStatus {"manifest":"$MANIFEST"}
 stdout '"criterion_id": "tests"'
 stdout '"status": "satisfied"'
 stdout '"status": "outstanding"'
 # A human judgment through a root-authenticated verifier session. The
 # reviewer kind is not an input.
-! exec ledger evidence judge {"manifest":"$MANIFEST","commit":"$COMMIT","criterion_id":"review","result":"pass","reviewer":"human"}
+! exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass","reviewer":"human"}
 stdout '"code": "schema_invalid"'
-! exec ledger evidence judge --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","criterion_id":"review","result":"pass"}
+! exec ledger evidence judge --session $SID {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
 stdout '"code": "unauthorized"'
-exec ledger evidence judge --operation-id op_000000000000000000000judge {"manifest":"$MANIFEST","commit":"$COMMIT","criterion_id":"review","result":"pass","reason":"reviewed"}
+exec ledger evidence judge --operation-id op_000000000000000000000judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass","reason":"reviewed"}
 stdout '"reviewer_kind": "human"'
-exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT"}
+exec ledger intent criteriaStatus {"manifest":"$MANIFEST"}
 ! stdout '"status": "outstanding"'
-! exec ledger intent criteriaStatus {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["0000000000000000000000000000000000000000000000000000000000000000"]}
+! exec ledger intent criteriaStatus {"manifest":"$MANIFEST","evidence":["0000000000000000000000000000000000000000000000000000000000000000"]}
 stdout '"code": "unknown_evidence"'
 # Selection: statuses are recomputed from the named evidence; relying only on
 # the mechanical run leaves the review outstanding. It is not acceptance.
-! exec ledger selection record {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["$ATT"],"criteria":[]}
+! exec ledger selection record {"manifest":"$MANIFEST","evidence":["$ATT"],"criteria":[]}
 stdout '"code": "schema_invalid"'
-! exec ledger selection record --session $SID {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["$ATT"]}
+! exec ledger selection record --session $SID {"manifest":"$MANIFEST","evidence":["$ATT"]}
 stdout '"code": "unauthorized"'
-exec ledger selection record {"manifest":"$MANIFEST","commit":"$COMMIT","evidence":["$ATT"]}
+exec ledger selection record {"manifest":"$MANIFEST","evidence":["$ATT"]}
 stdout '"accepted": false'
 stdout '"outstanding": \['
 stdout '"review"'
-exec git rev-parse refs/ledger/proposals/$MANIFEST
-stdout $COMMIT
-exec git rev-list --merges --all
-! stdout .
 exec ledger system status
 stdout '"interrupted_runs": \[\]'
 # Export, verify and reindex run directly, without the daemon or SQLite.
 exec ledger daemon stop
 exec ledger export --out $WORK/m3.ledger
 stdout '"complete": true'
+stdout '"store_objects": [1-9]'
 exec ledger verify --bundle $WORK/m3.ledger --strict
 stdout '"integrity": "verified"'
 stdout '"trust": "untrusted"'

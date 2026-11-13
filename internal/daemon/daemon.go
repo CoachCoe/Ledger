@@ -17,7 +17,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/core"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/lock"
 	"github.com/CoachCoe/Ledger/internal/observe"
@@ -35,20 +34,41 @@ type Options struct {
 	Log             io.Writer
 }
 
-// Socket is the path of the repository's daemon socket.
-func Socket(repo *gitx.Repo) string {
-	return filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.sock")
+// Socket is the path of the daemon socket of the repository at root.
+func Socket(root string) string {
+	return filepath.Join(root, ".ledger", "runtime", "ledgerd.sock")
+}
+
+// acquire takes the daemon lock. A daemon closes its listener before it
+// releases the lock, so a held lock with nothing answering on the socket
+// belongs to one that is shutting down: wait for it rather than exit and leave
+// the client that started us polling a socket nobody will open.
+func acquire(ctx context.Context, path, socket string) (func(), error) {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		unlock, err := lock.Acquire(path, true)
+		if err == nil {
+			return unlock, nil
+		}
+		if e, ok := errors.AsType[*apierr.Error](err); !ok || e.Code != "already_running" || time.Now().After(deadline) {
+			return nil, err
+		}
+		if conn, dialErr := net.DialTimeout("unix", socket, time.Second); dialErr == nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // Run serves the API until ctx ends, a root-authorized daemon.stop
 // arrives, or the daemon has been idle with no open workspace for
 // opts.Idle. Only one daemon runs per repository.
-func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, opts Options) error {
-	rootRepo, err := gitx.Open(ctx, repo.MainDir)
-	if err != nil {
-		return err
-	}
-	repo = rootRepo
+func Run(ctx context.Context, repo record.Repository, keys identity.IdentityProvider, opts Options) error {
 	if opts.Idle <= 0 {
 		opts.Idle = 10 * time.Minute
 	}
@@ -61,16 +81,16 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 	if opts.Log == nil {
 		opts.Log = os.Stderr
 	}
-	runtimeDir := filepath.Dir(Socket(repo))
+	runtimeDir := filepath.Dir(Socket(repo.Root))
 	if err := os.Chmod(runtimeDir, 0700); err != nil { //nolint:gosec // directories require owner execute permission
 		return err
 	}
-	unlock, err := lock.Acquire(filepath.Join(runtimeDir, "daemon.lock"), true)
+	unlock, err := acquire(ctx, filepath.Join(runtimeDir, "daemon.lock"), Socket(repo.Root))
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	store, err := record.Open(ctx, repo, record.Options{})
+	store, err := repo.Open(ctx, record.Options{})
 	if err != nil {
 		return err
 	}
@@ -79,27 +99,27 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 	if err != nil {
 		return err
 	}
-	if info, err := os.Lstat(Socket(repo)); err == nil {
+	if info, err := os.Lstat(Socket(repo.Root)); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			return apierr.New("socket_conflict", "refusing to replace a non-socket path")
 		}
-		if err := os.Remove(Socket(repo)); err != nil {
+		if err := os.Remove(Socket(repo.Root)); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	listener, err := net.Listen("unix", Socket(repo))
+	listener, err := net.Listen("unix", Socket(repo.Root))
 	if err != nil {
 		return apierr.New("socket_unavailable", "%v", err)
 	}
 	defer func() { _ = listener.Close() }()
-	defer os.Remove(Socket(repo))
-	if err := os.Chmod(Socket(repo), 0600); err != nil {
+	defer os.Remove(Socket(repo.Root))
+	if err := os.Chmod(Socket(repo.Root), 0600); err != nil {
 		return err
 	}
 	kick := make(chan struct{}, 1)
-	watchers := observe.New(opts.DisableWatchers, func() {
+	watchers := observe.New(opts.DisableWatchers, observe.RulesFilter(svc.CaseSensitive()), func() {
 		select {
 		case kick <- struct{}{}:
 		default:
@@ -148,7 +168,7 @@ func Run(ctx context.Context, repo *gitx.Repo, keys identity.IdentityProvider, o
 				err = apierr.New("watcher_unavailable", "%v", e).With("committed_result", result)
 			}
 		}
-		b, e := json.Marshal(api.Reply(result, err))
+		b, e := json.Marshal(api.ReplyVersion(api.RequestVersion(raw), result, err))
 		if e != nil {
 			http.Error(w, "response encoding failed", http.StatusInternalServerError)
 			return

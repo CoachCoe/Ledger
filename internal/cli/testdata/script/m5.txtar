@@ -1,11 +1,9 @@
 # M5 speculation through the shipped binary: start a run, submit frozen
 # candidates from the attempt sessions, evaluate them against the pinned
-# check, score with a submission scorer, and verify the run offline.
+# check, score with a submission scorer, and verify the run offline, in a
+# native repository.
 fixture polyglot repo
 cd repo
-exec git init -q
-exec git add -A
-exec git commit -qm base
 exec ledger init
 jsonvar FP result.root_fingerprint
 cp $WORK/checks.json .ledger/checks.json
@@ -37,14 +35,13 @@ cp $WORK/long.txt $P1/ok.txt
 stdout '"code": "unauthorized"'
 exec ledger speculation submit --session $S0 {"run_id":"$RUN","workspace_id":"$W0"}
 jsonvar M0 result.result.manifest
-jsonvar C0 result.result.commit
 ! exec ledger speculation submit --session $S0 {"run_id":"$RUN","workspace_id":"$W0"}
 stdout '"code": "already_submitted"'
 exec ledger speculation submit --session $S1 {"run_id":"$RUN","workspace_id":"$W1"}
 jsonvar M1 result.result.manifest
 exec ledger speculation submit --session $S2 {"run_id":"$RUN","workspace_id":"$W2"}
 # A run workspace cannot be selected outside the run.
-! exec ledger selection record {"manifest":"$M0","commit":"$C0","evidence":[]}
+! exec ledger selection record {"manifest":"$M0","evidence":[]}
 stdout '"code": "run_active"'
 # Evaluation runs the pinned check on every candidate, then waits for scores
 # from the submission scorer for the eligible ones only.
@@ -73,16 +70,11 @@ stdout '"outcome": "failed_criteria"'
 stdout '"accepted": false'
 stdout '"merged": false'
 jsonvar WINNER result.result.winner.manifest
-jsonvar BRANCH result.result.winner.branch
 exec test $WINNER = $M1
 exec ledger speculation status {"run_id":"$RUN"}
 stdout '"state": "resolved"'
 stdout '"workspace_state": "selected"'
 stdout '"workspace_state": "closed"'
-# The selection is a choice, not a merge: no merge commit exists.
-exec git rev-parse --verify $BRANCH
-exec git rev-list --merges --all
-! stdout .
 # A second run is cancelled before anything is submitted.
 exec ledger speculation start {"intent_id":"$INT","strategies":[{"name":"a","spec":"x"}],"scorer":{"kind":"submission"},"deadline_seconds":600}
 jsonvar RUN2 result.result.run_id

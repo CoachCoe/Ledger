@@ -3,7 +3,6 @@ package index
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"slices"
 	"time"
@@ -59,6 +58,7 @@ type validator struct {
 	local     map[string]envelope.Object // creations in this group, by entity id
 	objects   map[string]envelope.Object // members of this group, by hash
 	sims      map[string]*Subject        // subjects as changed by this group
+	lines     map[string]LineHead        // lines as advanced by this group
 }
 
 func (v *validator) check(o envelope.Object) error {
@@ -121,7 +121,7 @@ func (v *validator) check(o envelope.Object) error {
 		if err := v.object(ws.Creation, schema.KindWorkspace, &w); err != nil {
 			return err
 		}
-		if w.BaseCommit != p.BaseCommit || w.ChangeID != p.ChangeID || w.IntentID != p.IntentID {
+		if w.BaseCommit != p.BaseCommit || w.BaseTree != p.BaseTree || w.ChangeID != p.ChangeID || w.IntentID != p.IntentID {
 			return unauthorized("manifest workspace binding differs")
 		}
 		if _, err := v.subjectIn(p.IntentID, lifecycle.Intent, "open"); err != nil {
@@ -164,6 +164,19 @@ func (v *validator) check(o envelope.Object) error {
 			return err
 		}
 		return v.checkBinding(o.Hash, &b, signer)
+
+	case schema.KindRepository:
+		var p schema.Repository
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkRepository(&p, signer)
+	case schema.KindLineAdvance:
+		var p schema.LineAdvance
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkLineAdvance(o.Hash, &p, signer)
 	}
 	return nil
 }
@@ -192,19 +205,9 @@ func (v *validator) signerActive(signer string) error {
 		return apierr.New("session_inactive", "session %s is %s", signer, s.State)
 	}
 
-	var session schema.Session
-	if o, ok := v.local[signer]; ok {
-		if err := o.Decode(&session); err != nil {
-			return err
-		}
-	} else {
-		_, raw, err := creation(v.ctx, v.q, signer)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(raw, &session); err != nil {
-			return err
-		}
+	session, err := v.session(signer)
+	if err != nil {
+		return err
 	}
 	c, err := v.capability(session.CapabilityID)
 	if err != nil {
@@ -234,6 +237,29 @@ func (v *validator) signerActive(signer string) error {
 	return nil
 }
 
+// session returns the creation record of session id from this group or
+// the index.
+func (v *validator) session(id string) (schema.Session, error) {
+	var s schema.Session
+	if o, ok := v.local[id]; ok {
+		return s, o.Decode(&s)
+	}
+	cr, err := creation(v.ctx, v.q, id)
+	if err != nil {
+		return s, err
+	}
+	return s, cr.Decode(&s)
+}
+
+// sessionCapability returns the capability session id holds.
+func (v *validator) sessionCapability(id string) (*schema.Capability, error) {
+	s, err := v.session(id)
+	if err != nil {
+		return nil, err
+	}
+	return v.capability(s.CapabilityID)
+}
+
 func (v *validator) unique(id string) error {
 	if _, ok := v.local[id]; ok {
 		return apierr.New("entity_exists", "%s is created twice in one operation", id)
@@ -258,17 +284,17 @@ func (v *validator) capability(id string) (*schema.Capability, error) {
 		}
 		return &c, o.Decode(&c)
 	}
-	k, payload, err := creation(v.ctx, v.q, id)
+	cr, err := creation(v.ctx, v.q, id)
 	if err != nil {
 		return nil, err
 	}
-	if k == "" {
+	if cr.Kind == "" {
 		return nil, apierr.New(CodeUnavailable, "missing capability %s", id)
 	}
-	if k != schema.KindCapability {
+	if cr.Kind != schema.KindCapability {
 		return nil, apierr.New("unknown_entity", "no capability %s", id)
 	}
-	return &c, json.Unmarshal(payload, &c)
+	return &c, cr.Decode(&c)
 }
 
 // subject returns the current state of id, including changes made earlier
@@ -371,14 +397,15 @@ func (v *validator) object(hash string, kind schema.Kind, out any) error {
 		return o.Decode(out)
 	}
 	var payload string
-	err := v.q.QueryRowContext(v.ctx, `SELECT payload FROM objects WHERE hash = ? AND kind = ?`, hash, kind).Scan(&payload)
+	var version int
+	err := v.q.QueryRowContext(v.ctx, `SELECT payload, version FROM objects WHERE hash = ? AND kind = ?`, hash, kind).Scan(&payload, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apierr.New("unknown_entity", "no %s %s", kind, hash)
 	}
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal([]byte(payload), out)
+	return schema.Decode(version, kind, []byte(payload), out)
 }
 
 func (v *validator) checkCapability(p *schema.Capability, signer string) error {
@@ -421,7 +448,7 @@ func (v *validator) checkWorkspace(p *schema.Workspace, signer string) error {
 	if c.SessionID != p.SessionID {
 		return unauthorized("capability %s is not held by %s", p.CapabilityID, p.SessionID)
 	}
-	return nil
+	return v.workspaceLine(p)
 }
 
 func (v *validator) checkEvent(hash string, e *schema.LifecycleEvent, signer string) error {
@@ -530,15 +557,25 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 	if signer == m.AuthorSession || slices.Contains(holders, signer) {
 		return apierr.New("author_signed_evidence", "session %s authored or held the workspace of manifest %s", signer, p.Manifest)
 	}
-	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
-	if err != nil {
-		return err
-	}
-	if commit == "" || commit != p.Commit {
-		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
-	}
-	if p.ExecutedTree != m.Tree {
-		return apierr.New("tree_mismatch", "executed tree %s is not the manifest tree %s", p.ExecutedTree, m.Tree)
+	if native := m.BaseTree != ""; native != (p.Tree != "") {
+		return apierr.New("cross_revision_evidence", "attestation and manifest %s use different schema versions", p.Manifest).With("evidence_manifest", p.Manifest)
+	} else if native {
+		// A v2 attestation names only the tree it ran on (ADR 0027).
+		if p.Tree != m.Tree {
+			return apierr.New("cross_revision_evidence", "evidence ran on tree %s, not the tree %s of manifest %s", p.Tree, m.Tree, p.Manifest).
+				With("evidence_manifest", p.Manifest).With("tree", p.Tree)
+		}
+	} else {
+		commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+		if err != nil {
+			return err
+		}
+		if commit == "" || commit != p.Commit {
+			return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+		}
+		if p.ExecutedTree != m.Tree {
+			return apierr.New("tree_mismatch", "executed tree %s is not the manifest tree %s", p.ExecutedTree, m.Tree)
+		}
 	}
 	var d schema.CheckDefinition
 	if err := v.object(p.CheckDefinition, schema.KindCheckDefinition, &d); err != nil {
@@ -547,15 +584,15 @@ func (v *validator) checkAttestation(p *schema.EvidenceAttestation, signer strin
 	if d.Category != p.Category {
 		return apierr.New("invalid_attestation", "category %s differs from the pinned definition's %s", p.Category, d.Category)
 	}
-	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	cr, err := creation(v.ctx, v.q, m.IntentID)
 	if err != nil {
 		return err
 	}
-	if kind != schema.KindIntent {
+	if cr.Kind != schema.KindIntent {
 		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
 	}
 	var intent schema.Intent
-	if err := json.Unmarshal(raw, &intent); err != nil {
+	if err := cr.Decode(&intent); err != nil {
 		return err
 	}
 	for _, id := range p.Criteria {
@@ -625,12 +662,18 @@ func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) e
 	if p.IntentID != m.IntentID {
 		return apierr.New("invalid_selection", "intent %s is not the intent of manifest %s", p.IntentID, p.Manifest)
 	}
-	commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
-	if err != nil {
-		return err
-	}
-	if commit == "" || commit != p.Commit {
-		return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+	if m.BaseTree != "" {
+		if p.Commit != "" {
+			return apierr.New("binding_mismatch", "manifest %s binds a tree, not a commit", p.Manifest)
+		}
+	} else {
+		commit, err := manifestCommit(v.ctx, v.q, p.Manifest)
+		if err != nil {
+			return err
+		}
+		if commit == "" || commit != p.Commit {
+			return apierr.New("binding_mismatch", "commit %s is not the commit bound to manifest %s", p.Commit, p.Manifest)
+		}
 	}
 	if _, err := v.subjectIn(m.IntentID, lifecycle.Intent, "open"); err != nil {
 		return err
@@ -669,20 +712,20 @@ func (v *validator) checkSelection(p *schema.SelectionDecision, signer string) e
 		switch {
 		case i < 0:
 			return apierr.New("unknown_evidence", "no committed evidence attestation %s", h).With("evidence", h)
-		case set[i].Att.Manifest != p.Manifest || set[i].Att.Commit != p.Commit || set[i].Att.ExecutedTree != m.Tree:
+		case set[i].Att.Manifest != p.Manifest || set[i].Att.Commit != p.Commit || set[i].Att.ExecutedOn() != m.Tree:
 			return apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", h, set[i].Att.Manifest, p.Manifest).
 				With("evidence", h).With("evidence_manifest", set[i].Att.Manifest)
 		}
 	}
-	kind, raw, err := creation(v.ctx, v.q, m.IntentID)
+	cr, err := creation(v.ctx, v.q, m.IntentID)
 	if err != nil {
 		return err
 	}
-	if kind != schema.KindIntent {
+	if cr.Kind != schema.KindIntent {
 		return apierr.New("unknown_entity", "no intent %s", m.IntentID)
 	}
 	var intent schema.Intent
-	if err := json.Unmarshal(raw, &intent); err != nil {
+	if err := cr.Decode(&intent); err != nil {
 		return err
 	}
 	known, err := evidenceFor(v.ctx, v.q, p.Manifest)

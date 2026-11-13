@@ -59,7 +59,7 @@ func (s *Service) warnScope(ctx context.Context, w schema.Workspace, snap worksp
 			bad[p] = chainErr
 		}
 	} else {
-		bad, err = workspace.Violations(ctx, s.Provider.Path(w.ID), w.BaseCommit, snap, chain, s.caseSensitive, at)
+		bad, err = workspace.Violations(ctx, s.Provider.Trees(), w.BaseTree, snap, chain, s.caseSensitive, at)
 		if err != nil {
 			return err
 		}

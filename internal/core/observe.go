@@ -22,21 +22,21 @@ type workspaceView struct {
 	State       string            `json:"state"`
 	Path        string            `json:"path"`
 	BaseCommit  string            `json:"base_commit,omitzero"`
+	BaseTree    string            `json:"base_tree,omitzero"`
 	WriteSet    []string          `json:"write_set,omitzero"`
 	Status      map[string]string `json:"status,omitzero"`
 	ObservedAt  string            `json:"observed_at,omitzero"`
 	Tree        string            `json:"tree,omitzero"`
 }
 
-// observe captures w through its persistent private index and saves the
-// write set. The per-workspace lock keeps concurrent observers off the same
-// private index and stops an older capture overwriting a newer one.
+// observe snapshots w into its operation log and saves the write set. The
+// per-workspace lock stops an older snapshot overwriting a newer one.
 func (s *Service) observe(ctx context.Context, w schema.Workspace) (workspace.Snapshot, string, error) {
 	m, _ := s.observing.LoadOrStore(w.ID, new(sync.Mutex))
 	mu := m.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
-	snap, err := s.Provider.Snapshot(ctx, w, workspace.IndexPath(s.runtimeDir(), w.ID))
+	snap, err := s.Provider.Snapshot(ctx, w)
 	if err != nil {
 		return snap, "", err
 	}
@@ -112,7 +112,7 @@ func (s *Service) workspaceStatus(ctx context.Context, id string) (workspaceView
 	if sub.State == "closed" || sub.State == "selected" {
 		return view, nil
 	}
-	view.BaseCommit = w.BaseCommit
+	view.BaseCommit, view.BaseTree = w.BaseCommit, w.BaseTree
 	status, at, err := s.Store.Index.Observation(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		snap, at, err := s.observe(ctx, w)

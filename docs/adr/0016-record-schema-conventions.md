@@ -24,4 +24,4 @@ Optional members with omission would give two encodings for "no value" and requi
 
 ## Validation
 
-`schemas/examples/` holds one signed example per kind. Tests round-trip every example through the Go types and back to identical canonical bytes, reject each example with any member removed or an unknown member added, and verify signatures produced independently with Node's Ed25519 and a separate RFC 8785 implementation (`internal/envelope/testdata/`).
+`schemas/examples/v1/` and `schemas/examples/v2/` hold one signed example per kind of each schema version. Tests round-trip every example through the Go types and back to identical canonical bytes, reject each example with any member removed or an unknown member added, and verify signatures produced independently with Node's Ed25519 and a separate RFC 8785 implementation (`internal/envelope/testdata/`).

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/speculation.evaluate.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "response.json#/$defs/mutation_result",
+          "properties": {
+            "result": {
+              "$ref": "../runtime/run_outcome.json"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run_id": {
+              "$ref": "../../v1/common.json#/$defs/run_id"
+            },
+            "state": {
+              "const": "evaluating"
+            },
+            "awaiting_scores": {
+              "const": true
+            },
+            "eligible": {
+              "allOf": [
+                {
+                  "$ref": "../../v1/common.json#/$defs/hashes"
+                },
+                {
+                  "minItems": 1
+                }
+              ]
+            },
+            "candidates": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "run_id",
+            "state",
+            "awaiting_scores",
+            "eligible",
+            "candidates"
+          ]
+        }
+      ]
+    }
+  }
+}

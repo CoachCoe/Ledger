@@ -1,0 +1,120 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": 2
+    },
+    "operation": {
+      "enum": [
+        "bundle.import",
+        "bundle.export",
+        "bundle.verify",
+        "system.recover",
+        "system.reindex",
+        "history.why",
+        "history.attempts",
+        "history.dependents",
+        "coordination.nearby",
+        "daemon.stop",
+        "session.create",
+        "session.end",
+        "session.recover",
+        "intent.create",
+        "intent.close",
+        "intent.status",
+        "evidence.resolve",
+        "evidence.run",
+        "evidence.judge",
+        "evidence.isIndependent",
+        "intent.criteriaStatus",
+        "selection.record",
+        "workspace.fork",
+        "workspace.write",
+        "workspace.deps.detach",
+        "workspace.status",
+        "workspace.propose",
+        "workspace.rework",
+        "workspace.close",
+        "system.status",
+        "capability.issue",
+        "capability.delegate",
+        "coordination.notifications",
+        "coordination.ack",
+        "coordination.lease",
+        "coordination.release",
+        "coordination.leases",
+        "coordination.status",
+        "speculation.start",
+        "speculation.submit",
+        "speculation.status",
+        "speculation.evaluate",
+        "speculation.score",
+        "speculation.resume",
+        "speculation.cancel"
+      ]
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "$ref": "../../v1/common.json#/$defs/session_id"
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "input": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "api_version",
+    "operation",
+    "operation_id",
+    "session_id",
+    "input"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "not": {
+              "enum": [
+                "bundle.verify",
+                "history.why",
+                "history.attempts",
+                "history.dependents",
+                "coordination.nearby",
+                "evidence.resolve",
+                "evidence.isIndependent",
+                "intent.criteriaStatus",
+                "intent.status",
+                "system.status",
+                "workspace.status",
+                "coordination.notifications",
+                "coordination.ack",
+                "coordination.leases",
+                "coordination.status",
+                "speculation.status"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "operation_id": {
+            "$ref": "../../v1/common.json#/$defs/operation_id"
+          }
+        }
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/request.json"
+}

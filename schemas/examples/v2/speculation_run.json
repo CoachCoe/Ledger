@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "kind": "speculation_run",
+  "payload": {
+    "id": "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "intent_id": "int_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "strategies": [
+      {
+        "name": "inline",
+        "spec": "Implement inline"
+      },
+      {
+        "name": "module",
+        "spec": "Use a module"
+      }
+    ],
+    "attempts": [
+      {
+        "workspace_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "strategy": "inline"
+      },
+      {
+        "workspace_id": "wsp_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "strategy": "module"
+      }
+    ],
+    "checks": [
+      "7777777777777777777777777777777777777777777777777777777777777777"
+    ],
+    "scorer": "3a1229173bae5bb71d828f139cced5c31f9335173af8b338c04abe7c076809f4",
+    "scorer_definition": {
+      "kind": "command",
+      "command": "python3 score.py",
+      "env_allowlist": [],
+      "timeout_seconds": 60
+    },
+    "deadline": "2026-11-05T13:00:00.000Z",
+    "created_at": "2026-11-05T12:00:00.000Z",
+    "base_tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "HF-4VIq3CIsPh49tsKocbCXgDS5zO8vSTMzk09ItsNvXOxocCD-Q1UxLmY7eubhU8o1QFXqzfmEU6TaENKCWBA"
+}

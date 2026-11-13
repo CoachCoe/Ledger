@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,38 +34,42 @@ var testSigners = func() map[string]identity.Signer {
 
 const examplesDir = "../../schemas/examples"
 
+// readExamples returns every example keyed "v<version>/<kind>".
 func readExamples(t *testing.T) map[string][]byte {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join(examplesDir, "*.json"))
-	if err != nil || len(files) != len(schema.Kinds) {
-		t.Fatalf("found %d examples, want one per kind (%d): %v", len(files), len(schema.Kinds), err)
-	}
 	out := map[string][]byte{}
-	for _, f := range files {
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
+	for _, v := range schema.Versions {
+		dir := fmt.Sprintf("v%d", v)
+		files, err := filepath.Glob(filepath.Join(examplesDir, dir, "*.json"))
+		if err != nil || len(files) != len(schema.KindsFor(v)) {
+			t.Fatalf("found %d %s examples, want one per kind (%d): %v", len(files), dir, len(schema.KindsFor(v)), err)
 		}
-		if *update {
-			raw = resign(t, raw)
-			if err := os.WriteFile(f, raw, 0o644); err != nil {
+		for _, f := range files {
+			raw, err := os.ReadFile(f)
+			if err != nil {
 				t.Fatal(err)
 			}
+			if *update {
+				raw = resign(t, raw)
+				if err := os.WriteFile(f, raw, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out[dir+"/"+strings.TrimSuffix(filepath.Base(f), ".json")] = raw
 		}
-		out[strings.TrimSuffix(filepath.Base(f), ".json")] = raw
 	}
 	return out
 }
 
 func TestExamplesRoundTrip(t *testing.T) {
-	for kind, raw := range readExamples(t) {
-		t.Run(kind, func(t *testing.T) {
+	for key, raw := range readExamples(t) {
+		t.Run(key, func(t *testing.T) {
 			o, err := Parse(raw)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(o.Envelope.Kind) != kind {
-				t.Fatalf("kind %q in %s.json", o.Envelope.Kind, kind)
+			if fmt.Sprintf("v%d/%s", o.Envelope.SchemaVersion, o.Envelope.Kind) != key {
+				t.Fatalf("version %d kind %q in %s.json", o.Envelope.SchemaVersion, o.Envelope.Kind, key)
 			}
 			s := testSigners[o.Envelope.Signer]
 			if s == nil {
@@ -86,7 +91,7 @@ func TestExamplesRoundTrip(t *testing.T) {
 			if !bytes.Equal(again, o.Envelope.Payload) {
 				t.Fatalf("payload round trip changed:\n got %s\nwant %s", again, o.Envelope.Payload)
 			}
-			resealed, err := Seal(o.Envelope.Kind, p, s)
+			resealed, err := SealVersion(o.Envelope.SchemaVersion, o.Envelope.Kind, p, s)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,29 +183,48 @@ func TestTargetedRejections(t *testing.T) {
 		name, kind string
 		mutate     func(p map[string]any)
 	}{
-		{"intent without criteria", "intent", func(p map[string]any) { p["criteria"] = []any{} }},
-		{"check criterion without hash", "intent", func(p map[string]any) {
+		{"intent without criteria", "v1/intent", func(p map[string]any) { p["criteria"] = []any{} }},
+		{"check criterion without hash", "v1/intent", func(p map[string]any) {
 			v := p["criteria"].([]any)[0].(map[string]any)["verification"].(map[string]any)
 			delete(v, "definition_hash")
 		}},
-		{"judgment with unknown reviewer", "intent", func(p map[string]any) {
+		{"judgment with unknown reviewer", "v1/intent", func(p map[string]any) {
 			v := p["criteria"].([]any)[1].(map[string]any)["verification"].(map[string]any)
 			v["reviewer"] = "robot"
 		}},
-		{"uppercase hash", "lifecycle_event", func(p map[string]any) { p["creation"] = strings.Repeat("A", 64) }},
-		{"bad timestamp", "lifecycle_event", func(p map[string]any) { p["at"] = "2026-11-05 12:00:00" }},
-		{"non-UTC timestamp", "lifecycle_event", func(p map[string]any) { p["at"] = "2026-11-05T12:00:00+01:00" }},
-		{"unknown state", "lifecycle_event", func(p map[string]any) { p["to_state"] = "merged" }},
-		{"wrong id prefix", "workspace", func(p map[string]any) { p["id"] = "int_" + strings.Repeat("a", 26) }},
-		{"isolation claimed", "evidence_attestation", func(p map[string]any) { p["isolation"] = "container" }},
-		{"unsafe integer", "attempt_record", func(p map[string]any) { p["score"] = int64(canon.MaxSafe) + 1 }},
-		{"empty allow list", "capability", func(p map[string]any) { p["allow"] = []any{} }},
-		{"duplicate receipt members", "operation_receipt", func(p map[string]any) {
+		{"uppercase hash", "v1/lifecycle_event", func(p map[string]any) { p["creation"] = strings.Repeat("A", 64) }},
+		{"bad timestamp", "v1/lifecycle_event", func(p map[string]any) { p["at"] = "2026-11-05 12:00:00" }},
+		{"non-UTC timestamp", "v1/lifecycle_event", func(p map[string]any) { p["at"] = "2026-11-05T12:00:00+01:00" }},
+		{"unknown state", "v1/lifecycle_event", func(p map[string]any) { p["to_state"] = "merged" }},
+		{"wrong id prefix", "v1/workspace", func(p map[string]any) { p["id"] = "int_" + strings.Repeat("a", 26) }},
+		{"isolation claimed", "v1/evidence_attestation", func(p map[string]any) { p["isolation"] = "container" }},
+		{"unsafe integer", "v1/attempt_record", func(p map[string]any) { p["score"] = int64(canon.MaxSafe) + 1 }},
+		{"empty allow list", "v1/capability", func(p map[string]any) { p["allow"] = []any{} }},
+		{"duplicate receipt members", "v1/operation_receipt", func(p map[string]any) {
 			m := p["members"].([]any)
 			p["members"] = append(m, m[0])
 		}},
+		{"v2 symbol without revision", "v2/change_manifest", func(p map[string]any) {
+			delete(p["symbols_read"].([]any)[0].(map[string]any), "revision")
+		}},
+		{"v2 manifest with a Git tree", "v2/change_manifest", func(p map[string]any) { p["tree"] = strings.Repeat("d", 40) }},
+		{"v2 manifest naming a commit", "v2/change_manifest", func(p map[string]any) { p["base_commit"] = strings.Repeat("c", 40) }},
+		{"v2 symbol map naming a Git blob", "v2/change_manifest", func(p map[string]any) {
+			p["symbol_maps"] = map[string]any{"src/app.ts": strings.Repeat("1", 40)}
+		}},
+		{"v2 attestation naming a commit", "v2/evidence_attestation", func(p map[string]any) { p["commit"] = strings.Repeat("c", 40) }},
+		{"v2 selection naming a commit", "v2/selection_decision", func(p map[string]any) { p["commit"] = strings.Repeat("c", 40) }},
+		{"v2 capability without may_advance", "v2/capability", func(p map[string]any) { delete(p, "may_advance") }},
+		{"v2 capability with a bad line", "v2/capability", func(p map[string]any) { p["may_advance"] = []any{"Main Line"} }},
+		{"v2 repository with another hash", "v2/repository", func(p map[string]any) { p["hash_algorithm"] = "sha1" }},
+		{"v2 repository with a bad case policy", "v2/repository", func(p map[string]any) { p["case_policy"] = "fold" }},
+		{"v2 advance without a selection", "v2/line_advance", func(p map[string]any) { delete(p, "selection") }},
+		{"v1 workspace naming a tree", "v1/workspace", func(p map[string]any) { p["base_tree"] = strings.Repeat("c", 64) }},
 	}
 	for _, c := range cases {
+		if ex[c.kind] == nil {
+			t.Fatalf("%s: no example %s", c.name, c.kind)
+		}
 		b := mutated(t, ex[c.kind], func(_, p map[string]any) { c.mutate(p) })
 		if _, err := Parse(b); err == nil {
 			t.Errorf("%s accepted", c.name)
@@ -209,14 +233,51 @@ func TestTargetedRejections(t *testing.T) {
 }
 
 func TestUnsupportedVersionCode(t *testing.T) {
-	b := mutated(t, readExamples(t)["root_key"], func(env, _ map[string]any) { env["schema_version"] = 2 })
+	b := mutated(t, readExamples(t)["v2/root_key"], func(env, _ map[string]any) { env["schema_version"] = 3 })
 	if _, err := Parse(b); !apierr.HasCode(err, "unsupported_schema_version") {
 		t.Fatalf("Parse = %v, want unsupported_schema_version", err)
 	}
 }
 
+// A payload is judged by its envelope's version: a v1 payload relabelled v2
+// (or the reverse) fails its schema instead of being read as the other.
+func TestPayloadsBoundToTheirVersion(t *testing.T) {
+	ex := readExamples(t)
+	for _, kind := range []string{"workspace", "change_manifest", "evidence_attestation", "selection_decision", "speculation_run", "capability"} {
+		for from, to := range map[string]int{"v1": 2, "v2": 1} {
+			b := mutated(t, ex[from+"/"+kind], func(env, _ map[string]any) { env["schema_version"] = to })
+			if _, err := Parse(b); !apierr.HasCode(err, "schema_invalid") {
+				t.Errorf("%s/%s as version %d: %v", from, kind, to, err)
+			}
+		}
+	}
+	for _, kind := range []string{"repository", "line_advance"} {
+		b := mutated(t, ex["v2/"+kind], func(env, _ map[string]any) { env["schema_version"] = 1 })
+		if _, err := Parse(b); !apierr.HasCode(err, "schema_invalid") {
+			t.Errorf("%s as version 1: %v", kind, err)
+		}
+	}
+}
+
+// The signing prefix names the version, so a signature over v1 bytes never
+// verifies as v2.
+func TestSignatureBoundToVersion(t *testing.T) {
+	raw := readExamples(t)["v1/intent"]
+	o, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relabelled, err := Parse(mutated(t, raw, func(env, _ map[string]any) { env["schema_version"] = 2 }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := relabelled.Verify(testSigners[o.Envelope.Signer].PublicKey()); !apierr.HasCode(err, "signature_invalid") {
+		t.Fatalf("v1 signature verified as v2: %v", err)
+	}
+}
+
 func TestTamperedBytesFailVerification(t *testing.T) {
-	raw := readExamples(t)["intent"]
+	raw := readExamples(t)["v1/intent"]
 	o, err := Parse(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +302,7 @@ func TestTamperedBytesFailVerification(t *testing.T) {
 }
 
 func TestParseStored(t *testing.T) {
-	pretty := readExamples(t)["root_key"]
+	pretty := readExamples(t)["v1/root_key"]
 	o, err := Parse(pretty)
 	if err != nil {
 		t.Fatal(err)
@@ -258,8 +319,53 @@ func TestParseStored(t *testing.T) {
 }
 
 func TestInvalidCalendarTimestampRejected(t *testing.T) {
-	raw := mutated(t, readExamples(t)["intent"], func(_, p map[string]any) { p["created_at"] = "2026-99-99T99:99:99Z" })
+	raw := mutated(t, readExamples(t)["v1/intent"], func(_, p map[string]any) { p["created_at"] = "2026-99-99T99:99:99Z" })
 	if _, err := Parse(raw); err == nil {
 		t.Fatal("impossible calendar time accepted")
+	}
+}
+
+// Code that reads records uses one Go type per kind; a v2 payload fills
+// the v2 members and leaves the Git ones empty.
+func TestV2DecodesIntoDomainTypes(t *testing.T) {
+	ex := readExamples(t)
+	parse := func(key string) Object {
+		o, err := Parse(ex[key])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	var w schema.Workspace
+	if err := parse("v2/workspace").Decode(&w); err != nil || w.BaseTree == "" || w.BaseCommit != "" || w.BaseLineAdvance == nil {
+		t.Fatalf("workspace %+v, %v", w, err)
+	}
+	var m schema.ChangeManifest
+	if err := parse("v2/change_manifest").Decode(&m); err != nil || m.BaseTree == "" || m.OpHead == "" ||
+		len(m.SymbolMaps) != 2 || m.SymbolsRead[0].Revision == "" || m.BaseCommit != "" {
+		t.Fatalf("manifest %+v, %v", m, err)
+	}
+	var a schema.EvidenceAttestation
+	if err := parse("v2/evidence_attestation").Decode(&a); err != nil || a.Tree == "" || a.Commit != "" || a.ExecutedTree != "" {
+		t.Fatalf("attestation %+v, %v", a, err)
+	}
+	var r schema.SpeculationRun
+	if err := parse("v2/speculation_run").Decode(&r); err != nil || r.BaseTree == "" || r.BaseCommit != "" {
+		t.Fatalf("run %+v, %v", r, err)
+	}
+	var c schema.Capability
+	if err := parse("v2/capability").Decode(&c); err != nil || len(c.MayAdvance) != 1 {
+		t.Fatalf("capability %+v, %v", c, err)
+	}
+	var sd schema.SelectionDecision
+	if err := parse("v2/selection_decision").Decode(&sd); err != nil || sd.Commit != "" || sd.Manifest == "" {
+		t.Fatalf("selection %+v, %v", sd, err)
+	}
+	var v1 schema.Workspace
+	if err := parse("v1/workspace").Decode(&v1); err != nil || v1.BaseCommit == "" || v1.BaseTree != "" {
+		t.Fatalf("v1 workspace %+v, %v", v1, err)
+	}
+	if err := parse("v2/workspace").Decode(&schema.Intent{}); err == nil {
+		t.Fatal("a v2 workspace decoded into an intent")
 	}
 }

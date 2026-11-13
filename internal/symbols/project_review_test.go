@@ -2,38 +2,37 @@ package symbols
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
-
-	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
+// fixedSource serves one tree of the given files, which no store would
+// build.
+type fixedSource map[string]string
+
+func (f fixedSource) Entries(context.Context, string) ([]Entry, error) {
+	var out []Entry
+	for _, p := range slices.Sorted(maps.Keys(f)) {
+		out = append(out, Entry{Path: p, ID: p, Regular: true, Size: int64(len(f[p]))})
+	}
+	return out, nil
+}
+
+func (f fixedSource) Read(_ context.Context, entries []Entry) ([][]byte, error) {
+	out := make([][]byte, len(entries))
+	for i, e := range entries {
+		out[i] = []byte(f[e.ID])
+	}
+	return out, nil
+}
+
+// A store refuses normalization aliases; a source that serves them
+// anyway still does not have one file silently replace the other.
 func TestNormalizedPathAliasesFallBack(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	if _, err := gitx.Run(ctx, dir, nil, nil, "init", "-q"); err != nil {
-		t.Fatal(err)
-	}
-	repo, err := gitx.Open(ctx, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(t.TempDir(), "source")
-	if err := os.WriteFile(source, []byte("function f() {}"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	blobs, err := repo.WriteBlobs(ctx, []string{source})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := repo.BuildTree(ctx, filepath.Join(t.TempDir(), "index"), "", []gitx.TreeEntry{{Path: "café.ts", Blob: blobs[0]}, {Path: "cafe\u0301.ts", Blob: blobs[0]}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	var engine Engine
-	project, err := engine.load(ctx, repo, tree)
+	project, err := engine.load(context.Background(), fixedSource{"café.ts": "function f() {}", "cafe\u0301.ts": "function f() {}"}, "tree")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,31 +42,10 @@ func TestNormalizedPathAliasesFallBack(t *testing.T) {
 }
 
 func TestOversizeSourceKeepsOtherFilesAnalyzable(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	if _, err := gitx.Run(ctx, dir, nil, nil, "init", "-q"); err != nil {
-		t.Fatal(err)
-	}
-	repo, err := gitx.Open(ctx, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := []string{filepath.Join(t.TempDir(), "large"), filepath.Join(t.TempDir(), "small")}
-	for i, src := range []string{strings.Repeat("x", (4<<20)+1), "function f() {}"} {
-		if err := os.WriteFile(files[i], []byte(src), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	blobs, err := repo.WriteBlobs(ctx, files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := repo.BuildTree(ctx, filepath.Join(t.TempDir(), "index"), "", []gitx.TreeEntry{{Path: "large.ts", Blob: blobs[0]}, {Path: "small.ts", Blob: blobs[1]}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newStore(t)
+	tree := storeTree(t, s, map[string]string{"large.ts": strings.Repeat("x", maxSource+1), "small.ts": "function f() {}"})
 	var engine Engine
-	project, err := engine.load(ctx, repo, tree)
+	project, err := engine.load(context.Background(), StoreSource{Store: s}, tree)
 	if err != nil {
 		t.Fatal(err)
 	}

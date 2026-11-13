@@ -17,12 +17,11 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/daemon"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
-// Call sends request to the repository's daemon, starting it if it is not
-// running.
-func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error) {
+// Call sends request to the daemon of the repository at root, starting it
+// if it is not running.
+func Call(ctx context.Context, root string, request api.Request) (any, error) {
 	raw, err := canon.Marshal(request)
 	if err != nil {
 		return nil, err
@@ -30,11 +29,11 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 	if _, err := api.Parse(raw); err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(filepath.Join(repo.MainDir, ".ledger")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, ".ledger")); err != nil {
 		return nil, apierr.New("not_initialized", "run ledger init first")
 	}
 	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", daemon.Socket(repo))
+		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", daemon.Socket(root))
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
@@ -76,14 +75,14 @@ func Call(ctx context.Context, repo *gitx.Repo, request api.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
-	logPath := filepath.Join(repo.MainDir, ".ledger", "runtime", "ledgerd.log")
+	logPath := filepath.Join(root, ".ledger", "runtime", "ledgerd.log")
 	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	defer log.Close()
 	command := exec.Command(executable, "daemon") //nolint:gosec // re-exec this binary with fixed arguments
-	command.Dir = repo.MainDir
+	command.Dir = root
 	command.Stdout = log
 	command.Stderr = log
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

@@ -24,6 +24,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/store"
 	"github.com/CoachCoe/Ledger/internal/symbols"
 	"github.com/CoachCoe/Ledger/internal/workspace"
 )
@@ -34,7 +35,9 @@ import (
 type Service struct {
 	Store    *record.Store
 	Keys     identity.IdentityProvider
-	Provider workspace.WorkspaceProvider
+	Provider workspace.NativeProvider
+	// Objects is the repository's content store.
+	Objects *store.Store
 
 	mu              sync.Mutex
 	signers         map[string]identity.Signer
@@ -50,22 +53,30 @@ type Service struct {
 	// evaluating cancels the in-process evaluation of a run, by run id.
 	evaluating map[string]context.CancelFunc
 
+	// checkouts makes the fresh checkouts evidence runs in.
+	checkouts evidence.Checkouts
+
 	// evidenceHooks are test seams for evidence runs; nil in production.
 	evidenceHooks *evidence.Hooks
 	writeFault    func(string) error // test-only runtime editing interruption seam
+	// evidenceWorkers bounds the checks one speculation evaluation runs at
+	// once.
+	evidenceWorkers int
 }
 
-// New opens the service over store, completing interrupted operations and
-// ending sessions whose keys did not survive a restart.
-func New(ctx context.Context, store *record.Store, keys identity.IdentityProvider) (*Service, error) {
-	p := workspace.GitProvider{Repo: store.Repo}
-	store.SetEffectHandler(p.Apply)
-	s := &Service{Store: store, Keys: keys, Provider: p, signers: map[string]identity.Signer{}, evaluating: map[string]context.CancelFunc{}, caseSensitive: true}
+// New opens the service over the record store of a native repository,
+// completing interrupted operations and ending sessions whose keys did not
+// survive a restart. A Phase 1 repository is read-only until it is migrated.
+func New(ctx context.Context, records *record.Store, keys identity.IdentityProvider) (*Service, error) {
+	if !records.Native() {
+		return nil, apierr.New("migrate_required", "this is a Phase 1 repository; run ledger migrate before changing it")
+	}
+	s := &Service{Store: records, Keys: keys, signers: map[string]identity.Signer{}, evaluating: map[string]context.CancelFunc{}, caseSensitive: true}
 	var config struct {
 		Root          string `json:"root_fingerprint"`
 		CaseSensitive bool   `json:"case_sensitive"`
 	}
-	if b, err := os.ReadFile(filepath.Join(store.Dir, "config.json")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(records.Dir, "config.json")); err == nil {
 		if err := json.Unmarshal(b, &config); err != nil {
 			return nil, err
 		}
@@ -74,19 +85,24 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	stale, err := filepath.Glob(filepath.Join(s.runtimeDir(), "observe-*.index.lock"))
+	p, err := workspace.OpenNative(records.Dir, s.caseSensitive)
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range stale {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-	}
-	if _, err := store.Recover(ctx); err != nil {
+	s.Objects = p.Store
+	s.Provider = p
+	s.checkouts = evidence.NativeCheckouts{Workspaces: p.Workspaces}
+	s.evidenceWorkers = defaultEvidenceWorkers
+	records.SetEffectHandler(s.Provider.Apply)
+	if _, err := records.Recover(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := evidence.Reconcile(ctx, store.Repo, s.runtimeDir()); err != nil {
+	if _, err := evidence.Reconcile(ctx, s.checkouts, s.runtimeDir()); err != nil {
+		return nil, err
+	}
+	// A crash between removing a workspace and pruning, or a detach on a
+	// manifest change, can leave a shared copy nothing links to.
+	if err := p.Workspaces.PruneDeps(); err != nil {
 		return nil, err
 	}
 	if err := s.settleRuns(ctx); err != nil {
@@ -102,19 +118,33 @@ func New(ctx context.Context, store *record.Store, keys identity.IdentityProvide
 	}
 	// Every local session key was lost on restart, even when the missing root
 	// prevents publishing session-end events. No advisory lease may revive it.
-	leases, err := store.Index.Leases(ctx)
+	leases, err := records.Index.Leases(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, lease := range leases {
-		if err := store.Index.DeleteLease(ctx, lease.ID); err != nil {
+		if err := records.Index.DeleteLease(ctx, lease.ID); err != nil {
 			return nil, err
 		}
 	}
 	return s, nil
 }
 
+// CaseSensitive reports the repository's case policy.
+func (s *Service) CaseSensitive() bool { return s.caseSensitive }
+
 func (s *Service) runtimeDir() string { return filepath.Join(s.Store.Dir, "runtime") }
+
+// symbolSource reads the trees symbols are compared over.
+func (s *Service) symbolSource() symbols.Source { return symbols.StoreSource{Store: s.Objects} }
+
+// repositoryDir is the directory people work in, which holds .ledger.
+func (s *Service) repositoryDir() string { return filepath.Dir(s.Store.Dir) }
+
+// seal signs a record at the schema_version this repository writes.
+func (s *Service) seal(kind schema.Kind, payload any, signer identity.Signer) (envelope.Object, error) {
+	return envelope.SealVersion(record.Version, kind, payload, signer)
+}
 
 func (s *Service) root() (identity.Signer, error) {
 	r, err := s.Keys.Root()
@@ -146,7 +176,7 @@ func (s *Service) reconcile(ctx context.Context) error {
 			return nil //nolint:nilerr // a missing root key is reported as recovery_pending, not as a failure
 		}
 		reason := "daemon_restart"
-		event, err := envelope.Seal(schema.KindLifecycleEvent, transition(sub, "ended", &reason, root.ID()), root)
+		event, err := s.seal(schema.KindLifecycleEvent, transition(sub, "ended", &reason, root.ID()), root)
 		if err != nil {
 			return err
 		}
@@ -188,14 +218,14 @@ func (s *Service) subject(ctx context.Context, id, kind string) (*index.Subject,
 
 func creation[T any](ctx context.Context, idx *index.Index, id string, kind schema.Kind) (T, error) {
 	var p T
-	k, raw, err := idx.Creation(ctx, id)
+	cr, err := idx.Creation(ctx, id)
 	if err != nil {
 		return p, err
 	}
-	if k != kind {
+	if cr.Kind != kind {
 		return p, apierr.New("unknown_entity", "no %s %s", kind, id)
 	}
-	return p, json.Unmarshal(raw, &p)
+	return p, cr.Decode(&p)
 }
 
 func decode[T any](raw []byte) (T, error) {
@@ -220,6 +250,9 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 	if _, err := api.Parse(raw); err != nil {
 		return nil, err
 	}
+	if want := api.Version; r.Version != want {
+		return nil, apierr.New("unsupported_api_version", "this repository answers api_version %d, not %d", want, r.Version).With("api_version", want)
+	}
 	if err := s.retryRecovery(ctx); err != nil {
 		return nil, err
 	}
@@ -239,6 +272,8 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 		return s.nearby(ctx, r)
 	case op == "workspace.write":
 		return s.writeText(ctx, r)
+	case op == "workspace.deps.detach":
+		return s.detachDeps(ctx, r)
 	case op == "coordination.lease" || op == "coordination.release" || op == "coordination.leases" || op == "coordination.status":
 		return s.coordination(ctx, r)
 	case api.ReadOnly(op):
@@ -314,7 +349,7 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 					continue
 				}
 			}
-			interrupted = append(interrupted, map[string]any{"run_id": j.RunID, "manifest": j.Manifest, "commit": j.Commit, "reason": j.Reason})
+			interrupted = append(interrupted, map[string]any{"run_id": j.RunID, "manifest": j.Manifest, "reason": j.Reason})
 		}
 		return map[string]any{"subjects": subjects, "recovery_pending": pending, "process_id": os.Getpid(), "interrupted_runs": interrupted}, nil
 	case "intent.status":
@@ -334,12 +369,11 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 		in, err := decode[struct {
 			ChangeID string `json:"change_id"`
 			Manifest string `json:"manifest"`
-			Commit   string `json:"commit"`
 		}](r.Input)
 		if err != nil {
 			return nil, err
 		}
-		return evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{ChangeID: in.ChangeID, Manifest: in.Manifest, Commit: in.Commit})
+		return evidence.Resolve(ctx, s.Store.Index, evidence.ResolveInput{ChangeID: in.ChangeID, Manifest: in.Manifest})
 	case "evidence.isIndependent":
 		return s.evidenceIsIndependent(ctx, r)
 	case "intent.criteriaStatus":
@@ -528,7 +562,7 @@ func (s *Service) recoverSession(ctx context.Context, c *invocation) (prepared, 
 	if err != nil {
 		return prepared{}, err
 	}
-	binding, err := envelope.Seal(schema.KindWorkspaceBinding, schema.WorkspaceBinding{WorkspaceID: sub.ID, Previous: sub.BindingHead, SessionID: result["session_id"], CapabilityID: result["capability_id"], Actor: c.signer.ID(), Reason: "explicit_recovery", At: now()}, c.signer)
+	binding, err := s.seal(schema.KindWorkspaceBinding, schema.WorkspaceBinding{WorkspaceID: sub.ID, Previous: sub.BindingHead, SessionID: result["session_id"], CapabilityID: result["capability_id"], Actor: c.signer.ID(), Reason: "explicit_recovery", At: now()}, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -570,11 +604,11 @@ func (s *Service) newSession(c *invocation, in sessionInput) (map[string]string,
 	if err := capability.Validate(grant, s.caseSensitive); err != nil {
 		return nil, nil, err
 	}
-	capability, err := envelope.Seal(schema.KindCapability, grant, c.signer)
+	capability, err := s.seal(schema.KindCapability, grant, c.signer)
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := envelope.Seal(schema.KindSession, schema.Session{ID: sid, CapabilityID: cid, PublicKey: identity.EncodePublicKey(key.PublicKey()), ParticipantKind: cmp.Or(in.ParticipantKind, "agent"), AgentName: optional(in.AgentName), Model: optional(in.Model), StartedAt: schema.Timestamp(start)}, c.signer)
+	session, err := s.seal(schema.KindSession, schema.Session{ID: sid, CapabilityID: cid, PublicKey: identity.EncodePublicKey(key.PublicKey()), ParticipantKind: cmp.Or(in.ParticipantKind, "agent"), AgentName: optional(in.AgentName), Model: optional(in.Model), StartedAt: schema.Timestamp(start)}, c.signer)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -598,7 +632,7 @@ func (s *Service) endSession(ctx context.Context, c *invocation) (prepared, erro
 		return prepared{}, err
 	}
 	reason := "session_end"
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, "ended", &reason, c.signer.ID()), c.signer)
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, "ended", &reason, c.signer.ID()), c.signer)
 	return prepared{result: map[string]string{"session_id": in.SessionID}, records: []envelope.Object{event}}, err
 }
 
@@ -631,7 +665,7 @@ func (s *Service) createIntent(ctx context.Context, c *invocation) (prepared, er
 		return prepared{}, err
 	}
 	id := schema.NewID(schema.PrefixIntent)
-	o, err := envelope.Seal(schema.KindIntent, schema.Intent{ID: id, ParentID: in.ParentID, Description: in.Description, Criteria: criteria, Source: source, Owner: c.signer.ID(), CreatedAt: now()}, c.signer)
+	o, err := s.seal(schema.KindIntent, schema.Intent{ID: id, ParentID: in.ParentID, Description: in.Description, Criteria: criteria, Source: source, Owner: c.signer.ID(), CreatedAt: now()}, c.signer)
 	return prepared{result: map[string]string{"intent_id": id, "object_hash": o.Hash}, records: append(definitions, o)}, err
 }
 
@@ -650,7 +684,7 @@ func (s *Service) closeIntent(ctx context.Context, c *invocation) (prepared, err
 	}
 	event := transition(*sub, "closed", &in.Reason, c.signer.ID())
 	event.ReplacementID = in.ReplacementID
-	o, err := envelope.Seal(schema.KindLifecycleEvent, event, c.signer)
+	o, err := s.seal(schema.KindLifecycleEvent, event, c.signer)
 	return prepared{result: map[string]string{"intent_id": sub.ID}, records: []envelope.Object{o}}, err
 }
 
@@ -658,7 +692,7 @@ func (s *Service) fork(ctx context.Context, c *invocation) (prepared, error) {
 	in, err := decode[struct {
 		IntentID     string `json:"intent_id"`
 		CapabilityID string `json:"capability_id"`
-		BaseCommit   string `json:"base_commit"`
+		BaseTree     string `json:"base_tree"`
 	}](c.Input)
 	if err != nil {
 		return prepared{}, err
@@ -672,30 +706,64 @@ func (s *Service) fork(ctx context.Context, c *invocation) (prepared, error) {
 	if err := s.authority(ctx, c.SessionID, in.CapabilityID); err != nil {
 		return prepared{}, err
 	}
-	base, err := s.Store.Repo.ResolveRef(ctx, cmp.Or(in.BaseCommit, "HEAD"))
+	base, err := s.forkBase(ctx, in.BaseTree)
 	if err != nil {
 		return prepared{}, err
 	}
-	if base == "" {
-		return prepared{}, apierr.New("base_unavailable", "workspace needs an existing base commit")
-	}
 	id := schema.NewID(schema.PrefixWorkspace)
 	path := s.Provider.Path(id)
-	o, err := envelope.Seal(schema.KindWorkspace, schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: c.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: now()}, c.signer)
+	o, err := s.seal(schema.KindWorkspace, base.workspace(schema.Workspace{ID: id, IntentID: in.IntentID, SessionID: c.SessionID, CapabilityID: in.CapabilityID, ChangeID: schema.NewID(schema.PrefixChange), CreatedAt: now()}), c.signer)
 	return prepared{
-		result:  map[string]string{"workspace_id": id, "path": path, "base_commit": base, "object_hash": o.Hash},
+		result:  base.result(map[string]any{"workspace_id": id, "path": path, "object_hash": o.Hash}),
 		records: []envelope.Object{o},
-		effects: []record.Effect{{Kind: record.EffectWorktreeAdd, WorkspaceID: id, Path: path, Base: base}},
+		effects: []record.Effect{base.create(id, path, c.SessionID)},
 	}, err
+}
+
+// baseRef is the fixed base new workspaces start from: a store tree and the
+// line advance that accepted it, if any.
+type baseRef struct {
+	tree    string
+	advance *string
+}
+
+// forkBase resolves a requested base tree, by default the head of line main.
+func (s *Service) forkBase(ctx context.Context, tree string) (baseRef, error) {
+	if tree != "" {
+		if _, err := s.Objects.ReadTree(tree); err != nil {
+			return baseRef{}, apierr.New("base_unavailable", "base tree %s is not in the store", tree)
+		}
+		return baseRef{tree: tree}, nil
+	}
+	head, err := s.Store.Index.LineHead(ctx, "main")
+	if err != nil {
+		return baseRef{}, err
+	}
+	return baseRef{tree: head.Tree, advance: head.Advance}, nil
+}
+
+func (b baseRef) workspace(w schema.Workspace) schema.Workspace {
+	w.BaseTree, w.BaseLineAdvance = b.tree, b.advance
+	return w
+}
+
+// result adds the base to an API result.
+func (b baseRef) result(m map[string]any) map[string]any {
+	m["base_tree"] = b.tree
+	return m
+}
+
+// create is the effect that makes workspace id at path for session.
+func (b baseRef) create(id, path, session string) record.Effect {
+	return record.Effect{Kind: record.EffectWorkspaceCreate, WorkspaceID: id, Path: path, Base: b.tree, Session: session}
 }
 
 type workspaceInput struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-// propose captures the workspace against its fixed base, signs a manifest
-// for the resulting tree, and publishes a sole-parent commit carrying the
-// manifest trailers. Authority is checked again after the capture so an
+// propose freezes the workspace's tree and signs a manifest of it against
+// the fixed base. Authority is checked again after the snapshot so an
 // expiry during a slow snapshot cannot sign it.
 func (s *Service) propose(ctx context.Context, c *invocation) (prepared, error) {
 	in, err := decode[proposeInput](c.Input)
@@ -730,7 +798,7 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err := s.leaf(ctx, w.IntentID); err != nil {
 		return prepared{}, err
 	}
-	snap, err := s.Provider.StableSnapshot(ctx, w, s.runtimeDir())
+	snap, err := s.Provider.StableSnapshot(ctx, w, c.SessionID)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -741,7 +809,7 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err != nil {
 		return prepared{}, err
 	}
-	bad, err := workspace.Violations(ctx, s.Provider.Path(w.ID), w.BaseCommit, snap, chain, s.caseSensitive, time.Now())
+	bad, err := workspace.Violations(ctx, s.Provider.Trees(), w.BaseTree, snap, chain, s.caseSensitive, time.Now())
 	if err != nil {
 		return prepared{}, err
 	}
@@ -760,63 +828,42 @@ func (s *Service) proposeIn(ctx context.Context, c *invocation, in proposeInput)
 	if err != nil {
 		return prepared{}, err
 	}
-	analysis, err := s.symbolEngine.Compare(ctx, s.Store.Repo, w.BaseCommit, snap.Tree, snap.Files, in.ContextRefs)
+	analysis, err := s.symbolEngine.Compare(ctx, s.symbolSource(), w.BaseTree, snap.Tree, snap.Files, in.ContextRefs)
 	if err != nil {
 		return prepared{}, err
 	}
-	manifest, err := envelope.Seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID, AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseCommit: w.BaseCommit, Tree: snap.Tree, Files: recordFiles, SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written}, c.signer)
-	if err != nil {
-		return prepared{}, err
-	}
-	last, err := s.Store.Index.LastProposal(ctx, w.ID)
-	if err != nil {
-		return prepared{}, err
-	}
-	// A workspace keeps the branch its first proposal published.
-	branch := "refs/heads/" + cmp.Or(last.Branch, "ledger/"+schema.ShortID(w.IntentID)+"/"+schema.ShortID(w.ID))
-	old := last.Commit
-	current, err := s.Store.Repo.ResolveRef(ctx, branch)
-	if err != nil {
-		return prepared{}, err
-	}
-	if current != old {
-		return prepared{}, apierr.New("ref_moved", "proposal branch advanced outside Ledger").With("expected", old).With("current", current)
-	}
-	commit, err := s.Store.Index.ManifestCommit(ctx, manifest.Hash)
-	if err != nil {
-		return prepared{}, err
-	}
-	if commit == "" {
-		message, err := s.proposalMessage(ctx, w, manifest.Hash, c.SessionID)
-		if err != nil {
-			return prepared{}, err
-		}
-		if commit, err = s.Store.Repo.CommitTree(ctx, snap.Tree, []string{w.BaseCommit}, message); err != nil {
-			return prepared{}, err
-		}
-	}
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, "proposed", nil, c.signer.ID()), c.signer)
-	return prepared{
-		result:  map[string]string{"workspace_id": w.ID, "change_id": w.ChangeID, "manifest": manifest.Hash, "commit": commit, "tree": snap.Tree, "branch": strings.TrimPrefix(branch, "refs/heads/")},
-		records: []envelope.Object{manifest, event},
-		effects: []record.Effect{
-			{Kind: record.EffectRef, Ref: "refs/ledger/proposals/" + manifest.Hash, New: commit},
-			{Kind: record.EffectRef, Ref: branch, Old: old, New: commit},
-		},
-	}, err
+	return s.proposeTree(ctx, c, sub, w, snap, recordFiles, analysis, in)
 }
 
-// proposalMessage builds the commit message. Trailers are appended
-// literally rather than through git interpret-trailers, so repository
-// trailer configuration cannot rewrite or retarget them (ADR 0018).
-func (s *Service) proposalMessage(ctx context.Context, w schema.Workspace, manifest, sid string) (string, error) {
-	intent, err := creation[schema.Intent](ctx, s.Store.Index, w.IntentID, schema.KindIntent)
+// proposeTree signs a v2 manifest of the frozen tree. The symbol maps it
+// names are made durable first, and op_head pins the operation log entry
+// that froze the tree (ADR 0026).
+func (s *Service) proposeTree(ctx context.Context, c *invocation, sub *index.Subject, w schema.Workspace, snap workspace.Snapshot, files []string, analysis symbols.Summary, in proposeInput) (prepared, error) {
+	maps, err := s.symbolEngine.Maps(ctx, s.symbolSource(), snap.Tree)
 	if err != nil {
-		return "", err
+		return prepared{}, err
 	}
-	summary, _, _ := strings.Cut(strings.ReplaceAll(intent.Description, "\r", "\n"), "\n")
-	summary = strings.ReplaceAll(summary, "\x00", " ")
-	return "Ledger: " + summary + "\n\nLedger-Change: " + w.ChangeID + "\nLedger-Intent: " + w.IntentID + "\nLedger-Session: " + sid + "\nLedger-Manifest: " + manifest + "\n", nil
+	b := s.Objects.Batch()
+	ids := make(map[string]string, len(maps))
+	for p, m := range maps {
+		if ids[p], err = m.Put(b); err != nil {
+			return prepared{}, err
+		}
+	}
+	if err := b.Commit(); err != nil {
+		return prepared{}, err
+	}
+	manifest, err := s.seal(schema.KindChangeManifest, schema.ChangeManifest{ChangeID: w.ChangeID, IntentID: w.IntentID, WorkspaceID: w.ID,
+		AuthorSession: c.SessionID, ContextRefs: in.ContextRefs, Plan: in.Plan, BaseTree: w.BaseTree, Tree: snap.Tree, Files: files,
+		SymbolsRead: analysis.Read, SymbolsWritten: analysis.Written, OpHead: snap.OpHead, SymbolMaps: ids}, c.signer)
+	if err != nil {
+		return prepared{}, err
+	}
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, "proposed", nil, c.signer.ID()), c.signer)
+	return prepared{
+		result:  map[string]string{"workspace_id": w.ID, "change_id": w.ChangeID, "manifest": manifest.Hash, "tree": snap.Tree, "op_head": snap.OpHead},
+		records: []envelope.Object{manifest, event},
+	}, err
 }
 
 func (s *Service) rework(ctx context.Context, c *invocation) (prepared, error) {
@@ -828,9 +875,9 @@ func (s *Service) rework(ctx context.Context, c *invocation) (prepared, error) {
 }
 
 // closeWorkspace publishes the terminal state before removing the
-// worktree, so a cleanup failure never hides the committed close. A
-// worktree that still holds exactly its latest proposal loses nothing when
-// removed, because the proposal commit retains it.
+// checkout, so a cleanup failure never hides the committed close. Removal
+// loses nothing: it records the checkout's tree in the operation log first,
+// and refuses while ignored files remain.
 func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, error) {
 	in, err := decode[struct {
 		WorkspaceID string `json:"workspace_id"`
@@ -839,19 +886,8 @@ func (s *Service) closeWorkspace(ctx context.Context, c *invocation) (prepared, 
 	if err != nil {
 		return prepared{}, err
 	}
-	cleanup := record.Effect{Kind: record.EffectWorktreeRemove, WorkspaceID: in.WorkspaceID, Path: s.Provider.Path(in.WorkspaceID), After: true}
-	last, err := s.Store.Index.LastProposal(ctx, in.WorkspaceID)
-	if err != nil && !apierr.HasCode(err, "unknown_entity") {
-		return prepared{}, err
-	}
-	if last.Manifest != "" {
-		m, err := s.Store.Index.Manifest(ctx, last.Manifest)
-		if err != nil {
-			return prepared{}, err
-		}
-		cleanup.Base, cleanup.Tree = m.BaseCommit, m.Tree
-	}
-	return s.transitionWorkspace(ctx, c, in.WorkspaceID, "closed", &in.Reason, []record.Effect{cleanup})
+	remove := record.Effect{Kind: record.EffectWorkspaceRemove, WorkspaceID: in.WorkspaceID, Path: s.Provider.Path(in.WorkspaceID), After: true}
+	return s.transitionWorkspace(ctx, c, in.WorkspaceID, "closed", &in.Reason, []record.Effect{remove})
 }
 
 func (s *Service) transitionWorkspace(ctx context.Context, c *invocation, id, to string, reason *string, effects []record.Effect) (prepared, error) {
@@ -862,7 +898,7 @@ func (s *Service) transitionWorkspace(ctx context.Context, c *invocation, id, to
 	if err := s.notInRun(ctx, id); err != nil {
 		return prepared{}, err
 	}
-	event, err := envelope.Seal(schema.KindLifecycleEvent, transition(*sub, to, reason, c.signer.ID()), c.signer)
+	event, err := s.seal(schema.KindLifecycleEvent, transition(*sub, to, reason, c.signer.ID()), c.signer)
 	return prepared{result: map[string]string{"workspace_id": id, "state": to}, records: []envelope.Object{event}, effects: effects}, err
 }
 
@@ -971,7 +1007,7 @@ func (s *Service) pinChecks(criteria []schema.Criterion, signer identity.Signer)
 			if err := evidence.ValidateDefinition(def); err != nil {
 				return nil, nil, apierr.New("invalid_checks", "check %s: %v", name, err)
 			}
-			o, err := envelope.Seal(schema.KindCheckDefinition, def, signer)
+			o, err := s.seal(schema.KindCheckDefinition, def, signer)
 			if err != nil {
 				return nil, nil, err
 			}

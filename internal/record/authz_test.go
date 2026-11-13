@@ -1,8 +1,6 @@
 package record
 
 import (
-	"maps"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -65,11 +63,11 @@ func workspaceRecord(t *testing.T, intentID string, owner session, signer identi
 	}, signer)
 }
 
-func workspaceEvent(t *testing.T, id, creation string, previous *string, from, to string, signer identity.Signer) envelope.Object {
+func workspaceEvent(t *testing.T, id, creation, to string, signer identity.Signer) envelope.Object {
 	t.Helper()
 	return seal(t, schema.KindLifecycleEvent, schema.LifecycleEvent{
-		SubjectKind: "workspace", SubjectID: id, Creation: creation, Previous: previous,
-		FromState: from, ToState: to, Actor: signer.ID(), At: schema.Timestamp(fixedNow),
+		SubjectKind: "workspace", SubjectID: id, Creation: creation,
+		FromState: "open", ToState: to, Actor: signer.ID(), At: schema.Timestamp(fixedNow),
 	}, signer)
 }
 
@@ -158,7 +156,7 @@ func TestWorkspaceOwnershipAndRebinding(t *testing.T) {
 	if _, err := s.Do(ctx, as(a, "fork"), members(rec)); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Do(ctx, as(b, "propose"), members(workspaceEvent(t, ws, rec.Hash, nil, "open", "proposed", b)))
+	_, err = s.Do(ctx, as(b, "propose"), members(workspaceEvent(t, ws, rec.Hash, "proposed", b)))
 	expectCode(t, err, "unauthorized")
 
 	actorMismatch := seal(t, schema.KindLifecycleEvent, schema.LifecycleEvent{
@@ -178,9 +176,9 @@ func TestWorkspaceOwnershipAndRebinding(t *testing.T) {
 	if sub := subject(t, s, ws); sub.Owner != b.ID() {
 		t.Fatalf("owner %s after rebinding to %s", sub.Owner, b.ID())
 	}
-	_, err = s.Do(ctx, as(a, "old-owner"), members(workspaceEvent(t, ws, rec.Hash, nil, "open", "proposed", a)))
+	_, err = s.Do(ctx, as(a, "old-owner"), members(workspaceEvent(t, ws, rec.Hash, "proposed", a)))
 	expectCode(t, err, "unauthorized")
-	closeEv := workspaceEvent(t, ws, rec.Hash, nil, "open", "closed", b)
+	closeEv := workspaceEvent(t, ws, rec.Hash, "closed", b)
 	if _, err := s.Do(ctx, as(b, "close"), members(closeEv)); err != nil {
 		t.Fatal(err)
 	}
@@ -240,19 +238,6 @@ func TestCheckCriteriaPinDefinitions(t *testing.T) {
 	// A committed definition can be pinned by later intents.
 	if _, err := s.Do(ctx, op("reuse"), members(intent("unit", def.Hash))); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStaleRefCacheFallsBack(t *testing.T) {
-	s := newStore(t)
-	if err := os.WriteFile(s.refTipFile(), []byte(strings.Repeat("0", 40)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Do(ctx, op("create"), members(intentRecord(t, schema.NewID(schema.PrefixIntent)))); err != nil {
-		t.Fatal(err)
-	}
-	if !maps.Equal(refHashes(t, s), diskHashes(t, s)) {
-		t.Fatal("ref and disk differ")
 	}
 }
 

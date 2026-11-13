@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/line_advance.json",
+  "title": "Line advance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "line",
+    "previous",
+    "manifest",
+    "selection",
+    "actor",
+    "at"
+  ],
+  "properties": {
+    "line": {
+      "$ref": "common.json#/$defs/line"
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "../v1/common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "manifest": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "selection": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "actor": {
+      "$ref": "../v1/common.json#/$defs/principal"
+    },
+    "at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    }
+  }
+}

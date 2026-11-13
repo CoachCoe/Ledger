@@ -14,8 +14,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
-	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/verify"
 )
@@ -41,7 +39,7 @@ func (p noPublish) Publish(context.Context, []envelope.Object) (verify.PublishRe
 
 func (s *site) importBundle(path string, opts verify.ImportOptions) (*verify.ImportReport, error) {
 	s.t.Helper()
-	return verify.Import(context.Background(), path, pub{s}, s.repo, opts)
+	return verify.ImportNative(context.Background(), path, pub{s}, s.dir, opts)
 }
 
 func (s *site) mustImport(path string) *verify.ImportReport {
@@ -62,13 +60,30 @@ func (s *site) digest() string {
 	return d
 }
 
-func (s *site) refs() string {
+// logs lists the operation logs with a digest of each, and the head of
+// line main, which import never moves.
+func (s *site) logs() string {
 	s.t.Helper()
-	out, err := gitx.Run(context.Background(), s.dir, nil, gitEnv, "for-each-ref", "--format=%(refname) %(objectname)", "refs/ledger/proposals", "refs/heads")
+	out := ""
+	entries, _ := os.ReadDir(filepath.Join(s.store.Dir, "oplog"))
+	for _, e := range entries {
+		raw, err := os.ReadFile(filepath.Join(s.store.Dir, "oplog", e.Name()))
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		out += e.Name() + " " + sha(raw) + "\n"
+	}
+	return out + "main " + s.line() + "\n"
+}
+
+// line is the tree at the head of line main.
+func (s *site) line() string {
+	s.t.Helper()
+	head, err := s.store.Index.LineHead(context.Background(), "main")
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return string(out)
+	return head.Tree
 }
 
 func (s *site) objectCount() int {
@@ -91,18 +106,15 @@ func (s *site) stagingEmpty() {
 	}
 }
 
-func TestAC115_ForeignRootImport(t *testing.T) {
-	// Decision 15: replay accepts groups signed by a root that is not the
-	// importing repository's own, without letting that root sign locally.
+func TestAC115_ImportIntoEarlierCopy(t *testing.T) {
+	// A teammate's copy from before the work replays the bundle's groups:
+	// records, store objects and the operation log, without moving the line.
 	c := newChain(t, "true")
 	path := c.mustExport()
-	dst := newSite(t)
-	if dst.root.ID() == c.root.ID() {
-		t.Fatal("the destination must have its own root")
-	}
-	before := dst.refs()
+	dst := c.earlier()
+	before := dst.logs()
 	rep := dst.mustImport(path)
-	if rep.AlreadyPresent || rep.Publish.Written == 0 || rep.Verification.Integrity != verify.Verified {
+	if rep.AlreadyPresent || rep.Publish.Written == 0 || rep.Objects == 0 || rep.Verification.Integrity != verify.Verified {
 		t.Fatalf("import: %+v", rep)
 	}
 	ctx := context.Background()
@@ -111,11 +123,11 @@ func TestAC115_ForeignRootImport(t *testing.T) {
 			t.Fatalf("%s was not indexed: %v", id, err)
 		}
 	}
-	if sha, _ := dst.repo.ResolveRef(ctx, verify.ProposalRefPrefix+c.manifest); sha != c.commit {
-		t.Fatalf("retention ref: %q", sha)
+	if len(rep.OpLogs) != 1 || rep.OpLogs[0].Workspace != c.wid || rep.OpLogs[0].Status != "created" {
+		t.Fatalf("operation logs: %+v", rep.OpLogs)
 	}
-	if dst.refs() == before {
-		t.Fatal("the retention ref was not created")
+	if dst.logs() == before {
+		t.Fatal("the operation log was not installed")
 	}
 	// Reindex replays the same imported history.
 	d := dst.digest()
@@ -125,26 +137,15 @@ func TestAC115_ForeignRootImport(t *testing.T) {
 	if dst.digest() != d {
 		t.Fatal("reindex changed the imported state")
 	}
-	// The foreign root is history only: the local root still signs locally.
-	root, err := dst.keys.Root()
-	if err != nil || root.ID() != dst.root.ID() {
-		t.Fatalf("local root changed: %v", err)
-	}
+	// Imported history is not authority: a local operation is signed by the
+	// local root, through a session of its own.
 	ses := dst.call("session.create", "", map[string]any{"agent_name": "local"})
 	o, err := dst.store.Read(ses["_receipt"].(string))
 	if err != nil || o.Envelope.Signer != dst.root.ID() {
 		t.Fatalf("a local operation must be signed by the local root: %v", err)
 	}
-	// The repository verifies, with both roots untrusted until the user says so.
-	src, err := verify.OpenRepoSource(ctx, dst.repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer src.Close()
-	list := identity.NewTrustList()
-	_ = list.Merge([]string{dst.root.ID()})
-	r, err := verify.Verify(ctx, src, verify.Options{Trusted: list})
-	if err != nil || r.Integrity != verify.Verified || r.Trust != verify.Untrusted || len(r.Roots) != 2 {
+	r, err := verify.Verify(ctx, dst.source(), verify.Options{})
+	if err != nil || r.Integrity != verify.Verified || r.Trust != verify.Untrusted || len(r.Manifests) != 1 {
 		t.Fatalf("verify: %v %+v", err, r)
 	}
 }
@@ -154,7 +155,7 @@ func TestAC115_NeverImportsPrivateOrTrust(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	c := newChain(t, "true")
 	path := c.mustExport()
-	dst := newSite(t)
+	dst := c.earlier()
 	keyFiles := func() map[string]string {
 		out := map[string]string{}
 		_ = filepath.WalkDir(dst.keys.Dir, func(p string, d os.DirEntry, err error) error {
@@ -166,7 +167,11 @@ func TestAC115_NeverImportsPrivateOrTrust(t *testing.T) {
 		})
 		return out
 	}
-	keysBefore, heads := keyFiles(), dst.refs()
+	keysBefore, line := keyFiles(), dst.line()
+	config, err := os.ReadFile(filepath.Join(dst.store.Dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	dst.mustImport(path)
 	if got := keyFiles(); len(got) != len(keysBefore) {
 		t.Fatalf("key files changed: %v", got)
@@ -180,23 +185,15 @@ func TestAC115_NeverImportsPrivateOrTrust(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cfg, "ledger", "trusted-roots.json")); err == nil {
 		t.Fatal("import granted trust")
 	}
-	if _, err := os.Stat(filepath.Join(dst.store.Dir, "config.json")); err == nil {
-		t.Fatal("import wrote configuration")
+	if now, _ := os.ReadFile(filepath.Join(dst.store.Dir, "config.json")); string(now) != string(config) {
+		t.Fatal("import changed the configuration")
 	}
-	after := dst.refs()
-	for _, line := range strings.Split(heads, "\n") {
-		if strings.Contains(line, "refs/heads") && !strings.Contains(after, line) {
-			t.Fatalf("a code branch changed: %s", line)
-		}
-	}
-	for _, line := range strings.Split(after, "\n") {
-		if strings.Contains(line, "refs/heads") && !strings.Contains(heads, line) {
-			t.Fatalf("a code branch appeared: %s", line)
-		}
+	if after := dst.line(); after != line {
+		t.Fatalf("import moved line main: %s -> %s", line, after)
 	}
 	// Imported sessions are history: nothing can act or sign as one.
 	raw, _ := canon.Marshal(map[string]any{"description": "as imported session"})
-	_, err := dst.service().Handle(context.Background(), api.Request{Version: 1, Operation: "intent.create", SessionID: c.sid, OperationID: schema.NewID(schema.PrefixOperation), Input: raw})
+	_, err = dst.service().Handle(context.Background(), api.Request{Version: 2, Operation: "intent.create", SessionID: c.sid, OperationID: schema.NewID(schema.PrefixOperation), Input: raw})
 	if err == nil {
 		t.Fatal("an imported session acted in the destination")
 	}
@@ -208,19 +205,19 @@ func TestAC115_NeverImportsPrivateOrTrust(t *testing.T) {
 func TestAC115_IdempotentImport(t *testing.T) {
 	c := newChain(t, "true")
 	path := c.mustExport()
-	dst := newSite(t)
+	dst := c.earlier()
 	first := dst.mustImport(path)
-	d1, r1, n1 := dst.digest(), dst.refs(), dst.objectCount()
+	d1, r1, n1 := dst.digest(), dst.logs(), dst.objectCount()
 	second := dst.mustImport(path)
 	if first.AlreadyPresent || !second.AlreadyPresent || second.Publish.Written != 0 || second.Publish.Indexed != 0 {
 		t.Fatalf("first=%+v second=%+v", first.Publish, second.Publish)
 	}
-	for _, r := range second.Refs {
+	for _, r := range second.OpLogs {
 		if r.Status != "present" {
-			t.Fatalf("ref %+v", r)
+			t.Fatalf("operation log %+v", r)
 		}
 	}
-	if dst.digest() != d1 || dst.refs() != r1 || dst.objectCount() != n1 {
+	if dst.digest() != d1 || dst.logs() != r1 || dst.objectCount() != n1 {
 		t.Fatal("a second import changed state")
 	}
 	dst.stagingEmpty()
@@ -239,11 +236,11 @@ func (c *chain) forkBundle(t *testing.T, base string, opID string, after time.Du
 		}
 	}
 	at := schema.Timestamp(time.Now().Add(after))
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, schema.LifecycleEvent{SubjectKind: "session", SubjectID: c.sid, Creation: sessionHash, FromState: "active", ToState: "ended", Actor: c.root.ID(), At: at}, c.root)
+	ev, err := envelope.SealVersion(2, schema.KindLifecycleEvent, schema.LifecycleEvent{SubjectKind: "session", SubjectID: c.sid, Creation: sessionHash, FromState: "active", ToState: "ended", Actor: c.root.ID(), At: at}, c.root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := envelope.Seal(schema.KindOperationReceipt, schema.OperationReceipt{OperationID: opID, Operation: "session.end", RequestDigest: canon.Hash([]byte(at)), Result: []byte("{}"), Members: []string{ev.Hash}, At: at}, c.root)
+	receipt, err := envelope.SealVersion(2, schema.KindOperationReceipt, schema.OperationReceipt{OperationID: opID, Operation: "session.end", RequestDigest: canon.Hash([]byte(at)), Result: []byte("{}"), Members: []string{ev.Hash}, At: at}, c.root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +260,7 @@ func TestAC115_ConflictsPreserved(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	dst := newSite(t)
+	dst := c.earlier()
 	dst.mustImport(a)
 	rep := dst.mustImport(b)
 	if rep.Verification.Integrity != verify.Verified {
@@ -282,16 +279,11 @@ func TestAC115_ConflictsPreserved(t *testing.T) {
 	}
 	// Mutating the affected subject is blocked.
 	raw, _ := canon.Marshal(map[string]any{"session_id": c.sid})
-	if _, err := dst.service().Handle(ctx, api.Request{Version: 1, Operation: "session.end", OperationID: schema.NewID(schema.PrefixOperation), Input: raw}); err == nil {
+	if _, err := dst.service().Handle(ctx, api.Request{Version: 2, Operation: "session.end", OperationID: schema.NewID(schema.PrefixOperation), Input: raw}); err == nil {
 		t.Fatal("a conflicted subject accepted a mutation")
 	}
 	// The repository's own report lists both preserved conflicts.
-	src, err := verify.OpenRepoSource(ctx, dst.repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer src.Close()
-	r, err := verify.Verify(ctx, src, verify.Options{})
+	r, err := verify.Verify(ctx, dst.source(), verify.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +296,7 @@ func TestAC115_ConflictsPreserved(t *testing.T) {
 		t.Fatalf("conflicts: %v", r.Conflicts)
 	}
 	// Import order, and therefore time, decides nothing.
-	other := newSite(t)
+	other := c.earlier()
 	other.mustImport(b)
 	other.mustImport(a)
 	osub, _ := other.store.Index.Subject(ctx, c.sid)
@@ -331,27 +323,22 @@ func TestAC116_PortableVerificationAfterSourceLoss(t *testing.T) {
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"} {
 		t.Setenv(k, "http://127.0.0.1:9")
 	}
+	v1 := newV1Repo(t)
 	t.Chdir(t.TempDir())
 	v := run(t, "verify", "--bundle", path, "--trust", c.root.ID(), "--strict")
 	res := v["result"].(map[string]any)
 	if v["ok"] != true || res["integrity"] != "verified" || res["trust"] != "trusted" {
 		t.Fatalf("portable verify: %v", v)
 	}
-	// Import into a fresh repository and verify there.
-	dst := newSite(t)
-	dst.store.Close()
-	t.Chdir(dst.dir)
+	// The binary no longer writes a Phase 1 repository: importing into one
+	// is refused untouched. Native import is TestAC115_ImportIntoEarlierCopy's.
+	t.Chdir(v1.dir)
 	imp := run(t, "import", path)
-	if imp["ok"] != true {
-		t.Fatalf("import: %v", imp)
+	if imp["ok"] != false || imp["error"].(map[string]any)["code"] != "migrate_required" {
+		t.Fatalf("import into a Phase 1 repository: %v", imp)
 	}
 	if v := run(t, "verify", "--strict"); v["ok"] != true {
-		t.Fatalf("verify after import: %v", v)
-	}
-	st := run(t, "status")
-	text, _ := canon.Marshal(st)
-	if !bytes.Contains(text, []byte(c.intent)) || !bytes.Contains(text, []byte(c.wid)) {
-		t.Fatalf("status lacks the imported subjects: %s", text)
+		t.Fatalf("verify of the untouched repository: %v", v)
 	}
 }
 
@@ -396,7 +383,7 @@ func TestAC251_TwoKindsOfState(t *testing.T) {
 		}
 		var buf bytes.Buffer
 		_, _ = buf.ReadFrom(tr)
-		if hdr.Name != verify.InventoryName && hdr.Name != verify.GitName && !strings.HasPrefix(hdr.Name, "records/") {
+		if hdr.Name != verify.InventoryName && !strings.HasPrefix(hdr.Name, "records/") && !strings.HasPrefix(hdr.Name, "store/") && !strings.HasPrefix(hdr.Name, "oplog/") {
 			t.Fatalf("unexpected entry %s", hdr.Name)
 		}
 		// Signed receipts legitimately echo a workspace path in their frozen
@@ -439,7 +426,7 @@ func TestAC172_213_236_ReportShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := schema.ValidateAPI("bundle.verify.output", raw); err != nil {
+	if err := schema.ValidateAPIVersion(2, "bundle.verify.output", raw); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{`"integrity"`, `"trust"`, `"missing":[]`, `"conflicts":[]`, `"invalid":[]`} {
@@ -454,7 +441,7 @@ func TestAC172_213_236_ReportShape(t *testing.T) {
 	if un.Integrity != verify.Unavailable || len(un.Missing) == 0 || len(un.Invalid) != 0 {
 		t.Fatalf("unavailable report: %+v", un)
 	}
-	if raw, _ := canon.Marshal(un); schema.ValidateAPI("bundle.verify.output", raw) != nil {
+	if raw, _ := canon.Marshal(un); schema.ValidateAPIVersion(2, "bundle.verify.output", raw) != nil {
 		t.Fatal("the unavailable report violates its schema")
 	}
 }
@@ -562,16 +549,16 @@ func TestAC115_ImportStagingRejects(t *testing.T) {
 			return p
 		}},
 	}
-	dst := newSite(t)
-	objects, refs := dst.objectCount(), dst.refs()
+	dst := c.earlier()
+	objects, refs := dst.objectCount(), dst.logs()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := verify.Import(context.Background(), tc.path(), noPublish{t}, dst.repo, verify.ImportOptions{})
+			_, err := verify.ImportNative(context.Background(), tc.path(), noPublish{t}, dst.dir, verify.ImportOptions{})
 			if got := code(t, err); got != tc.want {
 				t.Fatalf("code %s, want %s: %v", got, tc.want, err)
 			}
 			dst.stagingEmpty()
-			if dst.objectCount() != objects || dst.refs() != refs {
+			if dst.objectCount() != objects || dst.logs() != refs {
 				t.Fatal("a rejected bundle changed the repository")
 			}
 		})

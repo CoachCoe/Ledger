@@ -1,10 +1,10 @@
-// Command m0driver writes records through the RecordStore for the M0
-// demo, including crashes and concurrent external changes that the
+// Command m0driver writes records through the native RecordStore for the
+// M0 demo, including crashes and concurrent external changes that the
 // ledger CLI cannot produce on its own.
 //
 //	m0driver write N              write N intents
 //	m0driver crash STAGE          write one intent and exit at STAGE
-//	m0driver move-ref             write one intent while another writer moves the ref
+//	m0driver external             write one intent while another installation's group arrives
 //	m0driver race-close           close one intent from two writers at once
 //	m0driver import-fork          close an intent locally and import a divergent close
 //	m0driver hash FILE...         print the canonical hash of each JSON file
@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
@@ -33,7 +33,7 @@ var ctx = context.Background()
 
 func main() {
 	if len(os.Args) < 2 {
-		fail(errors.New("usage: m0driver write|crash|move-ref|race-close|import-fork|hash"))
+		fail(errors.New("usage: m0driver write|crash|external|race-close|import-fork|hash"))
 	}
 	if os.Args[1] == "hash" {
 		for _, f := range os.Args[2:] {
@@ -51,7 +51,7 @@ func main() {
 	check(err)
 	wd, err := os.Getwd()
 	check(err)
-	repo, err := gitx.Open(ctx, wd)
+	repo, err := record.Locate(ctx, wd)
 	check(err)
 	d := driver{root: root, repo: repo}
 
@@ -73,13 +73,13 @@ func main() {
 			return nil
 		}})
 		d.createIntent(s)
-	case "move-ref":
-		var moved bool
+	case "external":
+		var arrived bool
 		s := d.open(record.Options{Fault: func(st string) error {
-			if st == record.StageRefCAS && !moved {
-				moved = true
-				d.externalCommit(d.group(d.intent()))
-				fmt.Println("another writer moved refs/ledger/records before our compare-and-swap")
+			if st == record.StageLog && !arrived {
+				arrived = true
+				d.external(d.group(d.intent()))
+				fmt.Println("another installation's group arrived before our head log append")
 			}
 			return nil
 		}})
@@ -103,7 +103,7 @@ func main() {
 		id, creation := d.createIntent(s)
 		_, err := s.Do(ctx, d.op("demo.close"), members(d.closeEvent(id, creation, "completed")))
 		check(err)
-		d.externalCommit(d.group(d.closeEvent(id, creation, "abandoned")))
+		d.external(d.group(d.closeEvent(id, creation, "abandoned")))
 		fmt.Printf("closed %s locally and imported a divergent close for it\n", id)
 	default:
 		fail(fmt.Errorf("unknown mode %q", os.Args[1]))
@@ -112,11 +112,11 @@ func main() {
 
 type driver struct {
 	root identity.Signer
-	repo *gitx.Repo
+	repo record.Repository
 }
 
 func (d driver) open(opts record.Options) *record.Store {
-	s, err := record.Open(ctx, d.repo, opts)
+	s, err := d.repo.Open(ctx, opts)
 	check(err)
 	return s
 }
@@ -127,7 +127,7 @@ func (d driver) op(name string) record.Op {
 }
 
 func (d driver) seal(kind schema.Kind, payload any) envelope.Object {
-	o, err := envelope.Seal(kind, payload, d.root)
+	o, err := envelope.SealVersion(2, kind, payload, d.root)
 	check(err)
 	return o
 }
@@ -172,27 +172,14 @@ func (d driver) group(objs ...envelope.Object) []envelope.Object {
 	return append(objs, receipt)
 }
 
-// externalCommit adds objs to refs/ledger/records without writing them to
-// .ledger/objects, as a fetch from another clone would.
-func (d driver) externalCommit(objs []envelope.Object) {
-	tip, err := d.repo.ResolveRef(ctx, record.RecordsRef)
-	check(err)
-	tmp, err := os.MkdirTemp("", "m0driver")
-	check(err)
-	defer os.RemoveAll(tmp)
-	var entries []gitx.TreeEntry
+// external writes objs into .ledger/objects and nowhere else, as a copy
+// from another installation would; recovery accepts the group.
+func (d driver) external(objs []envelope.Object) {
 	for _, o := range objs {
-		p := filepath.Join(tmp, o.Hash)
-		check(os.WriteFile(p, o.Bytes, 0o600))
-		blobs, err := d.repo.WriteBlobs(ctx, []string{p})
-		check(err)
-		entries = append(entries, gitx.TreeEntry{Path: o.Hash[:2] + "/" + o.Hash[2:] + ".json", Blob: blobs[0]})
+		p := filepath.Join(d.repo.Root, record.DirName, "objects", o.Hash[:2], o.Hash[2:]+".json")
+		check(os.MkdirAll(filepath.Dir(p), 0o700))
+		check(atomicfile.Write(p, o.Bytes, 0o600))
 	}
-	tree, err := d.repo.BuildTree(ctx, filepath.Join(tmp, "index"), tip, entries)
-	check(err)
-	commit, err := d.repo.CommitTree(ctx, tree, []string{tip}, "external records\n")
-	check(err)
-	check(d.repo.UpdateRefCAS(ctx, record.RecordsRef, commit, tip))
 }
 
 func members(objs ...envelope.Object) record.BuildFunc {

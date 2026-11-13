@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/history.attempts.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scope",
+            "verification",
+            "receipt_missing_members",
+            "pending_records",
+            "record_problems"
+          ],
+          "properties": {
+            "scope": {
+              "const": "indexed_committed_records"
+            },
+            "verification": {
+              "const": "not_performed"
+            },
+            "receipt_missing_members": {
+              "$ref": "../../v1/common.json#/$defs/hashes"
+            },
+            "pending_records": {
+              "$ref": "../../v1/common.json#/$defs/hashes"
+            },
+            "record_problems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hash",
+                  "code",
+                  "error"
+                ],
+                "properties": {
+                  "hash": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "subject_conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "reason",
+              "creation",
+              "detail"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "creation": {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              "detail": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "../../v1/common.json#/$defs/hashes"
+                }
+              }
+            }
+          }
+        },
+        "operation_conflicts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "../../v1/common.json#/$defs/hashes"
+          }
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "hash": {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              "kind": {
+                "const": "attempt_record"
+              },
+              "payload": {
+                "$ref": "../attempt_record.json"
+              }
+            },
+            "required": [
+              "hash",
+              "kind",
+              "payload"
+            ]
+          }
+        }
+      },
+      "required": [
+        "coverage",
+        "subject_conflicts",
+        "operation_conflicts",
+        "records"
+      ]
+    }
+  }
+}

@@ -238,12 +238,14 @@ func catBlobs(ctx context.Context, repo *gitx.Repo, blobs []string) ([][]byte, e
 // decode unmarshals an object's payload as T, rejecting unknown members.
 func decode[T any](o envelope.Object) (T, error) {
 	var v T
-	if err := json.Unmarshal(o.Envelope.Payload, &v, json.RejectUnknownMembers(true)); err != nil {
+	if err := o.Decode(&v); err != nil {
 		return v, apierr.New("record_malformed", "%s: %v", o.Hash, err)
 	}
 	return v, nil
 }
 
+// decodeInto reads members of a payload leniently, for the fields every
+// version shares, such as an entity id.
 func decodeInto(o envelope.Object, v any) error {
 	return json.Unmarshal(o.Envelope.Payload, v)
 }

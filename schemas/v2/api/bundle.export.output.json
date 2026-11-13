@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/bundle.export.output.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "out": {
+      "type": "string"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "manifests": {
+      "type": "array",
+      "items": {
+        "$ref": "../../v1/common.json#/$defs/hash"
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundle_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "record_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "git_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "store_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "store_objects": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "bundle_bytes",
+        "record_bytes",
+        "git_bytes",
+        "records",
+        "commits"
+      ]
+    }
+  },
+  "required": [
+    "out",
+    "complete",
+    "manifests",
+    "size"
+  ]
+}

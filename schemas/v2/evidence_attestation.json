@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/evidence_attestation.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest",
+    "tree",
+    "check_definition",
+    "category",
+    "criteria",
+    "command",
+    "setup",
+    "check",
+    "result",
+    "reason",
+    "environment_hash",
+    "environment",
+    "verifier_session",
+    "started_at",
+    "ended_at",
+    "output_digest",
+    "output_bytes",
+    "output_truncated",
+    "isolation"
+  ],
+  "properties": {
+    "manifest": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "tree": {
+      "$ref": "common.json#/$defs/object_id"
+    },
+    "check_definition": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "category": {
+      "enum": [
+        "mechanical",
+        "behavioral",
+        "judgment"
+      ]
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "$ref": "../v1/common.json#/$defs/name"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "command": {
+      "$ref": "../v1/common.json#/$defs/text"
+    },
+    "setup": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "exit_status",
+            "duration_ms",
+            "timed_out"
+          ],
+          "properties": {
+            "exit_status": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -255,
+                  "maximum": 255
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "$ref": "../v1/common.json#/$defs/count"
+            },
+            "timed_out": {
+              "type": "boolean"
+            }
+          },
+          "title": "Process phase"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "check": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "exit_status",
+            "duration_ms",
+            "timed_out"
+          ],
+          "properties": {
+            "exit_status": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -255,
+                  "maximum": 255
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "$ref": "../v1/common.json#/$defs/count"
+            },
+            "timed_out": {
+              "type": "boolean"
+            }
+          },
+          "title": "Process phase"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result": {
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "reason": {
+      "$ref": "../v1/common.json#/$defs/nullable_text"
+    },
+    "environment_hash": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "arch",
+        "toolchains",
+        "variables",
+        "lockfiles"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "arch": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "variables": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "../v1/common.json#/$defs/hash"
+          }
+        },
+        "lockfiles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "../v1/common.json#/$defs/hash"
+          }
+        }
+      },
+      "title": "Execution environment"
+    },
+    "verifier_session": {
+      "$ref": "../v1/common.json#/$defs/session_id"
+    },
+    "started_at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    },
+    "ended_at": {
+      "$ref": "../v1/common.json#/$defs/timestamp"
+    },
+    "output_digest": {
+      "$ref": "../v1/common.json#/$defs/hash"
+    },
+    "output_bytes": {
+      "$ref": "../v1/common.json#/$defs/count"
+    },
+    "output_truncated": {
+      "type": "boolean"
+    },
+    "isolation": {
+      "const": "none"
+    }
+  },
+  "title": "Evidence attestation"
+}

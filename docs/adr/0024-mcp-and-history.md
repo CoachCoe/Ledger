@@ -1,6 +1,7 @@
 # ADR 0024: MCP tools, portable history and runtime observations
 
-- Status: Accepted
+- Status: Accepted; the adapter is session-bound since 2026-11-10 (see
+  [Session-bound adapter](#session-bound-adapter))
 - Date: 2026-11-08
 
 ## Decision
@@ -106,3 +107,28 @@ fixtures. These are engineering acceptance, not commercial evaluation B.1.
 Customer evidence C.2/C.3 and release gate R.1 remain separate owner work.
 No model inference, provider SDK, hosted service, semantic merge or acceptance
 authorization is added.
+
+## Session-bound adapter
+
+- Date: 2026-11-10
+
+The adapter first accepted `session_id` in every tool's arguments and told
+agents that an empty value acts as the local root. Any MCP client could
+therefore sign as root, including human judgments on its own work, and Phase
+2's `line_advance` acceptance records would make that worse. This replaces
+the identity wrapper and the root-only maintenance exposure described above.
+
+`ledger mcp --session ID` binds one adapter process to one session, and the
+flag is required. Tool arguments are `{operation_id, input}`; the adapter
+adds its bound session to every request after validation, so a call that
+names a session_id fails with schema_invalid. Tool descriptions name the
+bound session and do not mention root. Root-only operations, including
+maintenance and bundle tools, return `unauthorized`; the local root uses the
+CLI, which keeps its empty-session root form on the daemon socket. The
+example agent creates sessions and intents through the CLI's JSON output and
+opens one adapter per session. The acceptance test checks that an unbound
+adapter refuses to start, that an empty session_id is rejected, and that
+root-only operations are unauthorized for an agent.
+
+This binds the agent-facing channel; it is not a sandbox. An agent with shell
+access can still run the CLI as root, as the security model already states.

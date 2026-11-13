@@ -35,7 +35,7 @@ func TestAC187_WatcherNotificationsWithinFiveSeconds(t *testing.T) {
 			if err := os.Mkdir(repo, 0700); err != nil {
 				t.Fatal(err)
 			}
-			env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config-"+tc.ext), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
+			env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config-"+tc.ext))
 			write := func(dir, p, src string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, p), []byte(src), 0600); err != nil {
@@ -44,14 +44,6 @@ func TestAC187_WatcherNotificationsWithinFiveSeconds(t *testing.T) {
 			}
 			write(repo, "api."+tc.ext, tc.api)
 			write(repo, "caller."+tc.ext, tc.caller)
-			for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-qm", "base"}} {
-				cmd := exec.Command("git", args...)
-				cmd.Dir = repo
-				cmd.Env = env
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("%v %s", err, out)
-				}
-			}
 			run := func(args ...string) map[string]any {
 				t.Helper()
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

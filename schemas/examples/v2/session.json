@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "kind": "session",
+  "payload": {
+    "id": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capability_id": "cap_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "public_key": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "participant_kind": "agent",
+    "agent_name": "example-agent",
+    "model": null,
+    "started_at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "8b3zanQ3T0XPQGr66i9z8BvceXpNnL-cPtuTLvENVhvoZ4wd51Uu9qukLfQ8agqydPBY2tTUbUpWaNW_eWz4Bw"
+}

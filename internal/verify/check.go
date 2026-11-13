@@ -250,7 +250,8 @@ func (g *graph) facts(o envelope.Object) (selection.Evidence, schema.ChangeManif
 }
 
 // evidence verifies one attestation. commit is the commit bound to the
-// attested manifest by its retention ref ("" when unknown).
+// attested manifest by its retention ref ("" when unknown, and always for
+// a v2 manifest, which binds evidence by tree alone).
 func (g *graph) evidence(o envelope.Object, commit string) EvidenceReport {
 	r := EvidenceReport{Hash: o.Hash, Integrity: Verified}
 	att, err := decode[schema.EvidenceAttestation](o)
@@ -271,10 +272,13 @@ func (g *graph) evidence(o envelope.Object, commit string) EvidenceReport {
 	if err := g.signature(o); err != nil {
 		return fail(err)
 	}
+	native := m.BaseTree != ""
 	switch {
 	case !e.Independent:
 		return fail(apierr.New("author_signed_evidence", "attestation is not independent: %s", e.IndependenceReason))
-	case att.ExecutedTree != m.Tree:
+	case native && att.Tree != m.Tree:
+		return fail(apierr.New("cross_revision_evidence", "evidence ran on tree %s, not the manifest tree %s", att.Tree, m.Tree))
+	case !native && att.ExecutedTree != m.Tree:
 		return fail(apierr.New("tree_mismatch", "executed tree %s differs from manifest tree %s", att.ExecutedTree, m.Tree))
 	case commit != "" && att.Commit != commit:
 		return fail(apierr.New("binding_mismatch", "attested commit %s differs from the manifest commit %s", att.Commit, commit))
@@ -362,7 +366,8 @@ func (g *graph) selection(o envelope.Object, commit string) SelectionReport {
 	if d.IntentID != m.IntentID {
 		return fail(apierr.New("invalid_selection", "the selected intent differs from the manifest's intent"))
 	}
-	if commit == "" {
+	native := m.BaseTree != ""
+	if !native && commit == "" {
 		return fail(apierr.New("dependency_unavailable", "the selected manifest's commit is unavailable"))
 	}
 	if d.Commit != commit {
@@ -454,7 +459,7 @@ func (g *graph) selection(o envelope.Object, commit string) SelectionReport {
 	}
 	b := selection.Binding{Manifest: d.Manifest, Commit: d.Commit, Tree: m.Tree, Criteria: intent.Criteria}
 	for _, e := range set {
-		if e.Att.Manifest != b.Manifest || e.Att.Commit != b.Commit || e.Att.ExecutedTree != b.Tree {
+		if e.Att.Manifest != b.Manifest || e.Att.Commit != b.Commit || e.Att.ExecutedOn() != b.Tree {
 			return fail(apierr.New("cross_revision_evidence", "evidence %s belongs to another revision", e.Hash))
 		}
 	}

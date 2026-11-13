@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,10 +17,11 @@ import (
 
 func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 	ctx := context.Background()
+	sid := schema.NewID(schema.PrefixSession)
 	calls := 0
-	s, err := New(func(_ context.Context, r api.Request) (any, error) {
+	s, err := New(sid, 1, func(_ context.Context, r api.Request) (any, error) {
 		calls++
-		if r.Version != 1 || r.Operation != "intent.create" {
+		if r.Version != 1 || r.Operation != "intent.create" || r.SessionID != sid {
 			t.Fatal(r)
 		}
 		return nil, apierr.New("intent_not_leaf", "example domain error").With("intent_id", "example")
@@ -42,7 +44,7 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ops, err := api.Operations()
+	ops, err := api.Operations(1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +52,10 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 		t.Fatalf("tools=%d operations=%d", len(tools.Tools), len(ops))
 	}
 	for _, tool := range tools.Tools {
-		in, out, err := api.ToolSchemas(tool.Name)
+		if strings.Contains(tool.Description, "root") || !strings.Contains(tool.Description, sid) {
+			t.Fatalf("%s description: %s", tool.Name, tool.Description)
+		}
+		in, out, err := api.ToolSchemas(1, tool.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,17 +84,19 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 			t.Fatalf("%s output is not self-contained: %v", tool.Name, err)
 		}
 	}
-	good := map[string]any{"session_id": "", "operation_id": schema.NewID(schema.PrefixOperation), "input": map[string]any{"description": "test", "criteria": []any{map[string]any{"id": "review", "statement": "review", "verification": map[string]any{"kind": "judgment", "reviewer": "human"}}}}}
+	good := map[string]any{"operation_id": schema.NewID(schema.PrefixOperation), "input": map[string]any{"description": "test", "criteria": []any{map[string]any{"id": "review", "statement": "review", "verification": map[string]any{"kind": "judgment", "reviewer": "human"}}}}}
 	for _, tc := range []struct {
 		args any
 		code string
 	}{
 		{nil, "schema_invalid"},
-		{map[string]any{"session_id": "", "input": map[string]any{}}, "schema_invalid"},
-		{map[string]any{"session_id": "", "operation_id": schema.NewID(schema.PrefixOperation), "input": map[string]any{"surprise": 1}}, "schema_invalid"},
+		{map[string]any{"input": map[string]any{}}, "schema_invalid"},
+		{map[string]any{"operation_id": schema.NewID(schema.PrefixOperation), "input": map[string]any{"surprise": 1}}, "schema_invalid"},
 		{good, "intent_not_leaf"},
-		{json.RawMessage(`{"session_id":"","session_id":"","input":{}}`), "invalid_json"},
-		{map[string]any{"api_version": 2, "session_id": "", "operation_id": schema.NewID(schema.PrefixOperation), "input": good["input"]}, "schema_invalid"},
+		{json.RawMessage(`{"input":{},"input":{}}`), "invalid_json"},
+		{map[string]any{"api_version": 2, "operation_id": schema.NewID(schema.PrefixOperation), "input": good["input"]}, "schema_invalid"},
+		{map[string]any{"session_id": "", "operation_id": schema.NewID(schema.PrefixOperation), "input": good["input"]}, "schema_invalid"},
+		{map[string]any{"session_id": schema.NewID(schema.PrefixSession), "operation_id": schema.NewID(schema.PrefixOperation), "input": good["input"]}, "schema_invalid"},
 	} {
 		r, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "intent.create", Arguments: tc.args})
 		if err != nil {
@@ -112,5 +119,17 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 	}
 	if _, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "unknown", Arguments: map[string]any{}}); err == nil {
 		t.Fatal("unknown tool must be protocol error")
+	}
+}
+
+func TestNewRefusesRoot(t *testing.T) {
+	call := func(context.Context, api.Request) (any, error) {
+		t.Fatal("reached core")
+		return nil, nil
+	}
+	for _, sid := range []string{"", "ses_short", "root"} {
+		if _, err := New(sid, 1, call); !apierr.HasCode(err, "usage") {
+			t.Fatalf("%q: %v", sid, err)
+		}
 	}
 }

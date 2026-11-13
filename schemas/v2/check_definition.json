@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/check_definition.json",
+  "title": "Check definition",
+  "description": "Unchanged from schema_version 1.",
+  "$ref": "../v1/check_definition.json"
+}

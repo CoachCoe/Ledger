@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "kind": "evidence_attestation",
+  "payload": {
+    "manifest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "tree": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "check_definition": "1111111111111111111111111111111111111111111111111111111111111111",
+    "category": "mechanical",
+    "criteria": [
+      "tests"
+    ],
+    "command": "npm test",
+    "setup": {
+      "exit_status": 0,
+      "duration_ms": 5100,
+      "timed_out": false
+    },
+    "check": {
+      "exit_status": 0,
+      "duration_ms": 2300,
+      "timed_out": false
+    },
+    "result": "pass",
+    "reason": null,
+    "environment_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+    "environment": {
+      "os": "linux",
+      "arch": "arm64",
+      "toolchains": {
+        "node": "v24.15.0"
+      },
+      "variables": {
+        "PATH": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "lockfiles": {
+        "package-lock.json": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    },
+    "verifier_session": "ses_vvvvvvvvvvvvvvvvvvvvvvvvvv",
+    "started_at": "2026-11-05T12:00:00.000Z",
+    "ended_at": "2026-11-05T12:00:07.400Z",
+    "output_digest": "7777777777777777777777777777777777777777777777777777777777777777",
+    "output_bytes": 2048,
+    "output_truncated": false,
+    "isolation": "none"
+  },
+  "signer": "ses_vvvvvvvvvvvvvvvvvvvvvvvvvv",
+  "signature": "4qD5wI_ZW7RwVsx7JRwYemyPhMZ79mYu81tcGL0CRZS6UkYuny9IsqjHvx8MMteetRAYTmB5Gks2ObrpR1xACw"
+}

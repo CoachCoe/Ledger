@@ -32,7 +32,7 @@ func cmdDaemon(args []string) (any, error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	repo, err := openRepo(ctx)
+	repo, err := locateNative(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -64,22 +64,23 @@ func liveCommand(group string) func([]string) (any, error) {
 		if *opid == "" && !api.ReadOnly(operation) {
 			*opid = schema.NewID(schema.PrefixOperation)
 		}
-		request := api.Request{Version: 1, Operation: operation, OperationID: *opid, SessionID: *sid, Input: input}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		repo, err := locateNative(ctx)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		request := api.Request{Version: api.Version, Operation: operation, OperationID: *opid, SessionID: *sid, Input: input}
 		// A check may legitimately run for hours (its own timeout bounds it), so
 		// evidence.run has no client deadline; Ctrl-C disconnects, which
 		// cancels the run on the daemon and records a failed attestation.
 		// speculation.evaluate runs checks and the scorer and has no deadline
 		// either, but a disconnect leaves it running; speculation cancel stops it.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		if operation == "evidence.run" || operation == "speculation.evaluate" {
 			cancel()
 			ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		}
 		defer cancel()
-		repo, err := openRepo(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return client.Call(ctx, repo, request)
+		return client.Call(ctx, repo.Root, request)
 	}
 }

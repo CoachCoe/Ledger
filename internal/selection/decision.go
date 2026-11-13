@@ -17,7 +17,7 @@ import (
 func Build(b Binding, intentID string, set, known []Evidence, selector schema.Selector, competitors []string, scoring jsontext.Value, at string) (schema.SelectionDecision, error) {
 	for _, e := range set {
 		a := e.Att
-		if a.Manifest != b.Manifest || a.Commit != b.Commit || a.ExecutedTree != b.Tree {
+		if a.Manifest != b.Manifest || a.Commit != b.Commit || a.ExecutedOn() != b.Tree {
 			return schema.SelectionDecision{}, apierr.New("cross_revision_evidence", "evidence %s was recorded for manifest %s, not %s", e.Hash, a.Manifest, b.Manifest).
 				With("evidence", e.Hash).With("evidence_manifest", a.Manifest)
 		}

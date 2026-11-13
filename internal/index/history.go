@@ -12,12 +12,16 @@ type HistoricalRecord struct {
 	Hash    string         `json:"hash"`
 	Kind    schema.Kind    `json:"kind"`
 	Payload jsontext.Value `json:"payload"`
+	Version int            `json:"-"`
 }
+
+// Decode decodes the payload into v; see schema.Decode.
+func (r HistoricalRecord) Decode(v any) error { return schema.Decode(r.Version, r.Kind, r.Payload, v) }
 
 // History reads one consistent, hash-ordered snapshot of committed query facts.
 // objects contains accepted receipt groups only; pending files are excluded.
 func (x *Index) History(ctx context.Context) ([]HistoricalRecord, error) {
-	rows, err := x.conn().QueryContext(ctx, `SELECT hash,kind,payload FROM objects WHERE kind IN ('intent','change_manifest','attempt_record','selection_decision') ORDER BY hash`)
+	rows, err := x.conn().QueryContext(ctx, `SELECT hash,kind,payload,version FROM objects WHERE kind IN ('intent','change_manifest','attempt_record','selection_decision') ORDER BY hash`)
 	if err != nil {
 		return nil, err
 	}
@@ -26,7 +30,7 @@ func (x *Index) History(ctx context.Context) ([]HistoricalRecord, error) {
 	for rows.Next() {
 		var r HistoricalRecord
 		var raw string
-		if err := rows.Scan(&r.Hash, &r.Kind, &raw); err != nil {
+		if err := rows.Scan(&r.Hash, &r.Kind, &raw, &r.Version); err != nil {
 			return nil, err
 		}
 		r.Payload = []byte(raw)

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/evidence.resolve.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "change_id": {
+          "$ref": "../../v1/common.json#/$defs/change_id"
+        }
+      },
+      "required": [
+        "change_id"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        }
+      },
+      "required": [
+        "manifest"
+      ]
+    }
+  ]
+}

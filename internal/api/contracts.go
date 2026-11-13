@@ -23,9 +23,9 @@ type requestSchema struct {
 	}
 }
 
-func loadRequestSchema() (requestSchema, error) {
+func loadRequestSchema(version int) (requestSchema, error) {
 	var doc requestSchema
-	b, err := schemas.FS.ReadFile("v1/api/request.json")
+	b, err := schemas.FS.ReadFile(fmt.Sprintf("v%d/api/request.json", version))
 	if err != nil {
 		return doc, err
 	}
@@ -36,7 +36,7 @@ func loadRequestSchema() (requestSchema, error) {
 // operation id requirement. The schema is embedded, so failing to read it is
 // a build defect.
 var readOnly = func() map[string]bool {
-	doc, err := loadRequestSchema()
+	doc, err := loadRequestSchema(1)
 	if err != nil || len(doc.AllOf) != 1 {
 		panic(fmt.Sprintf("api: embedded request schema: %v", err))
 	}
@@ -47,9 +47,9 @@ var readOnly = func() map[string]bool {
 	return ops
 }()
 
-// Operations is the versioned protocol's authoritative operation list.
-func Operations() ([]string, error) {
-	doc, err := loadRequestSchema()
+// Operations is the authoritative operation list of api_version.
+func Operations(version int) ([]string, error) {
+	doc, err := loadRequestSchema(version)
 	if err != nil {
 		return nil, err
 	}
@@ -58,24 +58,25 @@ func Operations() ([]string, error) {
 }
 
 // ToolSchemas packages Ledger's schemas without external fetches. A tool's
-// name supplies operation; api_version is fixed by this adapter. Retry and
-// session identities remain explicit, so reconnects cannot duplicate mutations.
-func ToolSchemas(op string) (json.RawMessage, json.RawMessage, error) {
+// name supplies operation; api_version is fixed by this adapter. Retry
+// identities remain explicit, so reconnects cannot duplicate mutations. The
+// session is not an argument: the adapter supplies the one it is bound to.
+func ToolSchemas(version int, op string) (json.RawMessage, json.RawMessage, error) {
 	in := map[string]any{"type": "object", "additionalProperties": false,
 		"properties": map[string]any{
 			"operation_id": map[string]any{"type": "string"},
-			"session_id":   map[string]any{"anyOf": []any{map[string]any{"const": ""}, map[string]any{"$ref": "../common.json#/$defs/session_id"}}},
 			"input":        map[string]any{"$ref": op + ".json"}},
-		"required": []string{"session_id", "input"}}
+		"required": []string{"input"}}
 	if !ReadOnly(op) {
-		in["required"] = []string{"operation_id", "session_id", "input"}
-		in["properties"].(map[string]any)["operation_id"] = map[string]any{"$ref": "../common.json#/$defs/operation_id"}
+		in["required"] = []string{"operation_id", "input"}
+		in["properties"].(map[string]any)["operation_id"] = map[string]any{"$ref": "../../v1/common.json#/$defs/operation_id"}
 	}
-	a, err := bundle(in, "v1/api/"+op+".tool.json")
+	base := fmt.Sprintf("v%d/api/%s", version, op)
+	a, err := bundle(in, base+".tool.json")
 	if err != nil {
 		return nil, nil, err
 	}
-	b, err := bundle(map[string]any{"$ref": responseName(op) + ".json"}, "v1/api/"+op+".tool-output.json")
+	b, err := bundle(map[string]any{"$ref": responseName(op) + ".json"}, base+".tool-output.json")
 	return a, b, err
 }
 
@@ -88,7 +89,12 @@ func responseName(op string) string {
 
 // ValidateResponse checks the complete API envelope. The original standalone
 // bundle report schemas remain usable by offline verification clients.
-func ValidateResponse(op string, raw []byte) error { return schema.ValidateAPI(responseName(op), raw) }
+func ValidateResponse(op string, raw []byte) error { return ValidateResponseVersion(1, op, raw) }
+
+// ValidateResponseVersion is ValidateResponse for a reply of api_version.
+func ValidateResponseVersion(version int, op string, raw []byte) error {
+	return schema.ValidateAPIVersion(version, responseName(op), raw)
+}
 
 func bundle(root map[string]any, base string) (json.RawMessage, error) {
 	defs := map[string]any{}

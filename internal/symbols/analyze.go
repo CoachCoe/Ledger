@@ -31,7 +31,11 @@ type Reference struct {
 	Confidence string        `json:"confidence"`
 	Shadowed   bool          `json:"shadowed,omitzero"`
 }
-type Import struct{ Local, Name, Module string }
+type Import struct {
+	Local  string `json:"local"`
+	Name   string `json:"name"`
+	Module string `json:"module"`
+}
 type Analysis struct {
 	Declarations []Declaration
 	References   []Reference

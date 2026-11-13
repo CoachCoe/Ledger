@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/workspace.deps.detach.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "const": true
+        },
+        "unsigned": {
+          "const": true
+        },
+        "observed_at": {
+          "$ref": "../../v1/common.json#/$defs/timestamp"
+        },
+        "snapshot_digest": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        "workspace_id": {
+          "$ref": "../../v1/common.json#/$defs/workspace_id"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "../../v1/common.json#/$defs/path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "runtime",
+        "unsigned",
+        "observed_at",
+        "snapshot_digest",
+        "workspace_id",
+        "path"
+      ]
+    }
+  }
+}

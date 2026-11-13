@@ -6,11 +6,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/fsnotify/fsnotify"
-
-	"github.com/CoachCoe/Ledger/internal/gitx"
 )
 
 type watch struct {
@@ -19,33 +16,52 @@ type watch struct {
 }
 
 func (w *watch) Close() error { err := w.w.Close(); <-w.done; return err }
-func start(root string, notify func(), report func(error)) (WorkspaceObserver, error) {
-	ctx := context.Background()
-	filter, err := newFilter(root)
-	if err != nil {
-		return nil, err
+
+// dirLister is a Filter that can list the directories to watch faster
+// than asking it about each one.
+type dirLister interface {
+	WatchDirs(ctx context.Context) ([]string, error)
+}
+
+func watchDirs(ctx context.Context, root string, filter Filter) ([]string, error) {
+	if l, ok := filter.(dirLister); ok {
+		return l.WatchDirs(ctx)
 	}
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root && filter.Ignored(ctx, path) {
+			return filepath.SkipDir
+		}
+		dirs = append(dirs, path)
+		return nil
+	})
+	return dirs, err
+}
+
+func start(root string, filter Filter, notify func(), report func(error)) (WorkspaceObserver, error) {
+	ctx := context.Background()
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (WorkspaceObserver, error) { _ = w.Close(); return nil, err }
-	out, err := gitx.Run(ctx, root, nil, nil, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	dirs, err := watchDirs(ctx, root, filter)
 	if err != nil {
-		return fail(err)
+		_ = w.Close()
+		return nil, err
 	}
-	dirs := map[string]bool{root: true}
-	for _, p := range strings.Split(string(out), "\x00") {
-		for d := filepath.Dir(p); d != "." && d != ""; d = filepath.Dir(d) {
-			dirs[filepath.Join(root, d)] = true
-		}
-	}
-	for dir := range dirs {
-		if err := w.Add(dir); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fail(err)
+	for _, dir := range dirs {
+		if err := w.Add(dir); err != nil && !os.IsNotExist(err) {
+			_ = w.Close()
+			return nil, err
 		}
 	}
 	result := &watch{w: w, done: make(chan struct{})}
@@ -62,7 +78,7 @@ func start(root string, notify func(), report func(error)) (WorkspaceObserver, e
 				if !ok {
 					return
 				}
-				if filter.ignored(ctx, event.Name) {
+				if filter.Ignored(ctx, event.Name) {
 					continue
 				}
 				if event.Has(fsnotify.Create) {
@@ -74,7 +90,7 @@ func start(root string, notify func(), report func(error)) (WorkspaceObserver, e
 							if !d.IsDir() {
 								return nil
 							}
-							if filter.ignored(ctx, path) {
+							if filter.Ignored(ctx, path) {
 								return filepath.SkipDir
 							}
 							return w.Add(path)

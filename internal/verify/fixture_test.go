@@ -7,8 +7,10 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,39 +18,39 @@ import (
 	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/core"
+	"github.com/CoachCoe/Ledger/internal/cow"
 	"github.com/CoachCoe/Ledger/internal/envelope"
-	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
+	"github.com/CoachCoe/Ledger/internal/store"
 	"github.com/CoachCoe/Ledger/internal/verify"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 var errCrash = errors.New("simulated crash")
 
-var gitEnv = []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid"}
-
-// site is one initialized repository with its own root key.
+// site is one initialized native repository with its own root key.
 type site struct {
 	t     *testing.T
 	dir   string
-	repo  *gitx.Repo
 	store *record.Store
 	keys  identity.LocalKeys
 	root  identity.Signer
 	svc   *core.Service
+	// pristine is a copy of the repository as init left it, for earlier
+	// copies that import what this one later exports.
+	pristine string
 }
 
-// newSite makes a Git repository with one commit, a .ledger directory and a
-// published root key record, as `ledger init` leaves it.
+// newSite makes a native repository holding a.ts, with its root key and
+// repository records published, as `ledger init` leaves it.
 func newSite(t *testing.T) *site {
 	return newSiteWith(t, record.Options{}, identity.LocalKeys{})
 }
 
 // newSiteWith reuses keys (when its Dir is set) so several repositories
-// share one root and publish byte-identical root records.
+// share one root.
 func newSiteWith(t *testing.T, opts record.Options, keys identity.LocalKeys) *site {
 	t.Helper()
 	ctx := context.Background()
@@ -56,41 +58,101 @@ func newSiteWith(t *testing.T, opts record.Options, keys identity.LocalKeys) *si
 	if err := os.WriteFile(filepath.Join(dir, "a.ts"), []byte("export const x=1;\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "-q"}, {"add", "a.ts"}, {"commit", "-qm", "base"}} {
-		if _, err := gitx.Run(ctx, dir, nil, gitEnv, args...); err != nil {
-			t.Fatal(err)
-		}
+	ledger := filepath.Join(dir, record.DirName)
+	if err := os.Mkdir(ledger, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	repo, err := gitx.Open(ctx, dir)
+	objects, err := store.Open(filepath.Join(ledger, "store", "objects"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(dir, ".ledger"), 0o700); err != nil {
+	m, err := cow.New(cow.Config{Store: objects, Runtime: filepath.Join(ledger, "runtime"), Logs: filepath.Join(ledger, "oplog"), CaseSensitive: true})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo.CommonDir, "info", "exclude"), []byte("/.ledger/\n"), 0o600); err != nil {
+	tree, err := m.Import(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ledger, "config.json"), []byte(`{"case_sensitive":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if keys.Dir == "" {
 		keys = identity.LocalKeys{Dir: filepath.Join(t.TempDir(), "keys")}
 	}
-	s := &site{t: t, dir: dir, repo: repo, keys: keys}
+	s := &site{t: t, dir: dir, keys: keys}
 	root, _, err := s.keys.Ensure()
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.root = root
 	s.open(opts)
-	o, err := envelope.Seal(schema.KindRootKey, schema.RootKey{PublicKey: identity.EncodePublicKey(root.PublicKey()), CreatedAt: "2026-11-05T12:00:00Z"}, root)
+	rk, err := envelope.SealVersion(2, schema.KindRootKey, schema.RootKey{PublicKey: identity.EncodePublicKey(root.PublicKey()), CreatedAt: "2026-11-05T12:00:00Z"}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := envelope.SealVersion(2, schema.KindRepository, schema.Repository{ID: schema.NewID(schema.PrefixRepository), HashAlgorithm: "sha256",
+		CasePolicy: "sensitive", Analyzers: []string{}, Tree: tree, CreatedAt: "2026-11-05T12:00:00Z"}, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.store.Do(ctx, record.Op{ID: "op_" + root.ID()[:26], Name: "test.init", Digest: canon.Hash([]byte("init")), Signer: root}, func(*index.Index) (any, []envelope.Object, error) {
-		return map[string]any{}, []envelope.Object{o}, nil
+		return map[string]any{}, []envelope.Object{rk, repo}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+	s.pristine = filepath.Join(t.TempDir(), "pristine")
+	copyTree(t, dir, s.pristine)
 	return s
+}
+
+// earlier opens a fresh copy of the repository as init left it: a
+// teammate's copy from before any of this site's work.
+func (s *site) earlier() *site {
+	s.t.Helper()
+	return s.earlierWith(record.Options{})
+}
+
+func (s *site) earlierWith(opts record.Options) *site {
+	s.t.Helper()
+	dir := filepath.Join(s.t.TempDir(), "earlier")
+	copyTree(s.t, s.pristine, dir)
+	e := &site{t: s.t, dir: dir, keys: s.keys, root: s.root, pristine: s.pristine}
+	e.open(opts)
+	if _, err := e.store.Recover(context.Background()); err != nil {
+		s.t.Fatal(err)
+	}
+	return e
+}
+
+// copyTree copies a repository without its runtime state or index.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	err := filepath.WalkDir(from, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(from, p)
+		switch filepath.ToSlash(rel) {
+		case ".ledger/runtime", ".ledger/lock", ".ledger/index.db", ".ledger/index.db-wal", ".ledger/index.db-shm":
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(to, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, raw, 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 // open (re)opens the store, closing any previous one: a daemon restart.
@@ -99,13 +161,23 @@ func (s *site) open(opts record.Options) {
 	if s.store != nil {
 		s.store.Close()
 	}
-	opts.Effect = workspace.GitProvider{Repo: s.repo}.Apply
-	store, err := record.Open(context.Background(), s.repo, opts)
+	store, err := record.OpenNative(context.Background(), s.dir, opts)
 	if err != nil {
 		s.t.Fatal(err)
 	}
 	s.store = store
 	s.t.Cleanup(func() { store.Close() })
+}
+
+// source reads the repository's own records, store and logs for verification.
+func (s *site) source() *verify.Source {
+	s.t.Helper()
+	src, err := verify.OpenNativeSource(s.dir)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	s.t.Cleanup(func() { src.Close() })
+	return src
 }
 
 func (s *site) service() *core.Service {
@@ -123,7 +195,7 @@ func (s *site) service() *core.Service {
 func (s *site) call(op, sid string, input any) map[string]any {
 	s.t.Helper()
 	raw, _ := canon.Marshal(input)
-	r := api.Request{Version: 1, Operation: op, SessionID: sid, OperationID: schema.NewID(schema.PrefixOperation), Input: raw}
+	r := api.Request{Version: 2, Operation: op, SessionID: sid, OperationID: schema.NewID(schema.PrefixOperation), Input: raw}
 	result, err := s.service().Handle(context.Background(), r)
 	if err != nil {
 		s.t.Fatalf("%s: %v", op, err)
@@ -147,8 +219,8 @@ func (s *site) call(op, sid string, input any) map[string]any {
 // proposal, independent evidence, a human judgment and a selection.
 type chain struct {
 	*site
-	sid, cap, wid, wdir, intent                        string
-	manifest, commit, tree, evidence, judgment, choice string
+	sid, cap, wid, wdir, intent                string
+	manifest, tree, evidence, judgment, choice string
 }
 
 func newChain(t *testing.T, command string) *chain {
@@ -172,11 +244,11 @@ func newChain(t *testing.T, command string) *chain {
 	c.propose("export const x=2;\n")
 	bound := s.call("evidence.resolve", "", map[string]any{"manifest": c.manifest})
 	defHash := bound["checks"].([]any)[0].(map[string]any)["definition_hash"].(string)
-	run := s.call("evidence.run", "", map[string]any{"manifest": c.manifest, "commit": c.commit, "check_definition": defHash})
+	run := s.call("evidence.run", "", map[string]any{"manifest": c.manifest, "check_definition": defHash})
 	c.evidence = run["attestation"].(string)
-	j := s.call("evidence.judge", "", map[string]any{"manifest": c.manifest, "commit": c.commit, "criterion_id": "review", "result": "pass"})
+	j := s.call("evidence.judge", "", map[string]any{"manifest": c.manifest, "criterion_id": "review", "result": "pass"})
 	c.judgment = j["attestation"].(string)
-	sel := s.call("selection.record", "", map[string]any{"manifest": c.manifest, "commit": c.commit, "evidence": []string{c.evidence, c.judgment}})
+	sel := s.call("selection.record", "", map[string]any{"manifest": c.manifest, "evidence": []string{c.evidence, c.judgment}})
 	c.choice = sel["selection"].(string)
 	return c
 }
@@ -187,7 +259,7 @@ func (c *chain) propose(content string) {
 		c.t.Fatal(err)
 	}
 	p := c.call("workspace.propose", c.sid, map[string]any{"workspace_id": c.wid})
-	c.manifest, c.commit, c.tree = p["manifest"].(string), p["commit"].(string), p["tree"].(string)
+	c.manifest, c.tree = p["manifest"].(string), p["tree"].(string)
 }
 
 // export writes a bundle of the whole repository (or the given selection).
@@ -196,7 +268,7 @@ func (s *site) export(opts verify.ExportOptions) (*verify.ExportReport, error) {
 	if opts.Out == "" {
 		opts.Out = filepath.Join(s.t.TempDir(), "out.ledger")
 	}
-	return verify.Export(context.Background(), s.repo, opts)
+	return verify.ExportNative(s.dir, opts)
 }
 
 func (s *site) mustExport() string {
@@ -238,7 +310,7 @@ func tryVerify(path string, trust ...string) (*verify.Report, error) {
 type parts struct {
 	Inv     map[string]any
 	Records map[string][]byte // record hash -> bytes
-	Git     []byte
+	Files   map[string][]byte // store object and operation log entries by name
 }
 
 func readParts(t *testing.T, path string) *parts {
@@ -248,7 +320,7 @@ func readParts(t *testing.T, path string) *parts {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	p := &parts{Records: map[string][]byte{}}
+	p := &parts{Records: map[string][]byte{}, Files: map[string][]byte{}}
 	tr := tar.NewReader(f)
 	for {
 		hdr, err := tr.Next()
@@ -262,15 +334,15 @@ func readParts(t *testing.T, path string) *parts {
 		if err != nil {
 			t.Fatal(err)
 		}
-		switch hdr.Name {
-		case verify.InventoryName:
+		switch {
+		case hdr.Name == verify.InventoryName:
 			if err := json.Unmarshal(data, &p.Inv); err != nil {
 				t.Fatal(err)
 			}
-		case verify.GitName:
-			p.Git = data
-		default:
+		case strings.HasPrefix(hdr.Name, "records/"):
 			p.Records[strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(hdr.Name, "records/"), ".json"), "/", "")] = data
+		default:
+			p.Files[hdr.Name] = data
 		}
 	}
 	return p
@@ -291,11 +363,9 @@ func (p *parts) write(t *testing.T, refresh bool) string {
 			objs = append(objs, map[string]any{"hash": h, "kind": kind, "size": len(p.Records[h])})
 		}
 		p.Inv["objects"] = objs
-		git := p.Inv["git"].(map[string]any)
-		if p.Git != nil {
-			git["file"], git["size"], git["sha256"] = verify.GitName, len(p.Git), sha(p.Git)
-		} else {
-			git["file"], git["size"], git["sha256"] = "", 0, ""
+		if raw, ok := p.Files[verify.GitName]; ok {
+			git := p.Inv["git"].(map[string]any)
+			git["file"], git["size"], git["sha256"] = verify.GitName, len(raw), sha(raw)
 		}
 	}
 	inv, err := canon.Marshal(p.Inv)
@@ -310,8 +380,8 @@ func (p *parts) entries() []tarEntry {
 	for _, h := range sortedHashes(p.Records) {
 		out = append(out, tarEntry{Name: "records/" + h[:2] + "/" + h[2:] + ".json", Data: p.Records[h]})
 	}
-	if p.Git != nil {
-		out = append(out, tarEntry{Name: verify.GitName, Data: p.Git})
+	for _, name := range slices.Sorted(maps.Keys(p.Files)) {
+		out = append(out, tarEntry{Name: name, Data: p.Files[name]})
 	}
 	return out
 }

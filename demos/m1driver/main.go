@@ -1,4 +1,5 @@
-// Command m1driver exercises the public CLI; it imports no Ledger internals.
+// Command m1driver exercises the public CLI in a native repository; it
+// imports no Ledger internals and runs no Git.
 package main
 
 import (
@@ -37,7 +38,7 @@ func run() error {
 	if err := os.Mkdir(repo, 0700); err != nil {
 		return err
 	}
-	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=Ledger demo", "GIT_AUTHOR_EMAIL=demo@invalid", "GIT_COMMITTER_NAME=Ledger demo", "GIT_COMMITTER_EMAIL=demo@invalid")
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"))
 	command := func(dir, exe string, args ...string) ([]byte, error) {
 		c := exec.Command(exe, args...) //nolint:gosec // demo invokes the supplied Ledger binary and fixed OS tools
 		c.Dir = dir
@@ -47,10 +48,6 @@ func run() error {
 			return b, fmt.Errorf("%s: %w: %s", exe, err, b)
 		}
 		return b, nil
-	}
-	git := func(dir string, args ...string) (string, error) {
-		b, err := command(dir, "git", args...)
-		return strings.TrimSpace(string(b)), err
 	}
 	ledger := func(args ...string) (map[string]any, error) {
 		b, err := command(repo, binary, args...)
@@ -79,21 +76,13 @@ func run() error {
 		}
 		return string(b)
 	}
-	if _, err := git(repo, "init", "-q"); err != nil {
-		return err
-	}
 	for path, source := range map[string]string{"a.ts": "export function total(x: number) { return x; }\n", "b.js": "export const x = 1;\n", "c.py": "def total(x):\n    return x\n"} {
 		if err := os.WriteFile(filepath.Join(repo, path), []byte(source), 0600); err != nil {
 			return err
 		}
 	}
-	if _, err := git(repo, "add", "."); err != nil {
-		return err
-	}
-	if _, err := git(repo, "commit", "-qm", "base"); err != nil {
-		return err
-	}
-	if _, err := ledger("init"); err != nil {
+	initialized, err := ledger("init")
+	if err != nil {
 		return err
 	}
 	session, err := ledger("session", "create", `{"agent_name":"provider-neutral-demo"}`)
@@ -142,8 +131,10 @@ func run() error {
 		time.Sleep(25 * time.Millisecond)
 	}
 	fmt.Println("ok: detached workspace, exact fork retry, shell edit observed within two seconds")
+	if fork["base_tree"] != initialized["tree"] {
+		return fmt.Errorf("fork is not based on the imported tree")
+	}
 	var manifests []string
-	var commits []string
 	for revision := range 3 {
 		if revision > 0 {
 			if _, err := ledger("workspace", "rework", "--session", sid, ws); err != nil {
@@ -157,48 +148,38 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		commit, manifest := proposal["commit"].(string), proposal["manifest"].(string)
-		parents, err := git(repo, "rev-list", "--parents", "-n1", commit)
+		manifest := proposal["manifest"].(string)
+		binding, err := ledger("evidence", "resolve", payload(map[string]any{"manifest": manifest}))
 		if err != nil {
 			return err
 		}
-		parts := strings.Fields(parents)
-		if len(parts) != 2 || parts[1] != fork["base_commit"] {
+		if binding["base_tree"] != fork["base_tree"] {
 			return fmt.Errorf("revision changed fixed base")
 		}
-		trailer, err := git(repo, "log", "-1", "--format=%(trailers:key=Ledger-Manifest,valueonly)", commit)
-		if err != nil {
-			return err
-		}
-		if trailer != manifest {
-			return fmt.Errorf("manifest trailer mismatch")
-		}
-		tree, err := git(repo, "rev-parse", commit+"^{tree}")
-		if err != nil {
-			return err
-		}
-		if tree != proposal["tree"] {
+		if binding["tree"] != proposal["tree"] {
 			return fmt.Errorf("tree binding mismatch")
 		}
+		if slices.Contains(manifests, manifest) {
+			return fmt.Errorf("revision reused a manifest")
+		}
 		manifests = append(manifests, manifest)
-		commits = append(commits, commit)
 	}
-	if _, err := git(repo, "reflog", "expire", "--expire=now", "--all"); err != nil {
+	report, err := ledger("verify", "--strict")
+	if err != nil {
 		return err
 	}
-	if _, err := git(repo, "gc", "--prune=now"); err != nil {
-		return err
-	}
-	for i, h := range manifests {
-		retained, err := git(repo, "rev-parse", "refs/ledger/proposals/"+h)
-		if err != nil {
-			return err
-		}
-		if retained != commits[i] {
-			return fmt.Errorf("retained revision changed")
+	verified := 0
+	for _, m := range report["manifests"].([]any) {
+		m := m.(map[string]any)
+		components := m["components"].(map[string]any)
+		if slices.Contains(manifests, m["hash"].(string)) && components["tree"] == "verified" && components["oplog"] == "verified" {
+			verified++
 		}
 	}
-	fmt.Println("ok: three revisions verify trailer/tree/sole fixed parent and survive GC")
+	if verified != len(manifests) {
+		return fmt.Errorf("%d of %d revisions verify their tree and operation log", verified, len(manifests))
+	}
+	fmt.Println("ok: three revisions keep the fixed base and verify their tree and operation log offline")
 	if _, err := ledger("daemon", "stop"); err != nil {
 		return err
 	}
@@ -232,20 +213,21 @@ func run() error {
 	if _, err := ledger("workspace", "rework", "--session", replacement, ws); err != nil {
 		return err
 	}
-	if _, err := ledger("workspace", "propose", "--session", replacement, ws); err != nil {
+	final, err := ledger("workspace", "propose", "--session", replacement, ws)
+	if err != nil {
 		return err
 	}
 	if _, err := os.ReadFile(filepath.Join(path, "later.py")); err != nil {
 		return err
 	}
 	fmt.Println("ok: restart observes and preserves edits, ends lost-key authority, and explicitly rebinds a replacement session")
-	// An edit after the last proposal is recorded nowhere, so closing keeps
-	// it and reports cleanup separately.
+	// An edit after the last proposal is kept in the operation log, so
+	// closing removes the checkout without losing it.
 	if err := os.WriteFile(filepath.Join(path, "later.py"), []byte("x = 2\n"), 0600); err != nil {
 		return err
 	}
-	if _, err := ledger("workspace", "close", "--session", replacement, payload(map[string]any{"workspace_id": wid, "reason": "demo_complete"})); err == nil {
-		return fmt.Errorf("dirty cleanup should be pending")
+	if _, err := ledger("workspace", "close", "--session", replacement, payload(map[string]any{"workspace_id": wid, "reason": "demo_complete"})); err != nil {
+		return err
 	}
 	status, err = ledger("workspace", "status", ws)
 	if err != nil {
@@ -254,21 +236,30 @@ func run() error {
 	if status["state"] != "closed" {
 		return fmt.Errorf("close was not committed")
 	}
-	raw, err := os.ReadFile(filepath.Join(path, "later.py"))
-	if err != nil {
-		return fmt.Errorf("close deleted user edits: %w", err)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("closed checkout %s was kept", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	if string(raw) != "x = 2\n" {
-		return fmt.Errorf("close changed user edits: %q", raw)
-	}
-	report, err := ledger("recover")
+	last, err := lastLogEntry(filepath.Join(repo, ".ledger", "oplog", wid+".log"))
 	if err != nil {
 		return err
 	}
-	if pending, ok := report["cleanup_pending"].([]any); !ok || len(pending) == 0 {
-		return fmt.Errorf("missing cleanup-pending report")
+	if last["kind"] != "snapshot" || last["tree"] == final["tree"] {
+		return fmt.Errorf("the unproposed edit was not recorded at close: %v", last)
 	}
-	fmt.Println("ok: close is durable, unproposed edits survive, cleanup remains explicitly pending")
+	fmt.Println("ok: close is durable and records unproposed edits in the operation log before removing the checkout")
 	fmt.Println("M1 demo passed.")
 	return nil
+}
+
+// lastLogEntry decodes the final entry of an operation log.
+func lastLogEntry(path string) (map[string]any, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	var e map[string]any
+	return e, json.Unmarshal([]byte(lines[len(lines)-1]), &e)
 }

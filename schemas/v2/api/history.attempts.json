@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/history.attempts.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "symbol": {
+      "$ref": "../../v1/common.json#/$defs/symbol"
+    },
+    "path": {
+      "$ref": "../../v1/common.json#/$defs/path"
+    }
+  },
+  "required": [],
+  "oneOf": [
+    {
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "required": [
+        "path"
+      ]
+    }
+  ]
+}

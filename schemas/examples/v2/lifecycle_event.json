@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "kind": "lifecycle_event",
+  "payload": {
+    "subject_kind": "workspace",
+    "subject_id": "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "creation": "2222222222222222222222222222222222222222222222222222222222222222",
+    "previous": null,
+    "from_state": "open",
+    "to_state": "proposed",
+    "reason": null,
+    "replacement_id": null,
+    "actor": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "ses_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "signature": "oe-j-3_tYqOb2A7cx-UPKjwpAbzPlHbSZGaP4Em6-LjqFqKEwXUCpJPTPQqW6ONpimyrC3ZftrVOrydafY0JBA"
+}

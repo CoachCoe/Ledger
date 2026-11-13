@@ -162,7 +162,7 @@ func (g *graph) run(o envelope.Object) RunReport {
 		if err != nil {
 			return fail(err)
 		}
-		if w.IntentID != r.IntentID || w.BaseCommit != r.BaseCommit {
+		if w.IntentID != r.IntentID || w.BaseCommit != r.BaseCommit || w.BaseTree != r.BaseTree {
 			return fail(apierr.New("invalid_run", "attempt workspace %s differs from the run's intent or base", a.WorkspaceID))
 		}
 		if ms := g.manifestsOf(a.WorkspaceID); len(ms) > 1 {

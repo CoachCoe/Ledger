@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/api"
@@ -44,7 +45,7 @@ type startInput struct {
 	Scorer             scorerInput       `json:"scorer"`
 	Deadline           string            `json:"deadline"`
 	DeadlineSeconds    int64             `json:"deadline_seconds"`
-	BaseCommit         string            `json:"base_commit"`
+	BaseTree           string            `json:"base_tree"`
 	Allow              []string          `json:"allow"`
 	Deny               []string          `json:"deny"`
 	MayAddDependencies *bool             `json:"may_add_dependencies"`
@@ -127,12 +128,9 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 	if err != nil {
 		return prepared{}, err
 	}
-	base, err := s.Store.Repo.ResolveRef(ctx, cmp.Or(in.BaseCommit, "HEAD"))
+	base, err := s.forkBase(ctx, in.BaseTree)
 	if err != nil {
 		return prepared{}, err
-	}
-	if base == "" {
-		return prepared{}, apierr.New("base_unavailable", "speculation needs an existing base commit")
 	}
 	// Attempt authority outlives the deadline briefly, so a late submission
 	// is refused as deadline_passed rather than as an expired capability.
@@ -158,12 +156,12 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 		}
 		wid := schema.NewID(schema.PrefixWorkspace)
 		path := s.Provider.Path(wid)
-		w, err := envelope.Seal(schema.KindWorkspace, schema.Workspace{ID: wid, IntentID: in.IntentID, SessionID: session["session_id"], CapabilityID: session["capability_id"], ChangeID: schema.NewID(schema.PrefixChange), BaseCommit: base, CreatedAt: created}, c.signer)
+		w, err := s.seal(schema.KindWorkspace, base.workspace(schema.Workspace{ID: wid, IntentID: in.IntentID, SessionID: session["session_id"], CapabilityID: session["capability_id"], ChangeID: schema.NewID(schema.PrefixChange), CreatedAt: created}), c.signer)
 		if err != nil {
 			return prepared{}, err
 		}
 		records = append(append(records, recs...), w)
-		effects = append(effects, record.Effect{Kind: record.EffectWorktreeAdd, WorkspaceID: wid, Path: path, Base: base})
+		effects = append(effects, base.create(wid, path, session["session_id"]))
 		bindings = append(bindings, schema.CandidateBinding{WorkspaceID: wid, Strategy: st.Name})
 		handoff = append(handoff, map[string]any{
 			"workspace_id": wid, "session_id": session["session_id"], "capability_id": session["capability_id"],
@@ -171,25 +169,28 @@ func (s *Service) startRun(ctx context.Context, c *invocation) (prepared, error)
 		})
 	}
 	run := schema.SpeculationRun{ID: runID, IntentID: in.IntentID, Strategies: in.Strategies, Attempts: bindings, Checks: checks,
-		Scorer: scorerHash, ScorerDefinition: scorer, BaseCommit: base, Deadline: deadline, CreatedAt: created}
-	ro, err := envelope.Seal(schema.KindSpeculationRun, run, c.signer)
+		Scorer: scorerHash, ScorerDefinition: scorer, BaseTree: base.tree, Deadline: deadline, CreatedAt: created}
+	ro, err := s.seal(schema.KindSpeculationRun, run, c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
 	sub := index.Subject{ID: runID, Kind: lifecycle.SpeculationRun, Creation: ro.Hash, State: "created"}
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, transition(sub, "collecting", nil, c.signer.ID()), c.signer)
+	ev, err := s.seal(schema.KindLifecycleEvent, transition(sub, "collecting", nil, c.signer.ID()), c.signer)
 	if err != nil {
 		return prepared{}, err
 	}
 	return prepared{
-		result: map[string]any{
+		result: base.result(map[string]any{
 			"run_id": runID, "intent_id": in.IntentID, "state": "collecting", "deadline": deadline,
-			"scorer": scorerHash, "base_commit": base, "checks": checks, "attempts": handoff,
-		},
+			"scorer": scorerHash, "checks": checks, "attempts": handoff,
+		}),
 		records: append(records, ro, ev),
 		effects: effects,
 	}, nil
 }
+
+// runBase is the base a run's workspaces were forked from.
+func runBase(r schema.SpeculationRun) baseRef { return baseRef{tree: r.BaseTree} }
 
 func runDeadline(in startInput, start time.Time) (string, error) {
 	var at time.Time
@@ -298,7 +299,7 @@ func (s *Service) transitionRun(ctx context.Context, rs *runState, to, reason st
 	if reason != "" {
 		why = &reason
 	}
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, transition(*rs.sub, to, why, root.ID()), root)
+	ev, err := s.seal(schema.KindLifecycleEvent, transition(*rs.sub, to, why, root.ID()), root)
 	if err != nil {
 		return err
 	}
@@ -366,17 +367,20 @@ func (s *Service) evaluateCandidates(ctx context.Context, rs *runState, execute 
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]*candidate{}
+	var submitted []*attemptState
 	for _, a := range rs.attempts {
-		if a.proposal.Manifest == "" {
-			continue
+		if a.proposal.Manifest != "" {
+			submitted = append(submitted, a)
 		}
-		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Commit: a.proposal.Commit, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
-		for _, check := range rs.run.Checks {
-			hashes, err := s.runEvidence(ctx, rs.run.ID, a, check, execute)
-			if err != nil {
-				return nil, err
-			}
+	}
+	found, err := s.runAllEvidence(ctx, rs.run.ID, submitted, rs.run.Checks, execute)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]*candidate{}
+	for i, a := range submitted {
+		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
+		for _, hashes := range found[i] {
 			c.evidence = append(c.evidence, hashes...)
 		}
 		slices.Sort(c.evidence)
@@ -401,6 +405,38 @@ func (s *Service) evaluateCandidates(ctx context.Context, rs *runState, execute 
 		out[a.binding.WorkspaceID] = c
 	}
 	return out, nil
+}
+
+// defaultEvidenceWorkers bounds the checks one evaluation runs at once; the
+// copy-on-write checkouts they run in take no repository-wide lock (ADR 0026).
+const defaultEvidenceWorkers = 4
+
+// runAllEvidence runs runEvidence for every attempt and check, returning
+// the attestations by attempt and check index.
+func (s *Service) runAllEvidence(ctx context.Context, runID string, attempts []*attemptState, checks []string, execute bool) ([][][]string, error) {
+	found := make([][][]string, len(attempts))
+	for i := range found {
+		found[i] = make([][]string, len(checks))
+	}
+	slots := make(chan struct{}, s.evidenceWorkers)
+	errs := make([]error, len(attempts)*len(checks))
+	var wg sync.WaitGroup
+	for i, a := range attempts {
+		for j, check := range checks {
+			wg.Go(func() {
+				slots <- struct{}{}
+				defer func() { <-slots }()
+				found[i][j], errs[i*len(checks)+j] = s.runEvidence(ctx, runID, a, check, execute)
+			})
+		}
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return found, nil
 }
 
 // runEvidence returns the attestations this run holds for one candidate and
@@ -441,11 +477,11 @@ func (s *Service) runEvidence(ctx context.Context, runID string, a *attemptState
 		if !execute {
 			return nil, apierr.New("evidence_incomplete", "candidate %s has no committed evidence for check %s; evaluate the run first", a.proposal.Manifest, check)
 		}
-		input, err := canon.Marshal(map[string]string{"manifest": a.proposal.Manifest, "commit": a.proposal.Commit, "check_definition": check})
+		input, err := canon.Marshal(map[string]any{"manifest": a.proposal.Manifest, "check_definition": check})
 		if err != nil {
 			return nil, err
 		}
-		res, err := s.evidenceRun(ctx, api.Request{Version: 1, Operation: "evidence.run", OperationID: id, Input: input})
+		res, err := s.evidenceRun(ctx, api.Request{Version: api.Version, Operation: "evidence.run", OperationID: id, Input: input})
 		if apierr.HasCode(err, "run_interrupted") {
 			continue
 		}
@@ -486,11 +522,11 @@ func scorerDocument(rs *runState, cands map[string]*candidate) ([]byte, error) {
 			if c.binding.Manifest != id {
 				continue
 			}
-			list = append(list, map[string]any{
+			list = append(list, runBase(rs.run.SpeculationRun).result(map[string]any{
 				"id": id, "workspace_id": c.attempt.binding.WorkspaceID, "strategy": c.attempt.binding.Strategy,
-				"manifest": id, "commit": c.binding.Commit, "tree": c.binding.Tree, "base_commit": rs.run.BaseCommit,
-				"branch": c.attempt.proposal.Branch, "files": c.attempt.manifest.Files, "evidence": c.evidence, "criteria": c.eval.Criteria,
-			})
+				"manifest": id, "tree": c.binding.Tree,
+				"files": c.attempt.manifest.Files, "evidence": c.evidence, "criteria": c.eval.Criteria,
+			}))
 		}
 	}
 	return canon.Marshal(map[string]any{"run_id": rs.run.ID, "intent_id": rs.run.IntentID, "scorer": rs.run.Scorer, "candidates": list})
@@ -555,7 +591,13 @@ func (s *Service) evaluateRun(ctx context.Context, r api.Request) (any, error) {
 			var candidates jsontext.Value = doc
 			return map[string]any{"run_id": rs.run.ID, "state": "evaluating", "awaiting_scores": true, "eligible": ids, "candidates": candidates}, nil
 		}
-		if scores, err = s.runScorer(ectx, rs, doc, ids); err != nil {
+		trees := map[string]string{}
+		for _, c := range cands {
+			if c.eligible {
+				trees[c.binding.Manifest] = c.binding.Tree
+			}
+		}
+		if scores, err = s.runScorer(ectx, rs, doc, trees); err != nil {
 			if err = s.cancelledOr(ctx, in.RunID, err); apierr.HasCode(err, "run_cancelled") {
 				return nil, err
 			}
@@ -732,7 +774,7 @@ func (s *Service) committedCandidates(ctx context.Context, rs *runState) (map[st
 		if a.proposal.Manifest == "" {
 			continue
 		}
-		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Commit: a.proposal.Commit, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
+		c := &candidate{attempt: a, binding: selection.Binding{Manifest: a.proposal.Manifest, Tree: a.manifest.Tree, Criteria: intent.Criteria}}
 		for _, check := range rs.run.Checks {
 			hashes, err := s.runEvidence(ctx, rs.run.ID, a, check, false)
 			if apierr.HasCode(err, "evidence_incomplete") {
@@ -754,7 +796,7 @@ func (s *Service) committedCandidates(ctx context.Context, rs *runState) (map[st
 // other attempt, ended attempt sessions, and worktree removal for closed
 // attempts after publication.
 func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer, to, reason string, cands map[string]*candidate, scores map[string]int64) (prepared, error) {
-	seal := func(kind schema.Kind, p any) (envelope.Object, error) { return envelope.Seal(kind, p, root) }
+	seal := func(kind schema.Kind, p any) (envelope.Object, error) { return s.seal(kind, p, root) }
 	ev, err := seal(schema.KindLifecycleEvent, transition(*rs.sub, to, &reason, root.ID()))
 	if err != nil {
 		return prepared{}, err
@@ -778,9 +820,9 @@ func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer
 	for _, a := range rs.attempts {
 		c := cands[a.binding.WorkspaceID]
 		wid := a.binding.WorkspaceID
-		row := map[string]any{"workspace_id": wid, "strategy": a.binding.Strategy, "manifest": nil, "commit": nil, "attempt_record": nil, "score": nil, "failed_criteria": []string{}}
+		row := map[string]any{"workspace_id": wid, "strategy": a.binding.Strategy, "manifest": nil, "attempt_record": nil, "score": nil, "failed_criteria": []string{}}
 		if c != nil {
-			row["manifest"], row["commit"] = c.binding.Manifest, c.binding.Commit
+			row["manifest"] = c.binding.Manifest
 		}
 		if c != nil && c.binding.Manifest == winner {
 			competitors := []string{}
@@ -808,7 +850,7 @@ func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer
 			}
 			records = append(records, sel, wev)
 			result["selection"] = sel.Hash
-			result["winner"] = map[string]any{"workspace_id": wid, "manifest": c.binding.Manifest, "commit": c.binding.Commit, "branch": a.proposal.Branch}
+			result["winner"] = map[string]any{"workspace_id": wid, "manifest": c.binding.Manifest}
 			row["outcome"], row["score"] = "selected", scores[winner]
 			row["selection"] = sel.Hash
 			outcomes = append(outcomes, row)
@@ -848,11 +890,7 @@ func (s *Service) endRun(ctx context.Context, rs *runState, root identity.Signer
 			return prepared{}, err
 		}
 		records = append(records, ar, wev)
-		cleanup := record.Effect{Kind: record.EffectWorktreeRemove, WorkspaceID: wid, Path: s.Provider.Path(wid), After: true}
-		if c != nil {
-			cleanup.Base, cleanup.Tree = rs.run.BaseCommit, c.binding.Tree
-		}
-		effects = append(effects, cleanup)
+		effects = append(effects, record.Effect{Kind: record.EffectWorkspaceRemove, WorkspaceID: wid, Path: s.Provider.Path(wid), After: true})
 		row["outcome"], row["attempt_record"], row["failed_criteria"] = rec.Outcome, ar.Hash, rec.FailedCriteria
 		if rec.Score != nil {
 			row["score"] = *rec.Score
@@ -924,7 +962,7 @@ func (s *Service) resumeRun(ctx context.Context, c *invocation) (prepared, error
 		return prepared{}, apierr.New("invalid_state", "run %s is %s, not interrupted", in.RunID, rs.sub.State).With("run_id", in.RunID)
 	}
 	reason := "resumed"
-	ev, err := envelope.Seal(schema.KindLifecycleEvent, transition(*rs.sub, rs.sub.Resume, &reason, c.signer.ID()), c.signer)
+	ev, err := s.seal(schema.KindLifecycleEvent, transition(*rs.sub, rs.sub.Resume, &reason, c.signer.ID()), c.signer)
 	return prepared{result: map[string]string{"run_id": in.RunID, "state": rs.sub.Resume}, records: []envelope.Object{ev}}, err
 }
 
@@ -947,11 +985,11 @@ func (s *Service) runStatus(ctx context.Context, id string) (any, error) {
 	for _, a := range rs.attempts {
 		row := map[string]any{
 			"workspace_id": a.binding.WorkspaceID, "strategy": a.binding.Strategy, "workspace_state": a.sub.State,
-			"session_id": a.sub.Owner, "submitted": a.proposal.Manifest != "", "manifest": nil, "commit": nil, "branch": nil,
+			"session_id": a.sub.Owner, "submitted": a.proposal.Manifest != "", "manifest": nil,
 			"attempt_record": nil, "outcome": nil,
 		}
 		if a.proposal.Manifest != "" {
-			row["manifest"], row["commit"], row["branch"] = a.proposal.Manifest, a.proposal.Commit, a.proposal.Branch
+			row["manifest"] = a.proposal.Manifest
 		}
 		if a.sub.State == "selected" {
 			row["outcome"] = "selected"
@@ -977,12 +1015,12 @@ func (s *Service) runStatus(ctx context.Context, id string) (any, error) {
 	} else if len(events) > 0 && events[len(events)-1].Reason != nil {
 		reason = *events[len(events)-1].Reason
 	}
-	return map[string]any{
+	return runBase(rs.run.SpeculationRun).result(map[string]any{
 		"run_id": id, "intent_id": rs.run.IntentID, "state": rs.sub.State, "resume": resume, "reason": reason,
 		"deadline": rs.run.Deadline, "deadline_passed": speculate.DeadlinePassed(rs.run.SpeculationRun, time.Now()),
 		"scorer": rs.run.Scorer, "scorer_kind": rs.run.ScorerDefinition.Kind, "checks": rs.run.Checks,
-		"base_commit": rs.run.BaseCommit, "attempts": attempts, "selection": selected,
-	}, nil
+		"attempts": attempts, "selection": selected,
+	}), nil
 }
 
 // submit freezes an attempt's candidate: the run workspace's one proposal.

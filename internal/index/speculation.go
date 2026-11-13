@@ -26,7 +26,7 @@ func (x *Index) RunOf(ctx context.Context, workspaceID string) (*Run, error) {
 }
 
 func runOf(ctx context.Context, q querier, workspaceID string) (*Run, error) {
-	rows, err := q.QueryContext(ctx, `SELECT c.hash, c.signer, c.payload FROM creations c, json_each(c.payload, '$.attempts') a
+	rows, err := q.QueryContext(ctx, `SELECT c.hash, c.signer, c.payload, c.version FROM creations c, json_each(c.payload, '$.attempts') a
  WHERE c.kind='speculation_run' AND json_extract(a.value, '$.workspace_id')=? ORDER BY c.hash`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -39,10 +39,11 @@ func runOf(ctx context.Context, q querier, workspaceID string) (*Run, error) {
 		}
 		var r Run
 		var payload string
-		if err := rows.Scan(&r.Creation, &r.Signer, &payload); err != nil {
+		var version int
+		if err := rows.Scan(&r.Creation, &r.Signer, &payload, &version); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(payload), &r.SpeculationRun); err != nil {
+		if err := schema.Decode(version, schema.KindSpeculationRun, []byte(payload), &r.SpeculationRun); err != nil {
 			return nil, err
 		}
 		out = &r
@@ -58,15 +59,16 @@ func (x *Index) RunCreation(ctx context.Context, id string) (*Run, error) {
 func runCreation(ctx context.Context, q querier, id string) (*Run, error) {
 	var r Run
 	var payload string
-	err := q.QueryRowContext(ctx, `SELECT hash, signer, payload FROM creations WHERE entity_id=? AND kind='speculation_run' ORDER BY hash LIMIT 1`, id).
-		Scan(&r.Creation, &r.Signer, &payload)
+	var version int
+	err := q.QueryRowContext(ctx, `SELECT hash, signer, payload, version FROM creations WHERE entity_id=? AND kind='speculation_run' ORDER BY hash LIMIT 1`, id).
+		Scan(&r.Creation, &r.Signer, &payload, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apierr.New("unknown_entity", "no speculation run %s", id)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &r, json.Unmarshal([]byte(payload), &r.SpeculationRun)
+	return &r, schema.Decode(version, schema.KindSpeculationRun, []byte(payload), &r.SpeculationRun)
 }
 
 // WorkspaceManifests returns the hashes of every committed change manifest

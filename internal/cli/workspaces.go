@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
@@ -12,22 +10,15 @@ import (
 	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
-// restoreWorkspaces reconstructs runtime bindings from Git metadata and
-// fresh private snapshots. It never shares a live observer's private index.
-func restoreWorkspaces(ctx context.Context, s *record.Store) ([]map[string]string, error) {
+// restoreWorkspaces reconstructs runtime bindings from fresh snapshots.
+func restoreWorkspaces(ctx context.Context, s *record.Store, provider workspace.NativeProvider) ([]map[string]string, error) {
 	active, err := s.Index.ActiveWorkspaces(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	scratch, err := os.MkdirTemp(filepath.Join(s.Dir, "runtime"), "reindex-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(scratch)
-	provider := workspace.GitProvider{Repo: s.Repo}
 	problems := []map[string]string{}
 	for _, w := range active {
-		snap, err := provider.Snapshot(ctx, w, filepath.Join(scratch, w.ID+".index"))
+		snap, err := provider.Snapshot(ctx, w)
 		if err != nil {
 			problems = append(problems, map[string]string{"workspace_id": w.ID, "code": apierr.As(err).Code, "message": err.Error()})
 			continue
