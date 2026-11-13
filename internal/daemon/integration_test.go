@@ -30,7 +30,7 @@ func TestPublicCLILifecycle(t *testing.T) {
 		t.Fatalf("build: %v %s", err, out)
 	}
 	repo := filepath.Join(work, "repo")
-	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"))
 	run := func(args ...string) (map[string]any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -61,23 +61,9 @@ func TestPublicCLILifecycle(t *testing.T) {
 		}
 		return r
 	}
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git: %v %s", err, out)
-		}
-
-	}
 	if err := os.CopyFS(repo, os.DirFS("../../testdata/fixtures/polyglot")); err != nil {
 		t.Fatal(err)
 	}
-	git("init", "-q")
-	git("add", "-A")
-	git("commit", "-qm", "base")
 	must("init")
 	// Simultaneous first clients must converge on one daemon.
 	var wg sync.WaitGroup
@@ -168,8 +154,8 @@ func TestPublicCLILifecycle(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 	}
 	proposal := must("workspace", "propose", "--session", sid, string(ws))
-	if proposal["manifest"] == "" || proposal["commit"] == "" {
-		t.Fatal("missing revision bindings")
+	if proposal["manifest"] == nil || proposal["tree"] == nil || proposal["op_head"] == nil {
+		t.Fatalf("missing revision bindings: %v", proposal)
 	}
 	// Restart ends the lost session and keeps files; explicit recovery replaces authority.
 	runtimeStatus := must("system", "status")
@@ -194,7 +180,7 @@ func TestPublicCLILifecycle(t *testing.T) {
 		t.Fatal("reused session identity")
 	}
 	must("workspace", "rework", "--session", newSID, string(ws))
-	must("workspace", "propose", "--session", newSID, string(ws))
+	final := must("workspace", "propose", "--session", newSID, string(ws))
 	if _, err := os.ReadFile(filepath.Join(path, "new.py")); err != nil {
 		t.Fatal("recovery lost files")
 	}
@@ -245,16 +231,25 @@ func TestPublicCLILifecycle(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	// Root may close lost-key workspaces; dirty cleanup stays pending and files survive.
+	// Root may close lost-key workspaces. An edit after the last proposal is
+	// recorded in the operation log before the checkout is removed.
 	for id := range seen {
 		input, _ := json.Marshal(map[string]string{"workspace_id": id, "reason": "test_complete"})
-		_, err := run("workspace", "close", string(input))
-		if id != wid && err != nil {
+		if _, err := run("workspace", "close", string(input)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(path, "poll.py")); err != nil {
-		t.Fatal("close removed dirty files")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("closed checkout kept: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(repo, ".ledger", "oplog", wid+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	var last struct{ Kind, Tree string }
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil || last.Kind != "snapshot" || last.Tree == final["tree"] {
+		t.Fatalf("the unproposed edit was not recorded: %+v %v", last, err)
 	}
 	select {
 	case err := <-finished:
@@ -287,7 +282,7 @@ func TestAC111_CancelledRunRecordedWhenClientDisconnects(t *testing.T) {
 		t.Fatalf("build: %v %s", err, out)
 	}
 	repo := filepath.Join(work, "repo")
-	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"))
 	command := func(args ...string) *exec.Cmd {
 		cmd := exec.Command(binary, args...)
 		cmd.Dir = repo
@@ -308,21 +303,9 @@ func TestAC111_CancelledRunRecordedWhenClientDisconnects(t *testing.T) {
 		}
 		return response.Result
 	}
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
-		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git: %v %s", err, out)
-		}
-	}
 	if err := os.CopyFS(repo, os.DirFS("../../testdata/fixtures/polyglot")); err != nil {
 		t.Fatal(err)
 	}
-	git("init", "-q")
-	git("add", "-A")
-	git("commit", "-qm", "base")
 	must("init")
 	t.Cleanup(func() { _ = command("daemon", "stop").Run() })
 	started := filepath.Join(work, "started")
@@ -343,7 +326,7 @@ func TestAC111_CancelledRunRecordedWhenClientDisconnects(t *testing.T) {
 	resolve, _ := json.Marshal(map[string]any{"manifest": proposal["manifest"]})
 	bound := must("evidence", "resolve", string(resolve))
 	def := bound["checks"].([]any)[0].(map[string]any)["definition_hash"]
-	run, _ := json.Marshal(map[string]any{"manifest": proposal["manifest"], "commit": proposal["commit"], "check_definition": def})
+	run, _ := json.Marshal(map[string]any{"manifest": proposal["manifest"], "check_definition": def})
 
 	cli := command("evidence", "run", string(run))
 	if err := cli.Start(); err != nil {
@@ -394,6 +377,6 @@ func TestAC111_CancelledRunRecordedWhenClientDisconnects(t *testing.T) {
 		}
 	}
 	if entries, _ := os.ReadDir(filepath.Join(repo, ".ledger", "runtime", "verify")); len(entries) != 0 {
-		t.Fatalf("verification worktrees remain: %v", entries)
+		t.Fatalf("verification checkouts remain: %v", entries)
 	}
 }

@@ -607,7 +607,13 @@ func (s *Service) evaluateRun(ctx context.Context, r api.Request) (any, error) {
 			var candidates jsontext.Value = doc
 			return map[string]any{"run_id": rs.run.ID, "state": "evaluating", "awaiting_scores": true, "eligible": ids, "candidates": candidates}, nil
 		}
-		if scores, err = s.runScorer(ectx, rs, doc, ids); err != nil {
+		trees := map[string]string{}
+		for _, c := range cands {
+			if c.eligible {
+				trees[c.binding.Manifest] = c.binding.Tree
+			}
+		}
+		if scores, err = s.runScorer(ectx, rs, doc, trees); err != nil {
 			if err = s.cancelledOr(ctx, in.RunID, err); apierr.HasCode(err, "run_cancelled") {
 				return nil, err
 			}

@@ -79,7 +79,7 @@ func TestOutputSchemasRemainClosed(t *testing.T) {
 }
 
 func TestReadOnlyOperationsComeFromTheRequestSchema(t *testing.T) {
-	ops, err := Operations()
+	ops, err := Operations(1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,7 +39,7 @@ interface is not an untrusted-agent security sandbox: an agent with shell
 access can still run the CLI, which acts as root. A capability's scope is
 checked on frozen proposal files; direct disk access remains possible.
 
-Tool results carry `api_version:1` and either `{ok:true,result:…}` or
+Tool results carry the repository's `api_version` (2 for a native repository, 1 for Phase 1; the adapter reports it as its MCP implementation version, and tools follow that version's schemas) and either `{ok:true,result:…}` or
 `{ok:false,error:{code,message,details?}}`. The JSON appears as structuredContent
 and as text content. Failures set isError; unknown tools are MCP protocol
 errors. Durable mutations wrap their result with operation_id, receipt,
@@ -53,24 +53,25 @@ client disconnect; use speculation.cancel explicitly.
 For an ordinary agent lifecycle:
 
 1. The local root creates a scoped session and an intent with the CLI, and
-   starts an adapter bound to the session. workspace.fork returns a detached
-   fixed-base worktree and a workspace id.
+   starts an adapter bound to the session. workspace.fork returns a
+   copy-on-write workspace at a fixed base tree and a workspace id.
 2. Edit with an external editor or workspace.write. The latter accepts
    workspace_id, path, content and expected_hash (null to create, SHA-256 of
    current bytes to replace). It supports regular text files only, and returns
    an unsigned runtime observation, not an attestation. A completed same-id
    retry returns its original response; a pending edit needs active authority.
-3. workspace.propose freezes code and publishes a normal Git branch, manifest
-   hash and commit. Do not rewrite the proposal to attach later evidence.
-4. A distinct verifier session, through its own adapter, calls evidence.run using manifest, commit and
+3. workspace.propose freezes code and returns the manifest hash, its tree and
+   the operation log entry that recorded it. Do not rewrite the proposal to
+   attach later evidence.
+4. A distinct verifier session, through its own adapter, calls evidence.run using the manifest and
    the intent's pinned check-definition hash. evidence.isIndependent reports
    the verifier relationship; the execution isolation field remains "none".
 5. The local root (through the CLI) or another authorized selector calls selection.record with
-   exact manifest/commit and explicit evidence hashes. Selection never merges.
+   the exact manifest and explicit evidence hashes. Selection never merges.
 
 For parallel strategies, the root's `ledger speculation start` returns scoped
 session/workspace handoffs. External agents, each through an adapter bound to
-its attempt session, edit those worktrees, then speculation.submit freezes
+its attempt session, edit those workspaces, then speculation.submit freezes
 each candidate. The root evaluates, supplies scores if requested, and inspects
 the retained winner and signed loser attempt records. Ledger runs no model.
 

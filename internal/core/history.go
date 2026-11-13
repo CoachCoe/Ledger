@@ -7,7 +7,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/capability"
 	"github.com/CoachCoe/Ledger/internal/index"
 	"github.com/CoachCoe/Ledger/internal/schema"
-	"github.com/CoachCoe/Ledger/internal/verify"
 )
 
 type queryTarget struct {
@@ -132,7 +131,7 @@ func (s *Service) history(ctx context.Context, r api.Request) (any, error) {
 	}
 	// Coverage is deliberately narrower than independent bundle verification.
 	// Unindexed or incomplete provenance must never look like a complete search.
-	src, err := verify.OpenRepoSource(ctx, s.Store.Repo)
+	src, err := s.repositorySource(ctx)
 	if err != nil {
 		return nil, err
 	}

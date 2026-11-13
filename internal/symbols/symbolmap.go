@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"runtime/debug"
+	"slices"
 	"sync"
 
 	"golang.org/x/text/unicode/norm"
@@ -48,6 +50,10 @@ var grammarModules = map[string]string{
 }
 
 const runtimeModule = "github.com/tree-sitter/go-tree-sitter"
+
+// Languages lists, sorted, the languages this binary maps symbols for: a
+// repository record's analyzer set.
+func Languages() []string { return slices.Sorted(maps.Keys(grammarModules)) }
 
 var moduleVersions = sync.OnceValue(func() map[string]string {
 	out := map[string]string{}

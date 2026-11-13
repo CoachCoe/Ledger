@@ -189,6 +189,10 @@ func TestNativeProposePinsTheOperationLog(t *testing.T) {
 			t.Fatalf("workspace %v", sub)
 		}
 	}
+	why := call(t, s, requestV2("history.why", "", map[string]any{"symbol": map[string]any{"path": "a.ts", "language": "typescript", "name": "x", "kind": "function", "disambiguator": nil}}))
+	if records := why["records"].([]any); len(records) != 1 || records[0].(map[string]any)["manifest"].(map[string]any)["hash"] != prop["manifest"] {
+		t.Fatalf("history.why %v", why)
+	}
 }
 
 // Closing removes a native checkout after recording its tree, and keeps a

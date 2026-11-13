@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Reproducible M3 acceptance: evidence, selection, bundle and import failure
 # cases (named tests), the public CLI script, and a real-binary portability
-# run (AC-173, AC-250): verify a bundle in a fresh directory with the network
-# disabled and the original .ledger/ and Git storage unavailable, then import it
-# explicitly into a fresh repository.
+# run (AC-173, AC-250) in a native repository: verify a bundle in a fresh
+# directory with the network disabled and the original repository
+# unavailable, then import it explicitly into an earlier copy of the
+# repository, and see an unrelated repository refuse it.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 # shellcheck source=demos/lib.sh
 . "$ROOT/demos/lib.sh"
-need git; need jq; need python3
+need jq; need python3
 
 # Every M3 acceptance criterion is a named TestAC<nnn> assertion (see
 # internal/verify/testdata/m3_acs.txt, enforced by TestM3ACCoverage).
@@ -36,6 +37,8 @@ new_fixture "$REPO"
 
 step "Author a change, run independent evidence, judge, select, export"
 FP=$(lg init | jq -r .result.root_fingerprint)
+# A teammate's copy from before the change, to import into later.
+copy_repository "$REPO" "$WORK/earlier"
 cat >"$REPO/.ledger/checks.json" <<'JSON'
 [{"name":"unit","category":"mechanical","setup":null,"command":"test -f package.json","working_directory":".","env_allowlist":[],"timeout_seconds":30,"output_limit_bytes":1024}]
 JSON
@@ -46,22 +49,24 @@ W=$(lg workspace fork --session "$SID" "{\"intent_id\":\"$INT\",\"capability_id\
 WSP=$(jq -r .result.result.workspace_id <<<"$W")
 cp "$REPO/tools/report.py" "$(jq -r .result.result.path <<<"$W")/tools/extra.py"
 P=$(lg workspace propose --session "$SID" "{\"workspace_id\":\"$WSP\"}")
-MANIFEST=$(jq -r .result.result.manifest <<<"$P"); COMMIT=$(jq -r .result.result.commit <<<"$P")
-DEF=$(lg evidence resolve "{\"manifest\":\"$MANIFEST\",\"commit\":\"$COMMIT\"}" | jq -r '.result.checks[0].definition_hash')
-A=$(lg evidence run "{\"manifest\":\"$MANIFEST\",\"commit\":\"$COMMIT\",\"check_definition\":\"$DEF\"}")
+MANIFEST=$(jq -r .result.result.manifest <<<"$P")
+DEF=$(lg evidence resolve "{\"manifest\":\"$MANIFEST\"}" | jq -r '.result.checks[0].definition_hash')
+A=$(lg evidence run "{\"manifest\":\"$MANIFEST\",\"check_definition\":\"$DEF\"}")
 expect_eq "check result" "$(jq -r .result.result.result <<<"$A")" pass
 ATT=$(jq -r .result.result.attestation <<<"$A")
-lg evidence judge "{\"manifest\":\"$MANIFEST\",\"commit\":\"$COMMIT\",\"criterion_id\":\"review\",\"result\":\"pass\",\"reason\":\"reviewed\"}" >/dev/null
-SEL=$(lg selection record "{\"manifest\":\"$MANIFEST\",\"commit\":\"$COMMIT\",\"evidence\":[\"$ATT\"]}")
+lg evidence judge "{\"manifest\":\"$MANIFEST\",\"criterion_id\":\"review\",\"result\":\"pass\",\"reason\":\"reviewed\"}" >/dev/null
+SEL=$(lg selection record "{\"manifest\":\"$MANIFEST\",\"evidence\":[\"$ATT\"]}")
 expect_eq "selection is not acceptance" "$(jq -r .result.result.accepted <<<"$SEL")" false
 lg daemon stop >/dev/null
 BUNDLE="$WORK/m3.ledger"
-expect_eq "export complete" "$(lg export --out "$BUNDLE" | jq -r .result.complete)" true
+E=$(lg export --out "$BUNDLE")
+expect_eq "export complete" "$(jq -r .result.complete <<<"$E")" true
+[ "$(jq -r .result.size.store_objects <<<"$E")" -gt 0 ] || fail "bundle carries no store objects"
 # Export refuses to overwrite and a missing bundle is unavailable, not valid.
 expect_eq "export exists" "$(lg_fail export --out "$BUNDLE" | jq -r .error.code)" export_exists
 expect_eq "missing bundle" "$(lg_fail verify --bundle "$WORK/none.ledger" | jq -r .error.code)" bundle_unreadable
 
-step "Lose the source: rename and lock the repository, .ledger/ and Git storage"
+step "Lose the source: rename and lock the repository and its .ledger/"
 mv "$REPO" "$WORK/original"; chmod 000 "$WORK/original"
 if [ "$(id -u)" = 0 ]; then
   echo "note: running as root, so chmod cannot deny access; the source is hidden by rename only"
@@ -75,6 +80,7 @@ FRESH=$(mktemp -d "$WORK/f.XXXX"); mkdir "$FRESH/home"
 verify() { (cd "$FRESH" && offline env -i PATH="$PATH" HOME="$FRESH/home" HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 "$LEDGER" verify --bundle "$BUNDLE" "$@"); }
 V=$(verify --strict)
 expect_eq "integrity" "$(jq -r .result.integrity <<<"$V")" verified
+expect_eq "bundle version" "$(jq -r .result.bundle_version <<<"$V")" 2
 expect_eq "trust (no trusted root)" "$(jq -r .result.trust <<<"$V")" untrusted
 V=$(verify --trust "$FP")
 expect_eq "trust (--trust root)" "$(jq -r .result.trust <<<"$V")" trusted
@@ -94,21 +100,26 @@ T=$(cd "$FRESH" && env -i PATH="$PATH" HOME="$FRESH/home" "$LEDGER" verify --bun
 [ "$(jq -r '.result.integrity // .error.code' <<<"$T")" != verified ] || fail "tampered bundle verified"
 echo "ok: tampered bundle is not verified ($(jq -r '.result.integrity // .error.code' <<<"$T"))"
 
-step "Explicit import into a fresh repository (a different machine has its own root)"
+step "Explicit import into an earlier copy of the repository"
 chmod 700 "$WORK/original"
-export XDG_CONFIG_HOME="$WORK/cfg2"
-REPO="$WORK/fresh-repo"; new_fixture "$REPO"
-lg init >/dev/null
+REPO="$WORK/earlier"
 I1=$(lg import "$BUNDLE")
 I2=$(lg import "$BUNDLE")
 echo "first import:  $(jq -c '.result' <<<"$I1" | head -c 300)"
 echo "second import: $(jq -c '.result' <<<"$I2" | head -c 300)"
-git -C "$REPO" rev-parse --verify -q "refs/ledger/proposals/$MANIFEST" >/dev/null || fail "proposal revision not retained by import"
-git -C "$REPO" rev-parse --verify -q refs/heads/ledger >/dev/null 2>&1 && fail "import created a code branch"
+[ "$(jq -r .result.import.objects <<<"$I1")" -gt 0 ] || fail "import added no store objects"
+expect_eq "operation log" "$(jq -r '.result.import.oplogs[0].status' <<<"$I1")" created
+expect_eq "re-import" "$(jq -r .result.import.already_present <<<"$I2")" true
 V=$(lg verify --strict --trust "$FP")
 expect_eq "integrity after import" "$(jq -r .result.integrity <<<"$V")" verified
 D1=$(lg status | jq -S -c .); lg import "$BUNDLE" >/dev/null; D2=$(lg status | jq -S -c .)
 expect_eq "re-import is idempotent" "$D2" "$D1"
+
+step "An unrelated repository (another machine, its own root) refuses the bundle"
+export XDG_CONFIG_HOME="$WORK/cfg2"
+REPO="$WORK/unrelated"; new_fixture "$REPO"
+lg init >/dev/null
+expect_eq "unrelated import" "$(lg_fail import "$BUNDLE" | jq -r .error.code)" repository_mismatch
 
 step "M3 acceptance checklist"
 for ac in 004 033 040 041 046 056 057 058 059 060 078 088 089 090 091 092 093 094 095 096 099 103 107 110 111 112 113 114 115 116 167 168 169 170 171 172 173 174 175 176 177 178 179 180 209 210 213 230 231 232 235 236 237 247 250 251; do

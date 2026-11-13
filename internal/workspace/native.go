@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
@@ -19,6 +20,22 @@ import (
 type NativeProvider struct {
 	Workspaces *cow.Manager
 	Store      *store.Store
+}
+
+// OpenNative opens the workspaces of the native repository whose .ledger
+// directory is ledgerDir. Dependency trees are shared from the repository's
+// own directory, the default workspace.
+func OpenNative(ledgerDir string, caseSensitive bool) (NativeProvider, error) {
+	objects, err := store.Open(filepath.Join(ledgerDir, record.StoreDir, "objects"), caseSensitive)
+	if err != nil {
+		return NativeProvider{}, err
+	}
+	workspaces, err := cow.New(cow.Config{Store: objects, Runtime: filepath.Join(ledgerDir, "runtime"), Logs: filepath.Join(ledgerDir, "oplog"),
+		CaseSensitive: caseSensitive, Human: filepath.Dir(ledgerDir)})
+	if err != nil {
+		return NativeProvider{}, err
+	}
+	return NativeProvider{Workspaces: workspaces, Store: objects}, nil
 }
 
 func (p NativeProvider) Path(id string) string { return p.Workspaces.Path(id) }

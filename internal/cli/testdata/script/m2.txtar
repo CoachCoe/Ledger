@@ -1,9 +1,7 @@
-# M2 capability and queue API through the shipped binary.
+# M2 capability and queue API through the shipped binary, in a native
+# repository.
 fixture polyglot repo
 cd repo
-exec git init -q
-exec git add -A
-exec git commit -qm base
 exec ledger init
 exec ledger session create '{"allow":["src/billing/**"],"deny":["src/billing/private/**"],"may_add_dependencies":false}'
 jsonvar SID result.result.session_id

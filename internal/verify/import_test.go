@@ -337,21 +337,17 @@ func TestAC116_PortableVerificationAfterSourceLoss(t *testing.T) {
 	if v["ok"] != true || res["integrity"] != "verified" || res["trust"] != "trusted" {
 		t.Fatalf("portable verify: %v", v)
 	}
-	// Import into a fresh repository and verify there.
+	// The binary no longer writes a Phase 1 repository: importing into one
+	// is refused untouched. Native import is TestNativeBundleRoundTrip's.
 	dst := newSite(t)
 	dst.store.Close()
 	t.Chdir(dst.dir)
 	imp := run(t, "import", path)
-	if imp["ok"] != true {
-		t.Fatalf("import: %v", imp)
+	if imp["ok"] != false || imp["error"].(map[string]any)["code"] != "migrate_required" {
+		t.Fatalf("import into a Phase 1 repository: %v", imp)
 	}
 	if v := run(t, "verify", "--strict"); v["ok"] != true {
-		t.Fatalf("verify after import: %v", v)
-	}
-	st := run(t, "status")
-	text, _ := canon.Marshal(st)
-	if !bytes.Contains(text, []byte(c.intent)) || !bytes.Contains(text, []byte(c.wid)) {
-		t.Fatalf("status lacks the imported subjects: %s", text)
+		t.Fatalf("verify of the untouched repository: %v", v)
 	}
 }
 

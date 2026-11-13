@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/evidence"
 	"github.com/CoachCoe/Ledger/internal/speculate"
+	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 // Scorer result files larger than this are a scorer failure.
@@ -23,10 +26,12 @@ const scorerLogLimit = 8 << 10
 // runScorer runs a command scorer in a scratch directory with a reduced
 // environment: the definition's allowlist plus LEDGER_SCORER_INPUT (the
 // frozen candidate JSON), LEDGER_SCORER_OUTPUT (where it writes
-// {"scores": {...}}), LEDGER_REPOSITORY and LEDGER_RUN_ID. Like checks, it
-// runs as the local user without isolation. Any failure is a structured
+// {"scores": {...}}), LEDGER_REPOSITORY and LEDGER_RUN_ID. In a native
+// repository, which has no Git to read candidates from, LEDGER_CANDIDATES
+// holds a checkout of each candidate's tree named by its id. Like checks,
+// it runs as the local user without isolation. Any failure is a structured
 // error and never a winner.
-func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, ids []string) (map[string]int64, error) {
+func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, trees map[string]string) (map[string]int64, error) {
 	def := rs.run.ScorerDefinition
 	parent := filepath.Join(s.runtimeDir(), "speculate")
 	if err := os.MkdirAll(parent, 0o700); err != nil {
@@ -42,6 +47,18 @@ func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, ids
 		return nil, err
 	}
 	env := []string{"LEDGER_SCORER_INPUT=" + in, "LEDGER_SCORER_OUTPUT=" + out, "LEDGER_REPOSITORY=" + s.repositoryDir(), "LEDGER_RUN_ID=" + rs.run.ID}
+	if s.native() {
+		candidates := filepath.Join(dir, "candidates")
+		if err := os.Mkdir(candidates, 0o700); err != nil {
+			return nil, err
+		}
+		for id, tree := range trees {
+			if err := s.Provider.(workspace.NativeProvider).Workspaces.Checkout(tree, filepath.Join(candidates, id)); err != nil {
+				return nil, err
+			}
+		}
+		env = append(env, "LEDGER_CANDIDATES="+candidates)
+	}
 	allowed := map[string]bool{}
 	for _, name := range def.EnvAllowlist {
 		allowed[name] = true
@@ -74,7 +91,7 @@ func (s *Service) runScorer(ctx context.Context, rs *runState, input []byte, ids
 	if err != nil {
 		return nil, detail(apierr.New("scorer_failed", "scorer wrote no usable result: %v", err))
 	}
-	return speculate.ParseScores(raw, ids)
+	return speculate.ParseScores(raw, slices.Sorted(maps.Keys(trees)))
 }
 
 func readBounded(path string, limit int64) ([]byte, error) {

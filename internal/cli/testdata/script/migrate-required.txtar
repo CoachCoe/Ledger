@@ -1,0 +1,13 @@
+# A Phase 1 repository (a .ledger without a content store, in a Git working
+# tree) is never written again: init and import refuse it.
+exec git init -q phase1
+cd phase1
+mkdir .ledger/objects
+! exec ledger init
+stdout '"code": "migrate_required"'
+! exists .ledger/store
+cp $WORK/empty.ledger $WORK/phase1/b.ledger
+! exec ledger import b.ledger
+stdout '"code": "migrate_required"'
+
+-- empty.ledger --

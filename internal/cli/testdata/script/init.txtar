@@ -1,38 +1,51 @@
-# Outside a repository, init fails with a structured error.
-! exec ledger init
-stdout '"code": "not_a_git_repo"'
-
-exec git init -q repo
+# Init needs no Git: it imports the directory into a native repository.
+mkdir repo
 cd repo
+cp $WORK/a.ts a.ts
 exec ledger init
 stdout '"ok": true'
 stdout '"root_key_created": true'
 stdout '"case_sensitive": (true|false)'
+stdout '"repository_id": "rep_[0-9a-v]{26}"'
+stdout '"tree": "[0-9a-f]{64}"'
 exists .ledger/config.json
+exists .ledger/store/objects
 exists $XDG_CONFIG_HOME/ledger/keys/root.key
-grep '^/\.ledger/$' .git/info/exclude
+! exists .git
 
-# Ledger state is invisible to Git and the root key is outside the repo.
-exec git status --porcelain
-! stdout .
-exec git for-each-ref refs/ledger/
-stdout 'refs/ledger/records'
+# The repository record holds the imported tree.
+exec ledger verify --strict
+stdout '"integrity": "verified"'
 
 # A second init changes nothing.
-exec find .ledger/objects -type f
+exec find .ledger/objects .ledger/records.log -type f
 cp stdout ../objects-before
-exec git rev-parse refs/ledger/records
-cp stdout ../ref-before
+cp .ledger/records.log ../records-before
 exec ledger init
 stdout '"root_key_created": false'
-exec find .ledger/objects -type f
+exec find .ledger/objects .ledger/records.log -type f
 cmp stdout ../objects-before
-exec git rev-parse refs/ledger/records
-cmp stdout ../ref-before
-exec grep -c ledger .git/info/exclude
-stdout '^1$'
+cmp .ledger/records.log ../records-before
 
 # A key directory inside the repository is refused.
 env XDG_CONFIG_HOME=$WORK/repo/config
 ! exec ledger init
 stdout '"code": "key_dir_in_repository"'
+
+# Inside a Git working tree, .ledger is kept out of Git, and Git is never run.
+env XDG_CONFIG_HOME=$WORK/config
+cd $WORK
+exec git init -q gitrepo
+cd gitrepo
+cp $WORK/a.ts a.ts
+exec ledger init
+grep '^/\.ledger/$' .git/info/exclude
+exec git status --porcelain
+stdout '^\?\? a.ts$'
+! stdout '.ledger'
+exec ledger init
+exec grep -c ledger .git/info/exclude
+stdout '^1$'
+
+-- a.ts --
+export const a = 1;

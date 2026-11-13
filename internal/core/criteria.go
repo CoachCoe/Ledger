@@ -232,10 +232,15 @@ func (s *Service) evidenceJudge(ctx context.Context, r api.Request) (any, error)
 	}
 	at := now()
 	att := schema.EvidenceAttestation{
-		Manifest: b.Manifest, Commit: b.Commit, ExecutedTree: b.Tree, CheckDefinition: defRecord.Hash,
+		Manifest: b.Manifest, CheckDefinition: defRecord.Hash,
 		Category: "judgment", Criteria: []string{in.CriterionID}, Command: def.Command,
 		Result: in.Result, Reason: in.Reason, EnvironmentHash: envHash, Environment: env,
 		VerifierSession: reviewer, StartedAt: at, EndedAt: at, OutputDigest: canon.Hash(nil), Isolation: "none",
+	}
+	if b.Commit != "" {
+		att.Commit, att.ExecutedTree = b.Commit, b.Tree
+	} else {
+		att.Tree = b.Tree
 	}
 	o, err := s.seal(schema.KindEvidenceAttestation, att, signer)
 	if err != nil {

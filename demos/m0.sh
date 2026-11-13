@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # M0 demo: the record store's acceptance criteria, end to end, in a fresh
-# repository. Exits non-zero on the first failed expectation.
+# native repository. Exits non-zero on the first failed expectation.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-export XDG_CONFIG_HOME="$WORK/config" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export XDG_CONFIG_HOME="$WORK/config"
 (cd "$ROOT" && go build -o "$WORK/bin/ledger" ./cmd/ledger && go build -o "$WORK/bin/m0driver" ./demos/m0driver)
 export PATH="$WORK/bin:$PATH"
 OUT="$WORK/out"
@@ -15,7 +15,7 @@ mkdir -p "$OUT"
 step() { printf '\n== %s\n' "$*"; }
 field() { sed -n "s/.*\"$1\": \"\{0,1\}\([^\",]*\).*/\1/p" | head -1; }
 disk() { find .ledger/objects -type f | wc -l | tr -d ' '; }
-ref() { git ls-tree -r refs/ledger/records | wc -l | tr -d ' '; }
+logged() { wc -l <.ledger/records.log | tr -d ' '; }
 check() {
 	if ! eval "$1" >/dev/null; then
 		echo "FAIL: $2"
@@ -31,7 +31,7 @@ expect() {
 	echo "ok: $3"
 }
 
-git init -q "$WORK/repo"
+mkdir "$WORK/repo"
 cd "$WORK/repo"
 
 step "Schemas validate every example record and the independent signature fixtures"
@@ -41,8 +41,9 @@ step "ledger init is idempotent"
 first=$(ledger init | field root_key_receipt)
 second=$(ledger init | field root_key_receipt)
 expect "$second" "$first" "a second init replays the first instead of writing"
-expect "$(disk)" 2 "one root key record and its receipt"
-expect "$(git status --porcelain)" "" "Ledger state is invisible to git status"
+expect "$(disk)" 3 "one root key record, the repository record and their receipt"
+expect "$(logged)" 1 "the records head log lists the one group"
+check '! test -e .git' "init needs no Git"
 
 step "The same record hashes the same regardless of key order and whitespace"
 printf '{"b":1,"a":[1,2],"c":"\\u00e9"}' >"$OUT/a.json"
@@ -53,29 +54,32 @@ expect "$(cut -d' ' -f1 "$OUT/hashes" | sort -u | wc -l | tr -d ' ')" 1 "both do
 step "Parallel writers in separate processes lose no records"
 for _ in 1 2 3 4; do m0driver write 10 >/dev/null & done
 wait
-expect "$(disk)" 82 "4 processes x 10 operations x (record + receipt), plus init"
-expect "$(ref)" "$(disk)" "the records ref holds every object"
+expect "$(disk)" 83 "4 processes x 10 operations x (record + receipt), plus init"
+expect "$(logged)" 41 "the head log lists every group"
 
-step "A crash after the object write but before the ref update is repaired"
-m0driver crash ref || true
-expect "$(disk)" 84 "the crashed operation's record and receipt are on disk"
-expect "$(ref)" 82 "but not yet on the ref"
+step "A crash after the receipt but before the head log append is repaired"
+m0driver crash log || true
+expect "$(disk)" 85 "the crashed operation's record and receipt are on disk"
+expect "$(logged)" 41 "but not yet in the head log"
 ledger recover >"$OUT/recover"
-expect "$(ref)" "$(disk)" "recovery added them to the ref"
+expect "$(logged)" 42 "recovery appended its group"
 
-step "A ref moved externally between read and update is reconciled, not overwritten"
-m0driver move-ref
-expect "$(ref)" "$(disk)" "local and external records are both present"
-expect "$(disk)" 88 "the external record and receipt were materialized on disk"
+step "A group from another installation arriving mid-write is accepted, not lost"
+m0driver external
+ledger recover >"$OUT/recover"
+expect "$(disk)" 89 "the local and the external record and receipt are on disk"
+expect "$(logged)" 44 "both groups are in the head log"
 
-step "A truncated object file is quarantined and reported"
-victim=$(find .ledger/objects -type f | sort | head -1)
+step "A truncated record file is quarantined and its group reported missing"
+victim=$(grep -l '"kind":"intent"' $(find .ledger/objects -type f) | sort | head -1)
 hash=$(basename "$(dirname "$victim")")$(basename "$victim" .json)
 head -c 20 "$victim" >"$OUT/truncated" && mv "$OUT/truncated" "$victim"
 ledger recover >"$OUT/recover"
 check 'grep -q "\"$hash\"" "$OUT/recover"' "recovery reports $hash as quarantined"
 expect "$(find .ledger/quarantine -name "$hash.*" | wc -l | tr -d ' ')" 1 "the damaged file is kept in quarantine"
-expect "$(field materialized <"$OUT/recover")" 1 "the intact copy was restored from the ref"
+ledger reindex >"$OUT/reindex"
+check 'grep -q "\"record_missing\"" "$OUT/reindex"' "once reindexed, its group is reported missing by the head log"
+expect "$(logged)" 44 "the head log keeps the entry rather than dropping it"
 
 step "Two concurrent transitions from the same previous event: exactly one is accepted"
 m0driver race-close | tee "$OUT/race"

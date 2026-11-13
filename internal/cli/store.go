@@ -19,16 +19,38 @@ func noFlags(name string, args []string) error {
 	return nil
 }
 
-func withStore(name string, args []string, fn func(context.Context, *record.Store) (any, error)) (result any, err error) {
+// openStore opens the RecordStore of the working directory's repository
+// with the workspace provider that completes its journaled effects.
+func openStore(ctx context.Context) (*record.Store, workspace.WorkspaceProvider, error) {
+	repo, err := locate(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	s, err := repo.Open(ctx, record.Options{})
+	if err != nil {
+		return nil, nil, err
+	}
+	var provider workspace.WorkspaceProvider = workspace.GitProvider{Repo: repo.Git}
+	if repo.Native() {
+		c, err := readConfig(s.Dir)
+		if err == nil {
+			provider, err = workspace.OpenNative(s.Dir, c.CaseSensitive)
+		}
+		if err != nil {
+			_ = s.Close()
+			return nil, nil, err
+		}
+	}
+	s.SetEffectHandler(provider.Apply)
+	return s, provider, nil
+}
+
+func withStore(name string, args []string, fn func(context.Context, *record.Store, workspace.WorkspaceProvider) (any, error)) (result any, err error) {
 	if err := noFlags(name, args); err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
-	repo, err := openRepo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s, err := record.Open(ctx, repo, record.Options{Effect: workspace.GitProvider{Repo: repo}.Apply})
+	s, provider, err := openStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -37,16 +59,16 @@ func withStore(name string, args []string, fn func(context.Context, *record.Stor
 			err = cerr
 		}
 	}()
-	return fn(ctx, s)
+	return fn(ctx, s, provider)
 }
 
 func cmdReindex(args []string) (any, error) {
-	return withStore("reindex", args, func(ctx context.Context, s *record.Store) (any, error) {
+	return withStore("reindex", args, func(ctx context.Context, s *record.Store, provider workspace.WorkspaceProvider) (any, error) {
 		r, err := s.Reindex(ctx)
 		if err != nil {
 			return nil, err
 		}
-		workspaces, err := restoreWorkspaces(ctx, s)
+		workspaces, err := restoreWorkspaces(ctx, s, provider)
 		if err != nil {
 			return nil, err
 		}
@@ -59,13 +81,13 @@ func cmdReindex(args []string) (any, error) {
 }
 
 func cmdRecover(args []string) (any, error) {
-	return withStore("recover", args, func(ctx context.Context, s *record.Store) (any, error) {
+	return withStore("recover", args, func(ctx context.Context, s *record.Store, provider workspace.WorkspaceProvider) (any, error) {
 		return s.Recover(ctx)
 	})
 }
 
 func cmdStatus(args []string) (any, error) {
-	return withStore("status", args, func(ctx context.Context, s *record.Store) (any, error) {
+	return withStore("status", args, func(ctx context.Context, s *record.Store, provider workspace.WorkspaceProvider) (any, error) {
 		subjects, err := s.Index.Subjects(ctx)
 		if err != nil {
 			return nil, err

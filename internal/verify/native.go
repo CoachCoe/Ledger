@@ -78,6 +78,21 @@ func openStore(dir string, sensitive bool) (*store.Store, error) {
 	return store.Open(dir, sensitive)
 }
 
+// repositoryID is the id of the corpus's committed repository record, or
+// "" if it has none.
+func repositoryID(c *Corpus) string {
+	for _, h := range sortedKeys(c.Objects) {
+		o := c.Objects[h]
+		if o.Envelope.Kind != schema.KindRepository || !c.Committed[h] {
+			continue
+		}
+		if r, err := decode[schema.Repository](o); err == nil {
+			return r.ID
+		}
+	}
+	return ""
+}
+
 // casePolicy is the committed repository record's case policy; a corpus
 // without one is case-sensitive, as Phase 1 repositories are by default.
 func casePolicy(c *Corpus) bool {
@@ -378,6 +393,13 @@ func ImportNative(ctx context.Context, bundle string, dst Publisher, root string
 		return nil, apierr.New("bundle_invalid", "the bundle failed verification; nothing was imported").With("report", rep)
 	case !rep.Complete || len(rep.Missing) > 0 || len(rep.Pending) > 0:
 		return nil, apierr.New("bundle_incomplete", "the bundle is missing dependencies; nothing was imported").With("report", rep)
+	}
+	local, err := LoadObjectsDir(filepath.Join(dir, "objects"))
+	if err != nil {
+		return nil, err
+	}
+	if theirs, ours := repositoryID(src.Corpus), repositoryID(local); theirs == "" || theirs != ours {
+		return nil, apierr.New("repository_mismatch", "the bundle is from repository %q, not this repository %q; nothing was imported", theirs, ours)
 	}
 	out := &ImportReport{Verification: rep, Refs: []RefResult{}, Records: len(src.Corpus.Objects), OpLogs: []OpLogResult{}}
 	if err := importFault(opts, StageImportStore); err != nil {

@@ -1,15 +1,18 @@
-// Package observe provides platform watchers as coalesced triggers. Git
-// snapshots, never watcher event histories, are the source of write sets.
+// Package observe provides platform watchers as coalesced triggers.
+// Snapshots, never watcher event histories, are the source of write sets.
 package observe
 
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/CoachCoe/Ledger/internal/gitx"
+	"github.com/CoachCoe/Ledger/internal/ignore"
 )
 
 type WorkspaceObserver interface{ Close() error }
@@ -172,4 +175,39 @@ func (f *filter) Ignored(ctx context.Context, path string) bool {
 		return true
 	}
 	return ignored(ctx, f.root, path)
+}
+
+// RulesFilter returns filters that follow .gitignore and .ledgerignore
+// rules without Git, as native workspace snapshots do.
+func RulesFilter(caseSensitive bool) func(root string) (Filter, error) {
+	return func(root string) (Filter, error) {
+		return &rulesFilter{root: root, tree: ignore.New(root, caseSensitive, ".git", ".ledger")}, nil
+	}
+}
+
+type rulesFilter struct {
+	mu   sync.Mutex
+	root string
+	tree *ignore.Tree
+}
+
+// Ignored reports false when the rules cannot be read: a spurious trigger
+// costs one snapshot, a missed one loses an observation.
+func (f *rulesFilter) Ignored(_ context.Context, path string) bool {
+	rel, err := filepath.Rel(f.root, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true
+	}
+	if rel == "." {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if slices.Contains(ignore.Files, filepath.Base(rel)) {
+		f.tree.Invalidate()
+		return false
+	}
+	fi, err := os.Lstat(path)
+	ignored, err := f.tree.Ignored(filepath.ToSlash(rel), err == nil && fi.IsDir())
+	return err == nil && ignored
 }

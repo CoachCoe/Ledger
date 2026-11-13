@@ -20,10 +20,10 @@ import (
 )
 
 // TestAC204_Phase1 drives the nine engineering acceptance assertions against
-// real stdio processes and their auto-started daemon. Root acts through the
-// CLI; each agent session has its own session-bound MCP server. The sole
-// deliberate API bypass is the unauthorized disk edit used to prove
-// cooperative enforcement.
+// real stdio processes and their auto-started daemon, in a native
+// repository. Root acts through the CLI; each agent session has its own
+// session-bound MCP server. The sole deliberate API bypass is the
+// unauthorized disk edit used to prove cooperative enforcement.
 func TestAC204_Phase1(t *testing.T) {
 	work, err := os.MkdirTemp("/tmp", "ldg-m6-")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestAC204_Phase1(t *testing.T) {
 	if b, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v %s", err, b)
 	}
-	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(work, "config"))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	run := func(dir, name string, args ...string) []byte {
@@ -66,10 +66,6 @@ func TestAC204_Phase1(t *testing.T) {
 	write(repo, "caller.ts", baseCaller)
 	write(repo, "feature.js", "export function feature(){return 0;}\n")
 	write(repo, "helper.py", "def helper():\n return 0\n")
-	run(repo, "git", "init", "-q")
-	run(repo, "git", "add", "-A")
-	run(repo, "git", "commit", "-qm", "polyglot base")
-	base := strings.TrimSpace(string(run(repo, "git", "rev-parse", "HEAD")))
 	run(repo, binary, "init")
 	write(filepath.Join(repo, ".ledger"), "checks.json", `[{"name":"unit","category":"mechanical","setup":null,"command":"test -f api.ts && test -f feature.js && test -f helper.py","working_directory":".","env_allowlist":[],"timeout_seconds":10,"output_limit_bytes":1024}]`)
 	l := mockagent.Ledger{Binary: binary, Dir: repo, Env: env}
@@ -268,7 +264,7 @@ func TestAC204_Phase1(t *testing.T) {
 		// external mock below; inspect the run's signed verifier facts here.
 		dir := filepath.Join(repo, ".ledger", "objects")
 		found := false
-		tree := strings.TrimSpace(string(run(repo, "git", "rev-parse", winner["commit"].(string)+"^{tree}")))
+		tree := call("evidence.resolve", a["session_id"].(string), map[string]any{"manifest": winner["manifest"]})["tree"]
 		if err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -286,9 +282,11 @@ func TestAC204_Phase1(t *testing.T) {
 			}
 			if record.Kind == schema.KindEvidenceAttestation {
 				var att schema.EvidenceAttestation
-				_ = json.Unmarshal(record.Payload, &att)
+				if err := schema.Decode(record.SchemaVersion, record.Kind, record.Payload, &att); err != nil {
+					return err
+				}
 				if att.Manifest == winner["manifest"] && att.Result == "pass" {
-					if att.Commit != winner["commit"] || att.ExecutedTree != tree || att.Isolation != "none" {
+					if record.SchemaVersion != 2 || att.Tree != tree || att.Isolation != "none" {
 						t.Fatal(att)
 					}
 					found = true
@@ -301,24 +299,40 @@ func TestAC204_Phase1(t *testing.T) {
 		if !found {
 			t.Fatal("winner has no independent evidence")
 		}
-		facts := call("evidence.isIndependent", a["session_id"].(string), map[string]any{"manifest": winner["manifest"], "commit": winner["commit"]})
+		facts := call("evidence.isIndependent", a["session_id"].(string), map[string]any{"manifest": winner["manifest"]})
 		for _, raw := range facts["attestations"].([]any) {
 			if raw.(map[string]any)["independent"] != true {
 				t.Fatal(facts)
 			}
 		}
 	})
-	t.Run("AC210_normal_branch_immutable_trailers_no_merge", func(t *testing.T) {
-		commit := strings.TrimSpace(string(run(repo, "git", "rev-parse", winner["branch"].(string))))
-		if commit != winner["commit"] {
-			t.Fatal(winner)
+	t.Run("AC210_winner_retained_not_accepted", func(t *testing.T) {
+		// The winner's manifest keeps its tree and operation log; selecting it
+		// advances no line, so nothing is accepted.
+		var out struct{ Result map[string]any }
+		if err := json.Unmarshal(run(repo, binary, "verify", "--strict"), &out); err != nil {
+			t.Fatal(err)
 		}
-		msg := string(run(repo, "git", "show", "-s", "--format=%B", commit))
-		if !strings.Contains(msg, "Ledger-Manifest: "+winner["manifest"].(string)) {
-			t.Fatal(msg)
+		retained := false
+		for _, raw := range out.Result["manifests"].([]any) {
+			m := raw.(map[string]any)
+			c := m["components"].(map[string]any)
+			retained = retained || (m["hash"] == winner["manifest"] && c["tree"] == "verified" && c["oplog"] == "verified")
 		}
-		if got := strings.TrimSpace(string(run(repo, "git", "rev-parse", "HEAD"))); got != base {
-			t.Fatal("HEAD moved")
+		if !retained {
+			t.Fatal("winner not retained", out.Result["manifests"])
+		}
+		if err := filepath.WalkDir(filepath.Join(repo, ".ledger", "objects"), func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			raw, err := os.ReadFile(p)
+			if err == nil && strings.Contains(string(raw), `"kind":"line_advance"`) {
+				t.Fatalf("selection advanced a line: %s", p)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
 		}
 	})
 	t.Run("AC211_MCP_history_and_live_nearby", func(t *testing.T) {
@@ -379,9 +393,6 @@ func TestAC204_Phase1(t *testing.T) {
 	}
 	t.Run("AC213_offline_bundle_without_source", func(t *testing.T) {
 		if err := os.Rename(filepath.Join(repo, ".ledger"), filepath.Join(work, "unavailable-ledger")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(filepath.Join(repo, ".git"), filepath.Join(work, "unavailable-git")); err != nil {
 			t.Fatal(err)
 		}
 		var out struct{ Result map[string]any }

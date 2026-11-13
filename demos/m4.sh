@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# M4: real watcher delivery, symbol provenance and advisory leases.
+# M4: real watcher delivery, symbol provenance and advisory leases, in a
+# native repository.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 source "$ROOT/demos/lib.sh"
-need git; need jq; need python3
+need jq; need python3
 WORK=$(mkwork)
 REPO="$WORK/repo"
 LEDGER="$WORK/ledger"
 cleanup() { if [ -d "$REPO/.ledger" ]; then lg daemon stop >/dev/null 2>&1 || true; fi; rm -rf "$WORK"; }
 trap cleanup EXIT
 export XDG_CONFIG_HOME="$WORK/config"
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 step 'M4 acceptance: analyzers, mapping, overlap, queues and lease recovery'
 (cd "$ROOT" && go test -race ./internal/symbols ./internal/coord ./internal/core -run 'TestAC(003_184|007_020|117_Locator|117_Rename|187_Parser|182_Python|183_184|117_187|029_065|106_185|186_|053_055)|TestM4(OverlapQueueFaults|LeaseRestartWithoutRoot)' -count=1)
@@ -21,8 +21,6 @@ build_ledger "$WORK"
 new_fixture "$REPO"
 printf 'export function total(x: number) { return x; }\n' > "$REPO/api.ts"
 printf "import {total} from './api'; export function caller() { return 0; }\n" > "$REPO/caller.ts"
-git -C "$REPO" add api.ts caller.ts
-git -C "$REPO" commit -qm 'M4 symbol fixture'
 lg init >/dev/null
 session_a=$(lg session create '{}'); session_b=$(lg session create '{}')
 sid_a=$(jq -r '.result.result.session_id' <<<"$session_a"); sid_b=$(jq -r '.result.result.session_id' <<<"$session_b")

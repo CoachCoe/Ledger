@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -62,14 +63,26 @@ func (l Ledger) Root(ctx context.Context, op string, input any) (map[string]any,
 	return unwrap(reply.Result), nil
 }
 
-// Connect starts an MCP server bound to session.
+// Connect starts an MCP server bound to session. The server names the
+// api_version it serves as its implementation version.
 func (l Ledger) Connect(ctx context.Context, session string) (Client, error) {
 	s, err := mcp.NewClient(&mcp.Implementation{Name: "ledger-external-mock", Version: "1"}, nil).Connect(ctx, &mcp.CommandTransport{Command: l.command(ctx, "mcp", "--session", session)}, nil)
-	return Client{Session: s}, err
+	if err != nil {
+		return Client{}, err
+	}
+	version, err := strconv.Atoi(s.InitializeResult().ServerInfo.Version)
+	if err != nil {
+		_ = s.Close()
+		return Client{}, fmt.Errorf("server api_version: %w", err)
+	}
+	return Client{Session: s, Version: version}, nil
 }
 
 // Client is one MCP connection; every call acts as the session it is bound to.
-type Client struct{ Session *mcp.ClientSession }
+type Client struct {
+	Session *mcp.ClientSession
+	Version int
+}
 
 // Call validates the returned envelope, then unwraps the durable retry result.
 func (c Client) Call(ctx context.Context, op string, input any) (map[string]any, error) {
@@ -85,7 +98,7 @@ func (c Client) Call(ctx context.Context, op string, input any) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	if err := api.ValidateResponse(op, b); err != nil {
+	if err := api.ValidateResponseVersion(c.Version, op, b); err != nil {
 		return nil, fmt.Errorf("%s response: %w", op, err)
 	}
 	var envelope struct {
@@ -155,11 +168,11 @@ func (l Ledger) Lifecycle(ctx context.Context) (map[string]any, error) {
 	}
 	criteria := status["intent"].(map[string]any)["criteria"].([]any)
 	hash := criteria[0].(map[string]any)["verification"].(map[string]any)["definition_hash"]
-	e, err := verifier.Call(ctx, "evidence.run", map[string]any{"manifest": p["manifest"], "commit": p["commit"], "check_definition": hash})
+	e, err := verifier.Call(ctx, "evidence.run", revision(p, map[string]any{"check_definition": hash}))
 	if err != nil {
 		return nil, err
 	}
-	d, err := l.Root(ctx, "selection.record", map[string]any{"manifest": p["manifest"], "commit": p["commit"], "evidence": []any{e["attestation"]}})
+	d, err := l.Root(ctx, "selection.record", revision(p, map[string]any{"evidence": []any{e["attestation"]}}))
 	if err != nil {
 		return nil, err
 	}
@@ -168,4 +181,14 @@ func (l Ledger) Lifecycle(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{"proposal": p, "evidence": e, "selection": d, "why": why}, nil
+}
+
+// revision adds the proposal p binds to input: its manifest, and its commit
+// in a Phase 1 repository, whose manifests have one.
+func revision(p, input map[string]any) map[string]any {
+	input["manifest"] = p["manifest"]
+	if c, ok := p["commit"]; ok {
+		input["commit"] = c
+	}
+	return input
 }

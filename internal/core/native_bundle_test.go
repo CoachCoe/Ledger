@@ -199,3 +199,42 @@ func TestNativeMissingObjectIsUnavailable(t *testing.T) {
 		t.Fatalf("export without the object: %v", err)
 	}
 }
+
+// A bundle of one manifest carries its repository's record, so a clone
+// imports it and another repository refuses it before writing anything.
+func TestNativeImportRefusesAnotherRepository(t *testing.T) {
+	s, _ := nativeFixture(t)
+	clone := cloneNative(t, s)
+	other, _ := nativeFixture(t)
+	prop := nativeSelected(t, s)
+	out := filepath.Join(t.TempDir(), "one.ledger")
+	call(t, s, requestV2("bundle.export", "", map[string]any{"out": out, "manifests": []string{prop["manifest"].(string)}, "intents": []string{}, "allow_partial": false}))
+
+	before := storeFiles(t, other)
+	_, err := other.Handle(context.Background(), requestV2("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))
+	if !apierr.HasCode(err, "repository_mismatch") {
+		t.Fatalf("import into another repository: %v", err)
+	}
+	if after := storeFiles(t, other); !slices.Equal(before, after) {
+		t.Fatalf("refused import changed the store: %d -> %d objects", len(before), len(after))
+	}
+	imp := call(t, clone, requestV2("bundle.import", "", map[string]any{"bundle": out, "trust": []string{}}))["import"].(map[string]any)
+	if imp["objects"].(float64) == 0 {
+		t.Fatalf("clone import %v", imp)
+	}
+}
+
+func storeFiles(t *testing.T, s *Service) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(filepath.Join(s.Store.Dir, record.StoreDir), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			files = append(files, p)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}

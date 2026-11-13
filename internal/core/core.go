@@ -18,7 +18,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/capability"
-	"github.com/CoachCoe/Ledger/internal/cow"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/evidence"
 	"github.com/CoachCoe/Ledger/internal/identity"
@@ -83,17 +82,13 @@ func New(ctx context.Context, records *record.Store, keys identity.IdentityProvi
 		return nil, err
 	}
 	if s.native() {
-		objects, err := store.Open(filepath.Join(records.Dir, "store", "objects"), s.caseSensitive)
+		p, err := workspace.OpenNative(records.Dir, s.caseSensitive)
 		if err != nil {
 			return nil, err
 		}
-		workspaces, err := cow.New(cow.Config{Store: objects, Runtime: s.runtimeDir(), Logs: filepath.Join(records.Dir, "oplog"),
-			CaseSensitive: s.caseSensitive, Human: filepath.Dir(records.Dir)})
-		if err != nil {
-			return nil, err
-		}
-		s.Objects = objects
-		s.Provider = workspace.NativeProvider{Workspaces: workspaces, Store: objects}
+		workspaces := p.Workspaces
+		s.Objects = p.Store
+		s.Provider = p
 		s.checkouts = evidence.NativeCheckouts{Workspaces: workspaces}
 		s.evidenceWorkers = nativeEvidenceWorkers
 	} else {
@@ -141,6 +136,9 @@ func New(ctx context.Context, records *record.Store, keys identity.IdentityProvi
 	}
 	return s, nil
 }
+
+// CaseSensitive reports the repository's case policy.
+func (s *Service) CaseSensitive() bool { return s.caseSensitive }
 
 func (s *Service) runtimeDir() string { return filepath.Join(s.Store.Dir, "runtime") }
 

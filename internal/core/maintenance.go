@@ -118,12 +118,9 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		return map[string]any{"import": report, "index_digest": digest}, err
 	}
 	var src *verify.Source
-	switch {
-	case in.Bundle == "" && s.native():
-		src, err = verify.OpenNativeSource(root)
-	case in.Bundle == "":
-		src, err = verify.OpenRepoSource(ctx, s.Store.Repo)
-	default:
+	if in.Bundle == "" {
+		src, err = s.repositorySource(ctx)
+	} else {
 		src, err = verify.OpenBundleSource(ctx, local(in.Bundle), verify.DefaultLimits())
 	}
 	if err != nil {
@@ -138,4 +135,12 @@ func (s *Service) maintenance(ctx context.Context, r api.Request) (any, error) {
 		return nil, apierr.New("verification_failed", "integrity is %s", report.Integrity).With("report", report)
 	}
 	return report, nil
+}
+
+// repositorySource reads this repository's own records for verification.
+func (s *Service) repositorySource(ctx context.Context) (*verify.Source, error) {
+	if s.native() {
+		return verify.OpenNativeSource(filepath.Dir(s.Store.Dir))
+	}
+	return verify.OpenRepoSource(ctx, s.Store.Repo)
 }

@@ -1,12 +1,11 @@
 # The documented workflow through the public CLI, with an auto-started
-# daemon, on the JavaScript/TypeScript/Python fixture repository.
+# daemon, on the JavaScript/TypeScript/Python fixture in a native
+# repository: no Git is involved.
 fixture polyglot repo
 cd repo
-exec git init -q
-exec git add -A
-exec git commit -qm base
 exec ledger init
 stdout '"ok": true'
+jsonvar BASE result.tree
 
 exec ledger session create {"agent_name":"my-agent"}
 jsonvar SID result.result.session_id
@@ -24,10 +23,12 @@ stdout '"replayed": true'
 stdout '"intent_id": "'$RETRY'"'
 ! exec ledger intent create --operation-id op_0000000000000000000000rep1 '{"description":"Other","criteria":[{"id":"r","statement":"r","verification":{"kind":"judgment","reviewer":"any"}}]}'
 stdout '"code": "operation_mismatch"'
+
+# A fork starts from the tree init imported.
 exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
 jsonvar WSP result.result.workspace_id
 jsonvar WPATH result.result.path
-jsonvar BASE result.result.base_commit
+stdout '"base_tree": "'$BASE'"'
 
 # A plain edit, a deletion and a new file are observed against the base when
 # the session next calls Ledger.
@@ -40,32 +41,25 @@ stdout '"src/billing/refund.ts"'
 stdout '"tools/report.py"'
 ! stdout '"src/billing/invoice.ts"'
 
-# A proposal is a sole-parent commit on the fixed base with the four trailers.
+# A proposal binds the workspace's tree and the operation log entry that
+# recorded it.
 exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
-jsonvar BRANCH result.result.branch
 jsonvar MANIFEST result.result.manifest
 jsonvar TREE result.result.tree
-jsonvar COMMIT result.result.commit
-stdout '"branch": "ledger/int_[0-9a-v]{8}/wsp_[0-9a-v]{8}"'
-exec git log -1 --format=%B $BRANCH
-stdout '^Ledger-Change: chg_'
-stdout '^Ledger-Intent: '$INT'$'
-stdout '^Ledger-Session: '$SID'$'
-stdout '^Ledger-Manifest: '$MANIFEST'$'
-exec git rev-parse $BRANCH^{tree}
-stdout $TREE
-exec git rev-list --parents -n 1 $BRANCH
-cmpenv stdout $WORK/parents
-exec git rev-parse refs/ledger/proposals/$MANIFEST
-stdout $COMMIT
+stdout '"op_head": "[0-9a-f]{64}"'
+! stdout '"commit"'
 
-# evidence resolve freezes the manifest and commit binding; a commit from
-# elsewhere is rejected.
-exec ledger evidence resolve '{"manifest":"'$MANIFEST'","commit":"'$COMMIT'"}'
+# evidence resolve freezes the manifest's binding to its tree and base.
+exec ledger evidence resolve '{"manifest":"'$MANIFEST'"}'
 stdout '"frozen": true'
-stdout '"commit": "'$COMMIT'"'
-! exec ledger evidence resolve '{"manifest":"'$MANIFEST'","commit":"'$BASE'"}'
-stdout '"code": "binding_mismatch"'
+stdout '"tree": "'$TREE'"'
+stdout '"base_tree": "'$BASE'"'
+
+# The repository verifies offline from its own files.
+exec ledger verify --strict
+stdout '"integrity": "verified"'
+stdout '"op_head": "[0-9a-f]{64}"'
+
 # An edit made while the daemon is stopped is observed when it restarts.
 exec ledger daemon stop
 cp $WORK/repo/tools/report.py $WPATH/tools/later.py
@@ -87,29 +81,23 @@ exec ledger session recover {"workspace_id":"$WSP"}
 jsonvar SID2 result.result.session_id
 exec ledger workspace rework --session $SID2 {"workspace_id":"$WSP"}
 exec ledger workspace propose --session $SID2 '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
-stdout '"branch": "'$BRANCH'"'
-jsonvar COMMIT result.result.commit
-exec git log -1 --format=%B $BRANCH
-stdout '^Ledger-Session: '$SID2'$'
-exec git rev-list --parents -n 1 $BRANCH
-cmpenv stdout $WORK/parents
+jsonvar MANIFEST2 result.result.manifest
+exec ledger evidence resolve '{"manifest":"'$MANIFEST2'"}'
+stdout '"author_session": "'$SID2'"'
+stdout '"base_tree": "'$BASE'"'
 
-# Work after the last proposal is recorded nowhere, so closing keeps it: the
-# close commits, and cleanup stays pending until the files are dealt with and
-# recovery is retried.
+# Work after the last proposal is kept in the operation log, so closing
+# removes the checkout. An ignored file is recorded nowhere: closing keeps it,
+# and cleanup stays pending until it is dealt with and recovery is retried.
 cp $WORK/repo/tools/report.py $WPATH/tools/after.py
+mkdir $WPATH/__pycache__
+cp $WORK/repo/tools/report.py $WPATH/__pycache__/report.pyc
 ! exec ledger workspace close --session $SID2 {"workspace_id":"$WSP","reason":"finished"}
 stdout '"code": "cleanup_pending"'
-exists $WPATH/src/billing/refund.ts
-exists $WPATH/tools/after.py
+exists $WPATH/__pycache__/report.pyc
 exec ledger workspace status {"workspace_id":"$WSP"}
 stdout '"state": "closed"'
-rm $WPATH/src/billing/refund.ts $WPATH/tools/later.py $WPATH/tools/after.py
-exec git -C $WPATH checkout -- tools/report.py
+rm $WPATH/__pycache__
 exec ledger daemon stop
 exec ledger recover
 ! exists $WPATH
-exec git rev-parse --verify $BRANCH
-
--- parents --
-${COMMIT} ${BASE}

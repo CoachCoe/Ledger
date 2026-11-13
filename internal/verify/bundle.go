@@ -279,6 +279,13 @@ func selectRecords(objDir string, opts *ExportOptions) (chosen, error) {
 		for _, h := range starts {
 			ex.include(h)
 		}
+		// A native repository's identity travels with every bundle, so an
+		// import can refuse records from another repository up front.
+		for _, h := range sortedKeys(c.Objects) {
+			if c.Objects[h].Envelope.Kind == schema.KindRepository && c.Committed[h] {
+				ex.include(h)
+			}
+		}
 		ex.run()
 		sel.set, sel.missing = ex.set, ex.missingList()
 	}

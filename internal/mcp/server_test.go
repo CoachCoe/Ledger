@@ -19,7 +19,7 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 	ctx := context.Background()
 	sid := schema.NewID(schema.PrefixSession)
 	calls := 0
-	s, err := New(sid, func(_ context.Context, r api.Request) (any, error) {
+	s, err := New(sid, 1, func(_ context.Context, r api.Request) (any, error) {
 		calls++
 		if r.Version != 1 || r.Operation != "intent.create" || r.SessionID != sid {
 			t.Fatal(r)
@@ -44,7 +44,7 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ops, err := api.Operations()
+	ops, err := api.Operations(1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestAC006_026_197_ToolContractsAndStructuredErrors(t *testing.T) {
 		if strings.Contains(tool.Description, "root") || !strings.Contains(tool.Description, sid) {
 			t.Fatalf("%s description: %s", tool.Name, tool.Description)
 		}
-		in, out, err := api.ToolSchemas(tool.Name)
+		in, out, err := api.ToolSchemas(1, tool.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func TestNewRefusesRoot(t *testing.T) {
 		return nil, nil
 	}
 	for _, sid := range []string{"", "ses_short", "root"} {
-		if _, err := New(sid, call); !apierr.HasCode(err, "usage") {
+		if _, err := New(sid, 1, call); !apierr.HasCode(err, "usage") {
 			t.Fatalf("%q: %v", sid, err)
 		}
 	}

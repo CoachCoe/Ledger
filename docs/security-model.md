@@ -126,7 +126,7 @@ machine that ran it.
 
 ## Speculation scorers are not isolated
 
-A `command` scorer runs exactly like a check: `/bin/sh -c` as the daemon's user, with no network, filesystem or process isolation. Its scratch directory, timeout, process-group termination and reduced environment (`LEDGER_SCORER_INPUT`, `LEDGER_SCORER_OUTPUT`, `LEDGER_REPOSITORY`, `LEDGER_RUN_ID` and the definition's allowlist) bound it, but do not contain it. `LEDGER_REPOSITORY` lets it read candidate commits; it could equally write to the repository. Treat a scorer as code you trust as much as your checks. A `submission` scorer is whoever holds a root-authenticated connection to the daemon.
+A `command` scorer runs exactly like a check: `/bin/sh -c` as the daemon's user, with no network, filesystem or process isolation. Its scratch directory, timeout, process-group termination and reduced environment (`LEDGER_SCORER_INPUT`, `LEDGER_SCORER_OUTPUT`, `LEDGER_REPOSITORY`, `LEDGER_RUN_ID`, `LEDGER_CANDIDATES` in a native repository, and the definition's allowlist) bound it, but do not contain it. `LEDGER_REPOSITORY` lets it read candidate commits, and in a native repository `LEDGER_CANDIDATES` holds a checkout of each candidate; it could equally write to the repository. Treat a scorer as code you trust as much as your checks. A `submission` scorer is whoever holds a root-authenticated connection to the daemon.
 
 The run's scorer hash pins the definition, not the program the command invokes: editing `score.py` between runs changes scores without changing the hash. Scores are recorded in the run's selection, so a later reader sees what was scored, not why.
 

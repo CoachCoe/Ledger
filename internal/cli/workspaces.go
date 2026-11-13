@@ -12,9 +12,9 @@ import (
 	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
-// restoreWorkspaces reconstructs runtime bindings from Git metadata and
-// fresh private snapshots. It never shares a live observer's private index.
-func restoreWorkspaces(ctx context.Context, s *record.Store) ([]map[string]string, error) {
+// restoreWorkspaces reconstructs runtime bindings from fresh snapshots. It
+// never shares a live observer's private index.
+func restoreWorkspaces(ctx context.Context, s *record.Store, provider workspace.WorkspaceProvider) ([]map[string]string, error) {
 	active, err := s.Index.ActiveWorkspaces(ctx, "")
 	if err != nil {
 		return nil, err
@@ -24,7 +24,6 @@ func restoreWorkspaces(ctx context.Context, s *record.Store) ([]map[string]strin
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
-	provider := workspace.GitProvider{Repo: s.Repo}
 	problems := []map[string]string{}
 	for _, w := range active {
 		snap, err := provider.Snapshot(ctx, w, filepath.Join(scratch, w.ID+".index"))

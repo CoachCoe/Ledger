@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -22,9 +23,9 @@ type Caller func(context.Context, api.Request) (any, error)
 
 var sessionID = regexp.MustCompile(`^ses_[0-9a-v]{26}$`)
 
-// New serves every operation as a tool acting as session. An empty session
-// is refused: the daemon treats it as the local root.
-func New(session string, call Caller) (*mcp.Server, error) {
+// New serves every operation of api_version as a tool acting as session. An
+// empty session is refused: the daemon treats it as the local root.
+func New(session string, version int, call Caller) (*mcp.Server, error) {
 	if !sessionID.MatchString(session) {
 		return nil, apierr.New("usage", "ledger mcp requires --session with a session id; create one with ledger session create")
 	}
@@ -32,13 +33,13 @@ func New(session string, call Caller) (*mcp.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	ops, err := api.Operations()
+	ops, err := api.Operations(version)
 	if err != nil {
 		return nil, err
 	}
-	s := mcp.NewServer(&mcp.Implementation{Name: "ledger", Version: "1"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "ledger", Version: strconv.Itoa(version)}, nil)
 	for _, op := range ops {
-		in, out, err := api.ToolSchemas(op)
+		in, out, err := api.ToolSchemas(version, op)
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +48,7 @@ func New(session string, call Caller) (*mcp.Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		id := "https://schemas.ledger.invalid/v1/api/" + op + ".tool.json"
+		id := fmt.Sprintf("https://schemas.ledger.invalid/v%d/api/%s.tool.json", version, op)
 		if err := compiler.AddResource(id, doc); err != nil {
 			return nil, err
 		}
@@ -55,7 +56,7 @@ func New(session string, call Caller) (*mcp.Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.AddTool(&mcp.Tool{Name: op, Description: fmt.Sprintf("Ledger API v1: %s, acting as session %s. Mutations require a stable operation_id for retries.", op, session), InputSchema: in, OutputSchema: out}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		s.AddTool(&mcp.Tool{Name: op, Description: fmt.Sprintf("Ledger API v%d: %s, acting as session %s. Mutations require a stable operation_id for retries.", version, op, session), InputSchema: in, OutputSchema: out}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			raw, err := canon.Canonical(req.Params.Arguments)
 			if err != nil {
 				err = apierr.New("invalid_json", "%v", err)
@@ -77,7 +78,7 @@ func New(session string, call Caller) (*mcp.Server, error) {
 			var result any
 			if err == nil {
 				// Preserve unknown members for core request validation.
-				args["api_version"] = json.RawMessage("1")
+				args["api_version"] = json.RawMessage(strconv.Itoa(version))
 				args["operation"], _ = json.Marshal(op)
 				args["session_id"] = sid
 				if _, ok := args["operation_id"]; !ok && api.ReadOnly(op) {
@@ -92,7 +93,7 @@ func New(session string, call Caller) (*mcp.Server, error) {
 					}
 				}
 			}
-			body := api.Reply(result, err)
+			body := api.ReplyVersion(version, result, err)
 			b, encodeErr := canon.Marshal(body)
 			if encodeErr != nil {
 				return nil, encodeErr

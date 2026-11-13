@@ -15,7 +15,6 @@ import (
 	"github.com/CoachCoe/Ledger/internal/record"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/verify"
-	"github.com/CoachCoe/Ledger/internal/workspace"
 )
 
 // multiFlag collects a repeatable string flag.
@@ -86,11 +85,15 @@ func cmdExport(args []string) (any, error) {
 		return nil, err
 	}
 	ctx := context.Background()
-	repo, err := openRepo(ctx)
+	repo, err := locate(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return verify.Export(ctx, repo, verify.ExportOptions{Out: out, Manifests: manifests, Intents: intents, AllowPartial: partial})
+	opts := verify.ExportOptions{Out: out, Manifests: manifests, Intents: intents, AllowPartial: partial}
+	if repo.Native() {
+		return verify.ExportNative(repo.Root, opts)
+	}
+	return verify.Export(ctx, repo.Git, opts)
 }
 
 func nonNil(m multiFlag) []string {
@@ -132,11 +135,15 @@ func cmdVerify(args []string) (any, error) {
 	if bundle != "" {
 		src, err = verify.OpenBundleSource(ctx, bundle, verify.DefaultLimits())
 	} else {
-		r, rerr := openRepo(ctx)
-		if rerr != nil {
+		repo, rerr := locate(ctx)
+		switch {
+		case rerr != nil:
 			return nil, rerr
+		case repo.Native():
+			src, err = verify.OpenNativeSource(repo.Root)
+		default:
+			src, err = verify.OpenRepoSource(ctx, repo.Git)
 		}
-		src, err = verify.OpenRepoSource(ctx, r)
 	}
 	if err != nil {
 		return nil, err
@@ -189,14 +196,17 @@ func cmdImport(args []string) (result any, err error) {
 		return nil, err
 	}
 	ctx := context.Background()
-	repo, err := openRepo(ctx)
+	repo, err := locate(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if !repo.Native() {
+		return nil, migrateRequired(repo.Root)
 	}
 	if _, err := os.Stat(file); err != nil {
 		return nil, apierr.New("bundle_unreadable", "%v", err)
 	}
-	s, err := record.Open(ctx, repo, record.Options{Effect: workspace.GitProvider{Repo: repo}.Apply})
+	s, _, err := openStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +215,7 @@ func cmdImport(args []string) (result any, err error) {
 			err = cerr
 		}
 	}()
-	rep, err := verify.Import(ctx, file, storePublisher{s}, repo, verify.ImportOptions{Trusted: list})
+	rep, err := verify.ImportNative(ctx, file, storePublisher{s}, repo.Root, verify.ImportOptions{Trusted: list})
 	if err != nil {
 		return nil, err
 	}
