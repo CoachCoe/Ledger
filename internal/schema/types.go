@@ -28,6 +28,7 @@ const (
 	KindOperationReceipt    Kind = "operation_receipt"
 	KindRepository          Kind = "repository"
 	KindLineAdvance         Kind = "line_advance"
+	KindBridgeMapping       Kind = "bridge_mapping"
 )
 
 var kindsV1 = []Kind{
@@ -44,7 +45,7 @@ func KindsFor(version int) []Kind {
 	case 1:
 		return kindsV1
 	case 2:
-		return append(kindsV1[:len(kindsV1):len(kindsV1)], KindRepository, KindLineAdvance)
+		return append(kindsV1[:len(kindsV1):len(kindsV1)], KindRepository, KindLineAdvance, KindBridgeMapping)
 	}
 	return nil
 }
@@ -385,6 +386,8 @@ func PayloadType(version int, kind Kind) any {
 			return new(Repository)
 		case KindLineAdvance:
 			return new(LineAdvance)
+		case KindBridgeMapping:
+			return new(BridgeMapping)
 		}
 	} else if version != 1 {
 		return nil

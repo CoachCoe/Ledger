@@ -6,7 +6,7 @@ Ledger runs on macOS and Linux, one repository per daemon, on one machine. It do
 
 ## Build
 
-Requires Go 1.27.3 or later, cgo and a C compiler for tree-sitter. macOS also uses Apple's command-line C toolchain for FSEvents. Git is needed only to build and to read Phase 1 repositories.
+Requires Go 1.27.3 or later, cgo and a C compiler for tree-sitter. macOS also uses Apple's command-line C toolchain for FSEvents. Git is needed only to build, to read Phase 1 repositories and for the Git bridge (`ledger init --from-git` and `ledger git`).
 
 ```sh
 make build     # bin/ledger
@@ -43,7 +43,8 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 
 | Command | Effect |
 |---|---|
-| `ledger init` | Create a native repository in the current directory: import its files into `.ledger/store/`, create the root key in `~/.config/ledger/keys/` if needed, and sign its public key and the repository record. Inside a Git working tree it also keeps `.ledger/` out of Git. Safe to repeat. |
+| `ledger init` | Create a native repository in the current directory: import its files into `.ledger/store/`, create the root key in `~/.config/ledger/keys/` if needed, and sign its public key and the repository record. Inside a Git working tree it also keeps `.ledger/` out of Git. Safe to repeat. `--from-git PATH [--ref REF]` instead takes the first tree from a Git repository's ref and maps its first-parent history. |
+| `ledger git …` | Import another ref's history (`import`), write a line's accepted changes into a Git repository as commits (`export`), or push them to a Git remote (`mirror`). Ledger never force-pushes. |
 | `ledger session …` | Create, end, or recover a signing session. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
 | `ledger intent …` | Create, inspect, or close an intent; `intent criteriaStatus` reports each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |
@@ -74,7 +75,8 @@ The session, capability, intent, workspace, coordination, evidence, selection, s
 - `.ledger/oplog/`: one hash-chained operation log per workspace, which outlives the workspace.
 - `.ledger/records.log`: the records head log, listing every accepted group in order. It is checked by recovery, not by verification: signed receipts are the authority.
 - `.ledger/index.db`: a SQLite index of committed records plus local runtime state. It can always be rebuilt with `ledger reindex`.
-- `.ledger/journal/`, `.ledger/quarantine/`, `.ledger/runtime/`: in-flight operations, damaged files kept for inspection, and the daemon's socket, log, workspaces, and caches.
+- `.ledger/journal/`, `.ledger/quarantine/`, `.ledger/runtime/`: in-flight operations, damaged files kept for inspection, and the daemon's socket, log, workspaces, and caches, including the Git bridge's staging repository.
+- `.ledger/bridge.json`: the Git repository a bridged repository was imported from, which `ledger git import` and `ledger git mirror` use by default.
 
 Records, together with the trees and logs they bind, are portable: `ledger export` writes a single bundle that `ledger verify` checks in any directory, offline and without the source repository, and `ledger import` brings into another copy of the same repository. Integrity is computed from the bundle; trust comes only from your local trusted-roots list.
 

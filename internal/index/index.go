@@ -51,6 +51,10 @@ CREATE INDEX IF NOT EXISTS objects_selection_selector ON objects (json_extract(p
 	WHERE kind = 'selection_decision';
 CREATE INDEX IF NOT EXISTS objects_line_advance ON objects (json_extract(payload, '$.line'))
 	WHERE kind = 'line_advance';
+CREATE INDEX IF NOT EXISTS objects_bridge_commit ON objects (json_extract(payload, '$.git_commit'))
+	WHERE kind = 'bridge_mapping';
+CREATE INDEX IF NOT EXISTS objects_bridge_tree ON objects (json_extract(payload, '$.native_tree'))
+	WHERE kind = 'bridge_mapping';
 CREATE TABLE IF NOT EXISTS members (
 	receipt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (receipt, hash));
 CREATE INDEX IF NOT EXISTS members_hash ON members (hash);

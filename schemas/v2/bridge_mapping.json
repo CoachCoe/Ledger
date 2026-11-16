@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/bridge_mapping.json",
+  "title": "Bridge mapping",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "native_tree",
+    "git_commit",
+    "git_tree",
+    "git_parents",
+    "direction",
+    "author",
+    "committer",
+    "message",
+    "line_advance",
+    "manifest"
+  ],
+  "properties": {
+    "native_tree": {
+      "$ref": "common.json#/$defs/object_id"
+    },
+    "git_commit": {
+      "$ref": "../v1/common.json#/$defs/git_oid"
+    },
+    "git_tree": {
+      "$ref": "../v1/common.json#/$defs/git_oid"
+    },
+    "git_parents": {
+      "type": "array",
+      "items": {
+        "$ref": "../v1/common.json#/$defs/git_oid"
+      }
+    },
+    "direction": {
+      "enum": [
+        "import",
+        "export"
+      ]
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\n\\x00]*$"
+    },
+    "committer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\n\\x00]*$"
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "line_advance": {
+      "anyOf": [
+        {
+          "$ref": "../v1/common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "manifest": {
+      "anyOf": [
+        {
+          "$ref": "../v1/common.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

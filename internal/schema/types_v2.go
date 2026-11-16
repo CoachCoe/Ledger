@@ -119,6 +119,24 @@ type Repository struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// BridgeMapping records that a native tree and a Git commit hold the same
+// content (ADR 0028). Import mappings keep the Git commit's parents and
+// its author, committer and message; export mappings carry what Ledger
+// wrote, and name the line advance or manifest the commit was made for.
+// Author and Committer are Git ident lines: "Name <email> seconds zone".
+type BridgeMapping struct {
+	NativeTree  string   `json:"native_tree"`
+	GitCommit   string   `json:"git_commit"`
+	GitTree     string   `json:"git_tree"`
+	GitParents  []string `json:"git_parents"`
+	Direction   string   `json:"direction"`
+	Author      string   `json:"author"`
+	Committer   string   `json:"committer"`
+	Message     string   `json:"message"`
+	LineAdvance *string  `json:"line_advance"`
+	Manifest    *string  `json:"manifest"`
+}
+
 // LineAdvance accepts a selected manifest onto a line. Previous is the
 // line's head advance, or nil for the first.
 type LineAdvance struct {

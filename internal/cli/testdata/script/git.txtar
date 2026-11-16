@@ -1,0 +1,111 @@
+# The Git bridge through the shipped binary: import a Git repository's
+# first-parent history, accept a change onto main, export the line into
+# Git deterministically, and mirror it to a remote without force.
+mkdir repo
+cd repo
+exec git init -q -b main
+cp $WORK/a.ts a.ts
+exec git add a.ts
+exec git commit -q -m 'first'
+cp $WORK/b.ts b.ts
+exec git add b.ts
+exec git commit -q -m 'second'
+exec git rev-parse HEAD
+cp stdout $WORK/source-tip
+
+exec ledger init --from-git .
+stdout '"commits": 2'
+stdout '"mapped": 2'
+jsonvar TIP result.git.tip
+jsonvar TREE result.git.native_tree
+stdout '"tree": "'$TREE'"'
+exec ledger line status
+stdout '"tree": "'$TREE'"'
+
+# Repeating init or the import maps nothing twice.
+exec ledger init --from-git .
+stdout '"mapped": 0'
+exec ledger git import refs/heads/main
+stdout '"mapped": 0'
+
+# Accept one change onto main.
+exec ledger session create {"agent_name":"refunds-agent"}
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger intent create '{"description":"Add refunds","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"any"}}]}'
+jsonvar INT result.result.intent_id
+exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+cp $WORK/refund.ts $WPATH/refund.ts
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
+jsonvar MANIFEST result.result.manifest
+exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
+jsonvar JUDGED result.result.attestation
+exec ledger selection record {"manifest":"$MANIFEST","evidence":["$JUDGED"]}
+jsonvar SEL result.result.selection
+exec ledger line advance {"selection":"$SEL"}
+jsonvar ADVANCE result.result.advance
+exec ledger daemon stop
+
+# Export: one commit per advance on top of the imported tip, with the
+# Ledger trailers, and no Git object changed in the source.
+exec git init -q --bare $WORK/out.git
+exec ledger git export --line main --to $WORK/out.git
+stdout '"advances": 1'
+stdout '"mapped": 1'
+jsonvar EXPORTED result.export.tip
+exec git -C $WORK/out.git rev-parse main~1
+stdout $TIP
+exec git -C $WORK/out.git log -1 --format=%B main
+stdout '^Add refunds$'
+stdout '^Ledger-Line-Advance: '$ADVANCE'$'
+stdout '^Ledger-Manifest: '$MANIFEST'$'
+stdout '^Ledger-Selection: '$SEL'$'
+exec git -C $WORK/out.git log -1 --format=%an main
+stdout '^refunds-agent$'
+exec git -C $WORK/out.git ls-tree --name-only main
+stdout '^refund.ts$'
+
+# The same records export to the same commit, and nothing new is signed.
+exec git init -q --bare $WORK/again.git
+exec ledger git export --line main --to $WORK/again.git
+stdout '"tip": "'$EXPORTED'"'
+stdout '"mapped": 0'
+
+# The checked-out branch of a working tree is never moved.
+! exec ledger git export --line main --to .
+stdout '"code": "ref_checked_out"'
+exec git rev-parse HEAD
+cmp stdout $WORK/source-tip
+exec ledger git export --line main --to . --ref refs/heads/ledger/main
+exec git rev-parse ledger/main
+stdout $EXPORTED
+
+# Mirror pushes the line from the bridged repository; a remote that moved
+# is reported and never overwritten.
+exec git init -q --bare $WORK/remote.git
+exec git remote add origin $WORK/remote.git
+exec ledger git mirror --remote origin
+stdout '"ref": "refs/heads/main"'
+exec git -C $WORK/remote.git rev-parse main
+stdout $EXPORTED
+exec ledger git mirror --remote origin
+exec git checkout -q -b elsewhere
+cp $WORK/b.ts c.ts
+exec git add c.ts
+exec git commit -q -m 'moved'
+exec git push -q -f origin elsewhere:main
+! exec ledger git mirror --remote origin
+stdout '"code": "ref_moved"'
+
+# The mappings verify offline with every other record.
+exec ledger verify --strict
+stdout '"integrity": "verified"'
+
+-- a.ts --
+export const a = 1;
+-- b.ts --
+export const b = 2;
+-- refund.ts --
+export function refund() { return 0 }

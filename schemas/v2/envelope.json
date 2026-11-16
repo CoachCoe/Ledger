@@ -32,7 +32,8 @@
         "speculation_run",
         "operation_receipt",
         "repository",
-        "line_advance"
+        "line_advance",
+        "bridge_mapping"
       ]
     },
     "payload": {

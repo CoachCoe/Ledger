@@ -58,26 +58,36 @@ func repository(ctx context.Context, q querier) (schema.Repository, error) {
 	return r, apierr.New("conflicting_creation", "%d repository records", n)
 }
 
-// lineHead follows line's advances from its start. Each advance names its
-// predecessor and the validator admits one successor per head, so two
+// Advance is a committed line advance and its object hash.
+type Advance struct {
+	Hash string
+	schema.LineAdvance
+}
+
+// LineAdvances returns line's advances from its first to its head.
+func (x *Index) LineAdvances(ctx context.Context, line string) ([]Advance, error) {
+	return lineAdvances(ctx, x.conn(), line)
+}
+
+// lineAdvances follows line's advances from its start. Each advance names
+// its predecessor and the validator admits one successor per head, so two
 // advances from one head arrive only by import and leave the line forked.
-func lineHead(ctx context.Context, q querier, line string) (LineHead, error) {
+func lineAdvances(ctx context.Context, q querier, line string) ([]Advance, error) {
 	rows, err := q.QueryContext(ctx, `SELECT hash, payload FROM objects WHERE kind = 'line_advance' AND json_extract(payload, '$.line') = ?`, line)
 	if err != nil {
-		return LineHead{}, err
+		return nil, err
 	}
-	next := map[string]string{}
-	manifests := map[string]string{}
+	next := map[string]Advance{}
 	for rows.Next() {
-		var hash, payload string
-		if err := rows.Scan(&hash, &payload); err != nil {
+		var a Advance
+		var payload string
+		if err := rows.Scan(&a.Hash, &payload); err != nil {
 			rows.Close()
-			return LineHead{}, err
+			return nil, err
 		}
-		var a schema.LineAdvance
-		if err := json.Unmarshal([]byte(payload), &a); err != nil {
+		if err := json.Unmarshal([]byte(payload), &a.LineAdvance); err != nil {
 			rows.Close()
-			return LineHead{}, err
+			return nil, err
 		}
 		from := ""
 		if a.Previous != nil {
@@ -85,37 +95,46 @@ func lineHead(ctx context.Context, q querier, line string) (LineHead, error) {
 		}
 		if other, ok := next[from]; ok {
 			rows.Close()
-			return LineHead{}, apierr.New("line_fork", "line %s has two advances from one head: %s and %s", line, min(hash, other), max(hash, other)).With("line", line)
+			return nil, apierr.New("line_fork", "line %s has two advances from one head: %s and %s", line, min(a.Hash, other.Hash), max(a.Hash, other.Hash)).With("line", line)
 		}
-		next[from] = hash
-		manifests[hash] = a.Manifest
+		next[from] = a
 	}
 	if err := rows.Close(); err != nil {
-		return LineHead{}, err
+		return nil, err
 	}
-	head, at := "", ""
-	for steps := 0; ; steps++ {
-		h, ok := next[at]
+	var out []Advance
+	for at := ""; ; {
+		a, ok := next[at]
 		if !ok {
 			break
 		}
-		if steps > len(next) {
-			return LineHead{}, apierr.New("line_fork", "line %s does not chain", line).With("line", line)
+		if len(out) >= len(next) {
+			return nil, apierr.New("line_fork", "line %s does not chain", line).With("line", line)
 		}
-		head, at = h, h
+		out = append(out, a)
+		at = a.Hash
 	}
-	if head == "" {
+	return out, nil
+}
+
+func lineHead(ctx context.Context, q querier, line string) (LineHead, error) {
+	advances, err := lineAdvances(ctx, q, line)
+	if err != nil {
+		return LineHead{}, err
+	}
+	if len(advances) == 0 {
 		r, err := repository(ctx, q)
 		if err != nil {
 			return LineHead{}, err
 		}
 		return LineHead{Tree: r.Tree}, nil
 	}
-	m, err := manifestIn(ctx, q, manifests[head])
+	head := advances[len(advances)-1]
+	m, err := manifestIn(ctx, q, head.Manifest)
 	if err != nil {
 		return LineHead{}, err
 	}
-	return LineHead{Advance: &head, Tree: m.Tree}, nil
+	return LineHead{Advance: &head.Hash, Tree: m.Tree}, nil
 }
 
 func (v *validator) checkRepository(p *schema.Repository, signer string) error {

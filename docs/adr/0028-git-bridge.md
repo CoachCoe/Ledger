@@ -59,6 +59,25 @@ hardening: global and system config disabled, hooks pointed at `/dev/null`,
   CLI across Git 2.25 to 2.54, and cgo is already limited to tree-sitter and
   FSEvents.
 
+## Scope of the current build
+
+`init --from-git`, `git import`, `git export --line` and `git mirror` work
+as described above, and P2-AC-030 to P2-AC-032 are covered by tests on a
+small fixture. These parts are not built yet: `git sync` and
+`foreign_change` records (P2-AC-033), `git export --proposals`
+(P2-AC-034) and `export --with-git`. Details the decision left open:
+
+- The staging repository is `.ledger/runtime/bridge/bridge-<format>.git`,
+  one per Git object format, and only local repositories can be read.
+- A repository not imported from Git exports its first tree as a root
+  commit by `Ledger root`; its export mapping names neither an advance nor
+  a manifest.
+- Identities use `@ledger.invalid` addresses: the session id for a session
+  and the first 16 hex digits of the fingerprint for root. Dates are whole
+  seconds in UTC.
+- Mirroring pushes with the user's Git configuration, so credential helpers
+  work, with hooks disabled.
+
 ## Validation
 
 - **P2-AC-030:** importing the NestJS fixture at its pinned commit and

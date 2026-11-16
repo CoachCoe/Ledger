@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"flag"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/atomicfile"
+	"github.com/CoachCoe/Ledger/internal/bridge"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/cow"
 	"github.com/CoachCoe/Ledger/internal/envelope"
@@ -35,10 +37,20 @@ type config struct {
 }
 
 func cmdInit(args []string) (result any, err error) {
-	if err := noFlags("init", args); err != nil {
+	var fromGit, ref string
+	if err := parseFlags("init", "ledger init [--from-git PATH [--ref REF]]", args, func(fl *flag.FlagSet) {
+		fl.StringVar(&fromGit, "from-git", "", "Git repository whose first-parent history becomes the repository's")
+		fl.StringVar(&ref, "ref", "HEAD", "ref of --from-git to import")
+	}); err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
+	var src, format string
+	if fromGit != "" {
+		if src, format, err = gitSource(ctx, fromGit); err != nil {
+			return nil, err
+		}
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -138,9 +150,34 @@ func cmdInit(args []string) (result any, err error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := createRepository(ctx, s, signer, operationID, caseSensitive, func() (string, error) { return workspaces.Import(root) })
+	tree := func() (string, error) { return workspaces.Import(root) }
+	var br *bridge.Bridge
+	var history bridge.Fetched
+	if src != "" {
+		staging, err := bridge.OpenStaging(ctx, stagingDir(dir), format)
+		if err != nil {
+			return nil, err
+		}
+		br = &bridge.Bridge{Records: s, Objects: objects, Staging: staging, Root: signer}
+		if history, err = staging.Convert(ctx, objects, src, ref); err != nil {
+			return nil, err
+		}
+		tree = func() (string, error) { return history.Tip().NativeTree, nil }
+	}
+	res, err := createRepository(ctx, s, signer, operationID, caseSensitive, tree)
 	if err != nil {
 		return nil, err
+	}
+	var imported any
+	if br != nil {
+		report, err := br.Publish(ctx, history)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeBridgeConfig(dir, bridgeConfig{Source: src, Ref: ref, Format: format}); err != nil {
+			return nil, err
+		}
+		imported = report
 	}
 	var made struct {
 		Repository string `json:"repository"`
@@ -159,6 +196,7 @@ func cmdInit(args []string) (result any, err error) {
 		"root_key_dir":     keyDir,
 		"case_sensitive":   caseSensitive,
 		"root_key_receipt": res.Receipt,
+		"git":              imported,
 	}, nil
 }
 

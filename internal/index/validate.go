@@ -177,6 +177,12 @@ func (v *validator) check(o envelope.Object) error {
 			return err
 		}
 		return v.checkLineAdvance(o.Hash, &p, signer)
+	case schema.KindBridgeMapping:
+		var p schema.BridgeMapping
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkMapping(&p, signer)
 	}
 	return nil
 }

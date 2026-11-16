@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "kind": "bridge_mapping",
+  "payload": {
+    "native_tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "git_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "git_tree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "git_parents": [
+      "ffffffffffffffffffffffffffffffffffffffff"
+    ],
+    "direction": "import",
+    "author": "A U Thor <author@example.com> 1762344000 +0100",
+    "committer": "C O Mitter <committer@example.com> 1762344000 +0000",
+    "message": "Add refunds\n",
+    "line_advance": null,
+    "manifest": null
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "oFDRK5_Uj67c8n5egSjoLK_NKUojKRTueZKVE2oPn4yhkCKVsMhWdjLMogWjp85QXprJDdXC31wPM-XFjiGWAA"
+}
