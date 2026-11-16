@@ -75,6 +75,15 @@ defaulting to empty so no existing authority widens. The session-bound MCP
 adapter (ADR 0024) lands first, so acceptance cannot be self-granted through
 an empty `session_id`.
 
+`ledger migrate` implements this. Details the decision left open: migration
+refuses a repository whose v1 records do not verify; it closes Phase 1
+workspaces that are still open or proposed, by root, because a Git worktree
+has no operation log to continue from; and after migration the verifier
+checks a v1 manifest's commit binding against the commit rebuilt from its
+import mapping, using the mapping only when its fields hash to the commit
+id. Running `history.why` across v1 and v2 records (P2-AC-024) is not
+covered yet.
+
 ## Alternatives considered
 
 - **Add native fields beside the Git ones in v1.** Rejected: v1 schemas are

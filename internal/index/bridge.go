@@ -98,3 +98,26 @@ func (v *validator) checkMapping(p *schema.BridgeMapping, signer string) error {
 	}
 	return nil
 }
+
+// Phase1Commits returns every Git commit that schema_version 1 records,
+// or the results of the operations that published them, name.
+func (x *Index) Phase1Commits(ctx context.Context) ([]string, error) {
+	rows, err := x.conn().QueryContext(ctx, `SELECT DISTINCT c FROM (
+ SELECT json_extract(payload,'$.base_commit') AS c FROM objects WHERE version=1
+ UNION SELECT json_extract(payload,'$.commit') FROM objects WHERE version=1
+ UNION SELECT json_extract(op.result,'$.commit') FROM operations op JOIN members m ON m.receipt=op.receipt JOIN objects o ON o.hash=m.hash WHERE o.version=1
+) WHERE typeof(c)='text' AND c<>'' ORDER BY c`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

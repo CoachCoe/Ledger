@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,8 +60,40 @@ func TestScripts(t *testing.T) {
 				ts.Check(os.CopyFS(ts.MkAbs(args[1]), os.DirFS(filepath.Join(fixtures, args[0]))))
 			},
 			"jsonvar": jsonvar,
+			"untar":   untar,
 		},
 	})
+}
+
+// untar FILE extracts a tar file of testdata into the work directory,
+// keeping file modes, which a repository's Git objects and keys need.
+func untar(ts *testscript.TestScript, neg bool, args []string) {
+	if neg || len(args) != 1 {
+		ts.Fatalf("usage: untar file")
+	}
+	f, err := os.Open(filepath.Join("testdata", args[0]))
+	ts.Check(err)
+	defer f.Close()
+	tr := tar.NewReader(f)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		ts.Check(err)
+		target := ts.MkAbs(filepath.FromSlash(hdr.Name))
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			ts.Check(os.MkdirAll(target, 0o700))
+			ts.Check(os.Chmod(target, fs.FileMode(hdr.Mode)&fs.ModePerm|0o700))
+		case tar.TypeReg:
+			data, err := io.ReadAll(tr)
+			ts.Check(err)
+			ts.Check(os.WriteFile(target, data, fs.FileMode(hdr.Mode)&fs.ModePerm|0o200))
+		default:
+			ts.Fatalf("unexpected tar entry %s", hdr.Name)
+		}
+	}
 }
 
 // jsonvar NAME PATH sets NAME to the string at the dot-separated PATH in

@@ -1,0 +1,80 @@
+# ledger migrate converts a Phase 1 repository in place: its v1 records
+# stay as they are and still verify, its Git history is mapped, and new
+# work runs on the native store. phase1-repo.tar was written by the last
+# binary with the Phase 1 write path (5b2deb9): two Git commits, one
+# proposal judged and selected, and one open workspace. Its root key is a
+# test key in config/.
+untar phase1-repo.tar
+cd repo
+! exec ledger session create {"agent_name":"x"}
+stdout '"code": "migrate_required"'
+
+# Without its root key nothing is converted.
+env XDG_CONFIG_HOME=$WORK/elsewhere
+! exec ledger migrate
+stdout '"code": "root_unavailable"'
+! exists .ledger/store
+env XDG_CONFIG_HOME=$WORK/config
+
+exec ledger migrate
+stdout '"phase1_commits": 2'
+stdout '"commits": 3'
+stdout '"mapped": 3'
+stdout '"tip": "42c4ffd20442908179e2206e509eca215833ceed"'
+stdout '"workspace_id": "wsp_v2jsv44cjb253vvfannn4v3etg"'
+stdout '"workspace_id": "wsp_ag6jjmtrqou999abjrorf31bfc"'
+jsonvar TREE result.tree
+exists .ledger/store
+exec ledger line status
+stdout '"tree": "'$TREE'"'
+exec ledger daemon stop
+
+# The v1 manifest's commit binding is checked against the commit its
+# import mapping rebuilds, as Phase 1 checked it against Git.
+exec ledger verify --strict
+stdout '"integrity": "verified"'
+stdout '"commit": "32d0f8134247148c280253e8020add0e8f755bbb"'
+stdout '"trailer": "ok"'
+stdout '"parent": "ok"'
+
+# A migrate interrupted before the store is moved into place finishes on
+# the next run, publishing nothing twice.
+mkdir .ledger/runtime/migrate
+mv .ledger/store .ledger/runtime/migrate/store
+exec ledger migrate
+stdout '"mapped": 0'
+exists .ledger/store
+! exec ledger migrate
+stdout '"code": "already_native"'
+
+# Phase 1 workspaces were closed, so the v1 selection cannot be advanced.
+! exec ledger line advance {"selection":"5dcb2adeca183df5a7d004e06d931074d4a595f88a2e2e8391755a6bfba492fe"}
+stdout '"code": "invalid_state"'
+
+# New work on a v1 intent runs on the native store and exports on top of
+# the imported history.
+exec ledger session create {"agent_name":"tax-agent"}
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger workspace fork --session $SID {"intent_id":"int_0ka7netf1jco8i2v8io9qi51jc","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+cp $WORK/tax.ts $WPATH/src/tax.ts
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Draft taxes"}'
+jsonvar MANIFEST result.result.manifest
+exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
+jsonvar JUDGED result.result.attestation
+exec ledger selection record {"manifest":"$MANIFEST","evidence":["$JUDGED"]}
+jsonvar SEL result.result.selection
+exec ledger line advance {"selection":"$SEL"}
+exec ledger daemon stop
+exec ledger git export --line main --to . --ref refs/heads/ledger/main
+exec git rev-parse ledger/main~1
+stdout 42c4ffd20442908179e2206e509eca215833ceed
+exec git log -1 --format=%s ledger/main
+stdout '^Draft taxes$'
+exec ledger verify --strict
+stdout '"integrity": "verified"'
+
+-- tax.ts --
+export const tax = 0

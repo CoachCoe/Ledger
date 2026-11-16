@@ -37,6 +37,7 @@ func commands() map[string]command {
 		"workspace":    {"fork, inspect, write to, restore, propose, rework or close a workspace, or read its operation log", liveCommand("workspace")},
 		"system":       {"inspect daemon status", liveCommand("system")},
 		"init":         {"create a native repository from the current directory, or from a Git repository's history with --from-git", cmdInit},
+		"migrate":      {"convert this Phase 1 repository into a native one, keeping every v1 record as it is", cmdMigrate},
 		"git":          {"import Git history, export a line into a Git repository, or mirror it to a remote", cmdGit},
 		"recover":      {"reconcile record files, the records ref, and the index", cmdRecover},
 		"reindex":      {"rebuild the index from the record files", cmdReindex},

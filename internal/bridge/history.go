@@ -379,3 +379,52 @@ func clean(s string) string {
 		return r
 	}, s))
 }
+
+// ConvertCommits converts the named commits of the Git repository at src,
+// in the order given, fetching every branch and Phase 1 proposal ref so
+// that commits Phase 1 records name are present. A commit no ref reaches
+// is reported as commit_unavailable.
+func (s *Staging) ConvertCommits(ctx context.Context, objects *store.Store, src string, shas []string) ([]Imported, error) {
+	if len(shas) == 0 {
+		return nil, nil
+	}
+	if _, err := s.Git(ctx, nil, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--", src,
+		"+refs/heads/*:refs/bridge/source/heads/*", "+refs/ledger/proposals/*:refs/bridge/source/proposals/*"); err != nil {
+		return nil, apierr.New("ref_unavailable", "cannot fetch from %s: %v", src, err)
+	}
+	var missing []string
+	for _, sha := range shas {
+		if _, err := s.Git(ctx, nil, "cat-file", "-e", sha+"^{commit}"); err != nil {
+			missing = append(missing, sha)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, apierr.New("commit_unavailable", "%d commits named by records are not reachable from any branch or proposal ref", len(missing)).With("commits", missing)
+	}
+	b := objects.Batch()
+	im, err := s.NewImporter(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Imported, 0, len(shas))
+	for _, sha := range shas {
+		c, err := im.Commit(sha)
+		if err != nil {
+			_ = im.Close()
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if err := im.Close(); err != nil {
+		return nil, err
+	}
+	if err := b.Commit(); err != nil {
+		return nil, err
+	}
+	for _, c := range out {
+		if _, err := s.Git(ctx, nil, "update-ref", importRef(c.SHA), c.SHA); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}

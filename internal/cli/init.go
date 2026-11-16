@@ -241,18 +241,25 @@ func createRepository(ctx context.Context, s *record.Store, root identity.Signer
 		if err != nil {
 			return nil, nil, err
 		}
-		policy := "sensitive"
-		if !caseSensitive {
-			policy = "insensitive"
-		}
-		id := schema.NewID(schema.PrefixRepository)
-		repo, err := envelope.SealVersion(2, schema.KindRepository, schema.Repository{ID: id, HashAlgorithm: "sha256",
-			CasePolicy: policy, Analyzers: symbols.Languages(), Tree: t, CreatedAt: now}, root)
+		repo, id, err := repositoryRecord(root, caseSensitive, t, now)
 		if err != nil {
 			return nil, nil, err
 		}
 		return map[string]string{"root_key": key.Hash, "repository": id, "tree": t}, []envelope.Object{key, repo}, nil
 	})
+}
+
+// repositoryRecord seals the record that makes a repository native, with
+// tree as the head of line main.
+func repositoryRecord(root identity.Signer, caseSensitive bool, tree, at string) (envelope.Object, string, error) {
+	policy := "sensitive"
+	if !caseSensitive {
+		policy = "insensitive"
+	}
+	id := schema.NewID(schema.PrefixRepository)
+	o, err := envelope.SealVersion(2, schema.KindRepository, schema.Repository{ID: id, HashAlgorithm: "sha256",
+		CasePolicy: policy, Analyzers: symbols.Languages(), Tree: tree, CreatedAt: at}, root)
+	return o, id, err
 }
 
 // insideRepository returns the nearest ancestor of path that holds a Git or

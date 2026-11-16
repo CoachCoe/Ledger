@@ -44,6 +44,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 | Command | Effect |
 |---|---|
 | `ledger init` | Create a native repository in the current directory: import its files into `.ledger/store/`, create the root key in `~/.config/ledger/keys/` if needed, and sign its public key and the repository record. Inside a Git working tree it also keeps `.ledger/` out of Git. Safe to repeat. `--from-git PATH [--ref REF]` instead takes the first tree from a Git repository's ref and maps its first-parent history. |
+| `ledger migrate` | Convert this Phase 1 repository into a native one with the same root key: map HEAD's history and every commit a v1 record names, close the Phase 1 workspaces still open or proposed, and make HEAD's tree the head of `main`. |
 | `ledger git …` | Import another ref's history (`import`), write a line's accepted changes into a Git repository as commits (`export`), or push them to a Git remote (`mirror`). Ledger never force-pushes. |
 | `ledger session …` | Create, end, or recover a signing session. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
@@ -80,7 +81,7 @@ The session, capability, intent, workspace, coordination, evidence, selection, s
 
 Records, together with the trees and logs they bind, are portable: `ledger export` writes a single bundle that `ledger verify` checks in any directory, offline and without the source repository, and `ledger import` brings into another copy of the same repository. Integrity is computed from the bundle; trust comes only from your local trusted-roots list.
 
-A Phase 1 repository, whose records live on `refs/ledger/records` in Git, stays readable and verifiable. This binary writes only native repositories: in a Phase 1 repository `status`, `verify` and `export` work, and every command that would change it, the daemon and the MCP server refuse with `migrate_required`.
+A Phase 1 repository, whose records live on `refs/ledger/records` in Git, stays readable and verifiable. This binary writes only native repositories: in a Phase 1 repository `status`, `verify` and `export` work, and every command that would change it, the daemon and the MCP server refuse with `migrate_required` until `ledger migrate` converts it in place. Migration rewrites no v1 record, and the v1 records keep verifying afterwards.
 
 ## Demos
 

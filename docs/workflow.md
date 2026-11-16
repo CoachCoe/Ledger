@@ -4,7 +4,7 @@ Ledger runs a per-repository daemon that holds session keys, observes workspaces
 
 Requirements: Go 1.27.3 or newer to build, and on macOS cgo with Apple's command-line C toolchain (FSEvents). Linux uses inotify. Git is not needed except by the Git bridge. The repository path must fit the operating system's Unix-socket path limit (104 bytes on macOS, 108 on Linux, including `/.ledger/runtime/ledgerd.sock`).
 
-`ledger init` makes the current directory a native repository: it imports every file that `.gitignore` and `.ledgerignore` rules do not exclude as the repository's first tree, and signs the root public key and a `repository` record naming that tree and the case policy of the filesystem. That tree is the head of line `main` until a signed `line_advance` moves it. Commands run anywhere inside the directory find it. A `.ledger/` without a content store is a Phase 1 repository: this binary runs `status`, `verify` and `export` there, and refuses every command that would change it, the daemon and the MCP server with `migrate_required`.
+`ledger init` makes the current directory a native repository: it imports every file that `.gitignore` and `.ledgerignore` rules do not exclude as the repository's first tree, and signs the root public key and a `repository` record naming that tree and the case policy of the filesystem. That tree is the head of line `main` until a signed `line_advance` moves it. Commands run anywhere inside the directory find it. A `.ledger/` without a content store is a Phase 1 repository: this binary runs `status`, `verify` and `export` there, and refuses every command that would change it, the daemon and the MCP server with `migrate_required` until `ledger migrate` converts it (see [Migrating a Phase 1 repository](#migrating-a-phase-1-repository)).
 
 ## A complete session
 
@@ -163,6 +163,18 @@ Git is a place Ledger reads history from and writes accepted changes to; it is n
 `ledger git export [--line main] --to PATH [--ref REF]` writes one Git commit per `line_advance` of the line on top of the imported commit of the repository's first tree (or, in a repository not imported from Git, a root commit of that tree), and fast-forwards `REF` (default `refs/heads/LINE`) in the Git repository at `PATH`. A commit is authored by the manifest's author session and committed by the advance's actor, both at the advance's time, with `@ledger.invalid` addresses; its message is the proposal's plan, or the intent's description, followed by `Ledger-Line-Advance`, `Ledger-Manifest`, `Ledger-Intent` and `Ledger-Selection` trailers. The same records always produce the same commit hashes, and Ledger signs an export `bridge_mapping` for each new commit. A ref that has moved is reported as `ref_moved`, and the branch checked out in a working tree as `ref_checked_out` (export to another `--ref`); neither is changed.
 
 `ledger git mirror --remote NAME [--line main] [--repo PATH]` exports the line into `refs/ledger/lines/LINE` of the bridged repository (or `--repo`) and runs an ordinary `git push` of it to `refs/heads/LINE` on that repository's remote. The push uses your Git configuration, so credential helpers work, with hooks disabled. It never force-pushes: a remote branch that moved is reported as `ref_moved` and left alone.
+
+## Migrating a Phase 1 repository
+
+`ledger migrate`, run in a Phase 1 repository with its root key, converts it in place (ADR 0027). It writes v2 records beside the v1 ones and rewrites or re-signs none of them:
+
+- It refuses with `verification_failed` if the v1 records do not verify, and with `root_unavailable` or `root_mismatch` without the repository's root key.
+- Through the Git bridge it imports HEAD's first-parent history and every other commit a v1 record names, such as proposal and base commits, and signs an import `bridge_mapping` for each. A commit that no branch or `refs/ledger/proposals/` ref reaches fails with `commit_unavailable`.
+- It signs a `closed` event, reason `migrated`, for every Phase 1 workspace still open or proposed. A Phase 1 workspace is a Git worktree with no operation log, so it cannot continue. Its worktree is left on disk under `.ledger/runtime/workspaces/` for you to carry uncommitted files into a new workspace. Its proposals, evidence and selections stay in the history, but a v1 selection cannot advance a line.
+- It signs the `repository` record, whose tree is HEAD's, so HEAD's tree becomes the head of `main`. Uncommitted files in the working tree are not imported.
+- It writes `.ledger/bridge.json` naming the repository itself, so `ledger git export` and `ledger git mirror` work at once.
+
+The content store is converted under `.ledger/runtime/migrate/` and moved into place last. Until then the repository is still a Phase 1 one, so an interrupted migrate is finished by running it again. Afterwards `ledger verify` checks each v1 manifest's commit binding (trailer, tree and parent) against the commit rebuilt from its import mapping, accepting a mapping only when its fields hash to the commit id the v1 records name. The check is the same as Phase 1's, without the Git objects.
 
 ## Export, import and verify
 

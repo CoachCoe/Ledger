@@ -2,12 +2,18 @@ package verify
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // Git object ids of sha1 repositories
+	"crypto/sha256"
+	"encoding/hex"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/identity"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -229,6 +235,9 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 		if cerr != nil {
 			return nil, cerr
 		}
+		if src.Repo == nil {
+			commit = mappedCommit(g.objects, c.Committed, h)
+		}
 		mr.Commit = &commit.SHA
 		commits[h] = commit.SHA
 		binding := CheckBinding(commit, h, m)
@@ -393,4 +402,45 @@ func commitFor(ctx context.Context, repo *gitx.Repo, manifest string) (gitx.Comm
 		return gitx.Commit{}, nil
 	}
 	return c, err
+}
+
+// mappedCommit rebuilds the retained proposal commit of a v1 manifest from
+// the import mappings of a migrated repository, which keeps no Git
+// objects. A mapping counts only when its fields hash to the commit id it
+// names, so the binding rests on the commit itself, as it does with a Git
+// repository, and not on who signed the mapping.
+func mappedCommit(objects map[string]envelope.Object, committed map[string]bool, manifest string) gitx.Commit {
+	for _, h := range sortedKeys(objects) {
+		o := objects[h]
+		if o.Envelope.Kind != schema.KindBridgeMapping || !committed[h] {
+			continue
+		}
+		m, err := decode[schema.BridgeMapping](o)
+		if err != nil || m.Direction != "import" {
+			continue
+		}
+		if _, ok := trailer(m.Message, manifest); !ok || commitID(m) != m.GitCommit {
+			continue
+		}
+		return gitx.Commit{SHA: m.GitCommit, Tree: m.GitTree, Parents: m.GitParents, Message: m.Message}
+	}
+	return gitx.Commit{}
+}
+
+// commitID is the Git object id of the commit a mapping describes, in the
+// object format its id length names.
+func commitID(m schema.BridgeMapping) string {
+	var body strings.Builder
+	body.WriteString("tree " + m.GitTree + "\n")
+	for _, p := range m.GitParents {
+		body.WriteString("parent " + p + "\n")
+	}
+	body.WriteString("author " + m.Author + "\ncommitter " + m.Committer + "\n\n" + m.Message)
+	obj := "commit " + strconv.Itoa(body.Len()) + "\x00" + body.String()
+	if len(m.GitCommit) == 64 {
+		sum := sha256.Sum256([]byte(obj))
+		return hex.EncodeToString(sum[:])
+	}
+	sum := sha1.Sum([]byte(obj)) //nolint:gosec // Git's own object id in a sha1 repository, the same binding Phase 1 verification checks
+	return hex.EncodeToString(sum[:])
 }
