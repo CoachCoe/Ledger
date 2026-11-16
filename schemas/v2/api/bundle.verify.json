@@ -21,6 +21,9 @@
     "trust_file": {
       "type": "string",
       "minLength": 1
+    },
+    "git_commit": {
+      "$ref": "../../v1/common.json#/$defs/git_oid"
     }
   },
   "required": [

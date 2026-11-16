@@ -108,7 +108,7 @@ func (s *Staging) Export(ctx context.Context, objects *store.Store, outs []Out) 
 		w.WriteString("\n")
 	}
 	w.WriteString("done\n")
-	if _, err := s.Git(ctx, &w, "fast-import", "--quiet", "--done", "--date-format=raw", "--export-marks="+marks); err != nil {
+	if _, err := s.Git(ctx, &w, "fast-import", "--quiet", "--done", "--force", "--date-format=raw", "--export-marks="+marks); err != nil {
 		return nil, err
 	}
 	raw, err := os.ReadFile(marks)
@@ -133,7 +133,8 @@ func (s *Staging) Export(ctx context.Context, objects *store.Store, outs []Out) 
 }
 
 // exportRef is the staging ref fast-import commits on; each commit names
-// its parent explicitly.
+// its parent explicitly. It is scratch, so fast-import may move it to a
+// commit that does not contain its last value (--force).
 const exportRef = "refs/bridge/export"
 
 // ident checks a Git ident line: "Name <email> seconds zone".

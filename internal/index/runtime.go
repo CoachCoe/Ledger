@@ -118,6 +118,8 @@ type Proposal struct {
 	Manifest string `json:"manifest"`
 	Commit   string `json:"commit"`
 	Branch   string `json:"branch"`
+	// At is when the proposal's lifecycle event was signed.
+	At string `json:"-"`
 }
 
 // LastProposal follows the accepted lifecycle chain to the latest proposal
@@ -182,6 +184,7 @@ func lastProposal(ctx context.Context, q querier, id string) (Proposal, error) {
 					return Proposal{}, apierr.New("proposal_conflict", "workspace %s has no unambiguous proposal binding", id)
 				}
 			}
+			result.At = event.At
 			return result.Proposal, nil
 		}
 		head = ""

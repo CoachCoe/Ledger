@@ -176,12 +176,15 @@ func cmdGitImport(args []string) (any, error) {
 // export --line LINE --to PATH [--ref REF]. The ref only fast-forwards.
 func cmdGitExport(args []string) (any, error) {
 	var line, to, ref string
-	if err := parseFlags("git export", "ledger git export [--line LINE] --to PATH [--ref REF]", args, func(fl *flag.FlagSet) {
+	var proposals bool
+	const usage = "ledger git export [--line LINE] --to PATH [--ref REF] [--proposals]"
+	if err := parseFlags("git export", usage, args, func(fl *flag.FlagSet) {
 		fl.StringVar(&line, "line", "main", "line to export")
 		fl.StringVar(&to, "to", "", "Git repository to write the line into")
 		fl.StringVar(&ref, "ref", "", "ref to update (default refs/heads/LINE)")
+		fl.BoolVar(&proposals, "proposals", false, "also export each open proposal as a branch ledger/INTENT/WORKSPACE")
 	}); err != nil || to == "" {
-		return nil, apierr.New("usage", "ledger git export [--line LINE] --to PATH [--ref REF]")
+		return nil, apierr.New("usage", usage)
 	}
 	target, format, err := gitSource(context.Background(), to)
 	if err != nil {
@@ -201,7 +204,21 @@ func cmdGitExport(args []string) (any, error) {
 		if err := fetchInto(ctx, target, br.Staging.Dir, bridge.LineRef(line), ref); err != nil {
 			return nil, err
 		}
-		return map[string]any{"export": report, "repository": target, "ref": ref}, nil
+		out := map[string]any{"export": report, "repository": target, "ref": ref}
+		if proposals {
+			pr, err := br.ExportProposals(ctx, report)
+			if err != nil {
+				return nil, err
+			}
+			refused := []map[string]string{}
+			for _, p := range pr.Proposals {
+				if _, err := placeProposal(ctx, br, target, p, p.Branch); err != nil {
+					refused = append(refused, map[string]string{"workspace_id": p.WorkspaceID, "branch": p.Branch, "code": apierr.As(err).Code})
+				}
+			}
+			out["proposals"], out["refused"] = pr, refused
+		}
+		return out, nil
 	})
 }
 
@@ -226,12 +243,15 @@ func fetchInto(ctx context.Context, target, staging, src, ref string) error {
 // configuration for credentials, with hooks disabled.
 func cmdGitMirror(args []string) (any, error) {
 	var line, remote, repo string
-	if err := parseFlags("git mirror", "ledger git mirror --remote NAME [--line LINE] [--repo PATH]", args, func(fl *flag.FlagSet) {
+	var proposals bool
+	const usage = "ledger git mirror --remote NAME [--line LINE] [--repo PATH] [--proposals]"
+	if err := parseFlags("git mirror", usage, args, func(fl *flag.FlagSet) {
 		fl.StringVar(&line, "line", "main", "line to mirror")
 		fl.StringVar(&remote, "remote", "", "remote of the Git repository to push to")
 		fl.StringVar(&repo, "repo", "", "Git repository whose remote is used (default: the one this repository was imported from)")
+		fl.BoolVar(&proposals, "proposals", false, "also push each open proposal as a branch ledger/INTENT/WORKSPACE")
 	}); err != nil || remote == "" || strings.HasPrefix(remote, "-") {
-		return nil, apierr.New("usage", "ledger git mirror --remote NAME [--line LINE] [--repo PATH]")
+		return nil, apierr.New("usage", usage)
 	}
 	format := ""
 	if repo != "" {
@@ -266,8 +286,99 @@ func cmdGitMirror(args []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"export": report, "repository": repo, "remote": remote, "ref": "refs/heads/" + line}, nil
+		out := map[string]any{"export": report, "repository": repo, "remote": remote, "ref": "refs/heads/" + line}
+		if proposals {
+			pr, err := br.ExportProposals(ctx, report)
+			if err != nil {
+				return nil, err
+			}
+			refused := []map[string]string{}
+			for _, p := range pr.Proposals {
+				if err := pushProposal(ctx, br, repo, remote, p); err != nil {
+					refused = append(refused, map[string]string{"workspace_id": p.WorkspaceID, "branch": p.Branch, "code": apierr.As(err).Code})
+				}
+			}
+			out["proposals"], out["refused"] = pr, refused
+		}
+		return out, nil
 	})
+}
+
+// proposalRef is where the bridged repository keeps the proposal it last
+// mirrored, the lease for the next push of that branch.
+func proposalRef(p bridge.ProposalExport) string {
+	return "refs/ledger/proposals/" + p.IntentID + "/" + p.WorkspaceID
+}
+
+// pushProposal pushes one proposal branch to remote. The push replaces the
+// remote branch only while it still holds the commit last mirrored from
+// here, so a re-proposal updates the branch and nobody's push is lost.
+func pushProposal(ctx context.Context, br *bridge.Bridge, repo, remote string, p bridge.ProposalExport) error {
+	lease, err := placeProposal(ctx, br, repo, p, proposalRef(p))
+	if err != nil {
+		return err
+	}
+	_, err = gitx.Run(ctx, repo, nil, nil, "push", "-q", "--no-verify", "--force-with-lease="+p.Branch+":"+lease, "--", remote, proposalRef(p)+":"+p.Branch)
+	if ge, ok := errors.AsType[*gitx.Error](err); ok && (strings.Contains(ge.Stderr, "rejected") || strings.Contains(ge.Stderr, "stale info")) {
+		return apierr.New("ref_moved", "%s on %s has moved since it was last mirrored; nothing was pushed", p.Branch, remote).With("ref", p.Branch)
+	}
+	return err
+}
+
+// placeProposal sets ref in the Git repository at target to the exported
+// proposal p and returns what ref held before ("" for nothing). A ref that
+// holds a commit Ledger did not export for the same workspace is left
+// alone (ref_moved), as is the branch checked out there.
+func placeProposal(ctx context.Context, br *bridge.Bridge, target string, p bridge.ProposalExport, ref string) (string, error) {
+	hardened := []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	current := ""
+	if out, err := gitx.Run(ctx, target, nil, hardened, "rev-parse", "-q", "--verify", ref+"^{commit}"); err == nil {
+		current = strings.TrimSpace(string(out))
+	}
+	if current == p.Commit {
+		return current, nil
+	}
+	if head, err := gitx.Run(ctx, target, nil, hardened, "symbolic-ref", "-q", "HEAD"); err == nil && strings.TrimSpace(string(head)) == ref {
+		return "", apierr.New("ref_checked_out", "%s is checked out in %s", ref, target).With("ref", ref)
+	}
+	if current != "" {
+		ours, err := exportedFor(ctx, br, current, p.WorkspaceID)
+		if err != nil {
+			return "", err
+		}
+		if !ours {
+			return "", apierr.New("ref_moved", "%s in %s holds a commit Ledger did not export for %s; nothing was changed", ref, target, p.WorkspaceID).With("ref", ref)
+		}
+	}
+	if _, err := gitx.Run(ctx, target, nil, hardened, "fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", br.Staging.Dir, p.Staging); err != nil {
+		return "", err
+	}
+	if _, err := gitx.Run(ctx, target, nil, hardened, "update-ref", "-m", "ledger git export", ref, p.Commit, current); err != nil {
+		return "", apierr.New("ref_moved", "%s in %s changed during the export; nothing was changed", ref, target).With("ref", ref)
+	}
+	return current, nil
+}
+
+// exportedFor reports whether commit is a proposal Ledger exported for
+// workspace.
+func exportedFor(ctx context.Context, br *bridge.Bridge, commit, workspace string) (bool, error) {
+	known, err := br.Records.Index.MappingsForCommit(ctx, commit)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range known {
+		if m.Direction != "export" || m.Manifest == nil {
+			continue
+		}
+		cm, err := br.Records.Index.Manifest(ctx, *m.Manifest)
+		if err != nil {
+			return false, err
+		}
+		if cm.WorkspaceID == workspace {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // cmdGitSync accepts commits made in Git onto a line: ledger git sync

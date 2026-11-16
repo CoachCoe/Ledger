@@ -149,6 +149,8 @@ type ExportReport struct {
 	Commits  []string `json:"commits"`
 	Mapped   int      `json:"mapped"`
 	Ref      string   `json:"staging_ref"`
+	// byTree is the latest exported commit of each tree the line held.
+	byTree map[string]string
 }
 
 // LineRef is where the staging repository holds an exported line.
@@ -188,6 +190,7 @@ func (br *Bridge) ExportLine(ctx context.Context, line string) (ExportReport, er
 	// after names what it must have as its first parent.
 	type link struct{ commit, after string }
 	var chain []link
+	foreignOf := map[string]string{}
 	for _, a := range advances {
 		if a.ForeignChange != "" {
 			f, m, err := idx.ForeignImport(ctx, a.ForeignChange)
@@ -195,6 +198,7 @@ func (br *Bridge) ExportLine(ctx context.Context, line string) (ExportReport, er
 				return report, err
 			}
 			chain = append(chain, link{commit: m.GitCommit, after: parent})
+			foreignOf[m.GitCommit] = a.ForeignChange
 			parent, parentTree = m.GitCommit, f.Tree
 			continue
 		}
@@ -249,6 +253,20 @@ func (br *Bridge) ExportLine(ctx context.Context, line string) (ExportReport, er
 	report.Base, report.Tip = base, tip
 	if base == "" {
 		report.Base = written[0].SHA
+	}
+	report.byTree = map[string]string{repo.Tree: report.Base}
+	for _, l := range chain {
+		var tree string
+		if l.after == "" {
+			tree = outs[markIndex(l.commit)].Tree
+		} else {
+			f, _, err := idx.ForeignImport(ctx, foreignOf[l.commit])
+			if err != nil {
+				return report, err
+			}
+			tree = f.Tree
+		}
+		report.byTree[tree] = resolve(l.commit)
 	}
 	if _, err := br.Staging.Git(ctx, nil, "update-ref", LineRef(line), tip); err != nil {
 		return report, err
@@ -584,3 +602,133 @@ func (br *Bridge) Sync(ctx context.Context, src, ref, line string) (SyncReport, 
 }
 
 func samePtr(a, b *string) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+
+func markIndex(mark string) int {
+	i, _ := strconv.Atoi(strings.TrimPrefix(mark, ":"))
+	return i - 1
+}
+
+// ProposalRef is where the staging repository holds a workspace's
+// exported proposal, and ProposalBranch the branch it is exported as.
+func ProposalRef(intent, workspace string) string {
+	return "refs/bridge/proposals/" + intent + "/" + workspace
+}
+
+func ProposalBranch(intent, workspace string) string {
+	return "refs/heads/ledger/" + intent + "/" + workspace
+}
+
+// ProposalExport is one exported proposal.
+type ProposalExport struct {
+	WorkspaceID string `json:"workspace_id"`
+	IntentID    string `json:"intent_id"`
+	Manifest    string `json:"manifest"`
+	Commit      string `json:"commit"`
+	Branch      string `json:"branch"`
+	Staging     string `json:"-"`
+}
+
+// ProposalSkip is a proposal that was not exported, and why.
+type ProposalSkip struct {
+	WorkspaceID string `json:"workspace_id"`
+	Reason      string `json:"reason"`
+}
+
+// ProposalsReport describes one export of the open proposals.
+type ProposalsReport struct {
+	Proposals []ProposalExport `json:"proposals"`
+	Skipped   []ProposalSkip   `json:"skipped"`
+	Mapped    int              `json:"mapped"`
+}
+
+// ExportProposals writes the latest proposal of every proposed or selected
+// workspace as one commit on top of the commit of its base tree on the
+// exported line, for review as a branch (ADR 0028). The commit is
+// authored and committed by the proposal's author session when it
+// proposed, so the same records always give the same commit, and its
+// trailers name the manifest that ledger verify resolves.
+func (br *Bridge) ExportProposals(ctx context.Context, line ExportReport) (ProposalsReport, error) {
+	idx := br.Records.Index
+	report := ProposalsReport{Proposals: []ProposalExport{}, Skipped: []ProposalSkip{}}
+	var outs []Out
+	for _, state := range []string{"proposed", "selected"} {
+		subs, err := idx.SubjectsIn(ctx, "workspace", state)
+		if err != nil {
+			return report, err
+		}
+		for _, sub := range subs {
+			if sub.Conflict != "" {
+				report.Skipped = append(report.Skipped, ProposalSkip{sub.ID, "conflict"})
+				continue
+			}
+			p, err := idx.LastProposal(ctx, sub.ID)
+			if err != nil {
+				return report, err
+			}
+			if p.Commit != "" || p.Manifest == "" {
+				report.Skipped = append(report.Skipped, ProposalSkip{sub.ID, "phase1_proposal"})
+				continue
+			}
+			m, err := idx.Manifest(ctx, p.Manifest)
+			if err != nil {
+				return report, err
+			}
+			parent, ok := line.byTree[m.BaseTree]
+			if !ok {
+				report.Skipped = append(report.Skipped, ProposalSkip{sub.ID, "base_not_on_line"})
+				continue
+			}
+			o, err := br.proposalCommit(ctx, p, m)
+			if err != nil {
+				return report, err
+			}
+			o.Parent, o.ParentTree = parent, m.BaseTree
+			outs = append(outs, o)
+			report.Proposals = append(report.Proposals, ProposalExport{WorkspaceID: sub.ID, IntentID: m.IntentID, Manifest: p.Manifest,
+				Branch: ProposalBranch(m.IntentID, sub.ID), Staging: ProposalRef(m.IntentID, sub.ID)})
+		}
+	}
+	written, err := br.Staging.Export(ctx, br.Objects, outs)
+	if err != nil {
+		return report, err
+	}
+	mappings := make([]schema.BridgeMapping, 0, len(written))
+	for i, w := range written {
+		pe := &report.Proposals[i]
+		pe.Commit = w.SHA
+		if _, err := br.Staging.Git(ctx, nil, "update-ref", pe.Staging, w.SHA); err != nil {
+			return report, err
+		}
+		manifest := pe.Manifest
+		mappings = append(mappings, schema.BridgeMapping{NativeTree: outs[i].Tree, GitCommit: w.SHA, GitTree: w.Tree, GitParents: []string{outs[i].Parent},
+			Direction: "export", Author: outs[i].Author, Committer: outs[i].Committer, Message: outs[i].Message, Manifest: &manifest})
+	}
+	if len(mappings) > 0 {
+		report.Mapped, err = br.publishExports(ctx, "proposals", mappings)
+	}
+	return report, err
+}
+
+// proposalCommit is the commit for one proposal, with the plan (or the
+// intent's description) and trailers naming the manifest, intent and
+// workspace.
+func (br *Bridge) proposalCommit(ctx context.Context, p index.Proposal, m schema.ChangeManifest) (Out, error) {
+	cr, err := br.Records.Index.Creation(ctx, m.IntentID)
+	if err != nil {
+		return Out{}, err
+	}
+	var intent schema.Intent
+	if err := cr.Decode(&intent); err != nil {
+		return Out{}, err
+	}
+	author, err := br.ident(ctx, m.AuthorSession, p.At)
+	if err != nil {
+		return Out{}, err
+	}
+	subject := intent.Description
+	if m.Plan != nil && strings.TrimSpace(*m.Plan) != "" {
+		subject = *m.Plan
+	}
+	msg := fmt.Sprintf("%s\n\nLedger-Manifest: %s\nLedger-Intent: %s\nLedger-Workspace: %s\n", strings.TrimSpace(subject), p.Manifest, m.IntentID, m.WorkspaceID)
+	return Out{Tree: m.Tree, Author: author, Committer: author, Message: msg}, nil
+}

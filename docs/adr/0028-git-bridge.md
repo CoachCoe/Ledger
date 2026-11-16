@@ -61,10 +61,10 @@ hardening: global and system config disabled, hooks pointed at `/dev/null`,
 
 ## Scope of the current build
 
-`init --from-git`, `git import`, `git export --line`, `git mirror` and
-`git sync` work as described above, and P2-AC-030 to P2-AC-033 are covered
-by tests on small fixtures. `git export --proposals` (P2-AC-034) and
-`export --with-git` are not built yet. Details the decision left open:
+`init --from-git`, `git import`, `git export --line`, `--proposals`,
+`git mirror` and `git sync` work as described above, and P2-AC-030 to
+P2-AC-034 are covered by tests on small fixtures. `export --with-git` is
+not built yet. Details the decision left open:
 
 - The staging repository is `.ledger/runtime/bridge/bridge-<format>.git`,
   one per Git object format, and only local repositories can be read.
@@ -86,6 +86,15 @@ by tests on small fixtures. `git export --proposals` (P2-AC-034) and
   imported one, so commits made in Git keep their ids. Sync reads only
   local repositories, so commits from a remote are fetched first and taken
   from the remote-tracking ref.
+- A proposal branch is `ledger/<intent>/<workspace>` with full ids, and
+  holds one commit on top of the line commit for the manifest's base tree.
+  It is replaced only while it still holds a commit Ledger exported for
+  that workspace, and mirrored with `--force-with-lease`. Mirror pushes
+  proposals as well, since a pull request needs the branch on the host.
+- `ledger verify --git-commit SHA` resolves trailers to the manifest
+  without the Git objects: it checks that the export mapping hashes to the
+  commit id, and that the Git tree id computed from the native tree in the
+  bundle is the commit's tree.
 
 ## Validation
 

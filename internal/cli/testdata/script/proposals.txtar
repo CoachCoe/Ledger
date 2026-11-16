@@ -1,0 +1,98 @@
+# git export --proposals (P2-AC-034): each open proposal becomes a branch
+# for review, and its head commit resolves through ledger verify --bundle
+# to the signed manifest and its evidence.
+mkdir repo
+cd repo
+exec git init -q -b main
+cp $WORK/a.ts a.ts
+exec git add a.ts
+exec git commit -q -m 'first'
+exec ledger init --from-git .
+jsonvar BASE result.git.tip
+
+exec ledger session create {"agent_name":"refunds-agent"}
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger intent create '{"description":"Add refunds","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"any"}}]}'
+jsonvar INT result.result.intent_id
+exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+cp $WORK/refund.ts $WPATH/refund.ts
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
+jsonvar MANIFEST result.result.manifest
+exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
+jsonvar JUDGED result.result.attestation
+
+# The proposal is one commit on the line's commit of its base tree.
+exec git init -q --bare $WORK/out.git
+exec ledger git export --to $WORK/out.git --proposals
+stdout '"branch": "refs/heads/ledger/'$INT'/'$WSP'"'
+stdout '"refused": \[\]'
+jsonvar COMMIT result.proposals.proposals.0.commit
+exec git -C $WORK/out.git rev-parse ledger/$INT/$WSP
+stdout $COMMIT
+exec git -C $WORK/out.git rev-parse ledger/$INT/$WSP~1
+stdout $BASE
+exec git -C $WORK/out.git log -1 --format=%B ledger/$INT/$WSP
+stdout '^Add refunds$'
+stdout '^Ledger-Manifest: '$MANIFEST'$'
+stdout '^Ledger-Workspace: '$WSP'$'
+exec git -C $WORK/out.git ls-tree --name-only ledger/$INT/$WSP
+stdout '^refund.ts$'
+
+# The same records export the same commit, and nothing new is signed.
+exec ledger git export --to $WORK/out.git --proposals
+stdout '"commit": "'$COMMIT'"'
+stdout '"mapped": 0'
+
+# A reviewer with the bundle and the branch's head commit finds the
+# manifest and its evidence; a commit Ledger did not export for a
+# manifest resolves to nothing.
+exec ledger export --out $WORK/review.ledger
+cd $WORK
+exec ledger verify --bundle review.ledger --git-commit $COMMIT --strict
+stdout '"commit_id": "ok"'
+stdout '"trailer": "ok"'
+stdout '"tree": "ok"'
+stdout '"manifest": "'$MANIFEST'"'
+stdout '"hash": "'$JUDGED'"'
+! exec ledger verify --bundle review.ledger --git-commit $BASE --strict
+stdout '"code": "verification_failed"'
+stdout 'no export mapping names this commit'
+cd $WORK/repo
+
+# A re-proposal replaces the branch Ledger wrote; a branch someone else
+# moved is left alone.
+exec ledger workspace rework --session $SID {"workspace_id":"$WSP"}
+cp $WORK/refund2.ts $WPATH/refund.ts
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds, reworked"}'
+exec ledger git export --to $WORK/out.git --proposals
+jsonvar REWORKED result.proposals.proposals.0.commit
+exec git -C $WORK/out.git rev-parse ledger/$INT/$WSP
+stdout $REWORKED
+exec git -C $WORK/out.git update-ref refs/heads/ledger/$INT/$WSP $BASE
+exec ledger git export --to $WORK/out.git --proposals
+stdout '"code": "ref_moved"'
+exec git -C $WORK/out.git rev-parse ledger/$INT/$WSP
+stdout $BASE
+
+# Mirroring pushes the proposal branch too, never over someone's push.
+exec git init -q --bare $WORK/remote.git
+exec git remote add origin $WORK/remote.git
+exec ledger git mirror --remote origin --proposals
+stdout '"refused": \[\]'
+exec git -C $WORK/remote.git rev-parse ledger/$INT/$WSP
+stdout $REWORKED
+exec git -C $WORK/remote.git update-ref refs/heads/ledger/$INT/$WSP $BASE
+exec ledger git mirror --remote origin --proposals
+stdout '"code": "ref_moved"'
+exec git -C $WORK/remote.git rev-parse ledger/$INT/$WSP
+stdout $BASE
+
+-- a.ts --
+export const a = 1;
+-- refund.ts --
+export function refund() { return 0 }
+-- refund2.ts --
+export function refund() { return 1 }

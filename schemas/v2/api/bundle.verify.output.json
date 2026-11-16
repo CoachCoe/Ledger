@@ -457,6 +457,55 @@
           "attempts"
         ]
       }
+    },
+    "git_commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "commit_id",
+        "trailer",
+        "tree",
+        "integrity"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "../../v1/common.json#/$defs/git_oid"
+        },
+        "manifest": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        "mapping": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        "commit_id": {
+          "enum": [
+            "ok",
+            "mismatch",
+            "unavailable"
+          ]
+        },
+        "trailer": {
+          "enum": [
+            "ok",
+            "mismatch",
+            "unavailable"
+          ]
+        },
+        "tree": {
+          "enum": [
+            "ok",
+            "mismatch",
+            "unavailable"
+          ]
+        },
+        "integrity": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
     }
   },
   "required": [

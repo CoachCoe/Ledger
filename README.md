@@ -45,7 +45,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 |---|---|
 | `ledger init` | Create a native repository in the current directory: import its files into `.ledger/store/`, create the root key in `~/.config/ledger/keys/` if needed, and sign its public key and the repository record. Inside a Git working tree it also keeps `.ledger/` out of Git. Safe to repeat. `--from-git PATH [--ref REF]` instead takes the first tree from a Git repository's ref and maps its first-parent history. |
 | `ledger migrate` | Convert this Phase 1 repository into a native one with the same root key: map HEAD's history and every commit a v1 record names, close the Phase 1 workspaces still open or proposed, and make HEAD's tree the head of `main`. |
-| `ledger git …` | Import another ref's history (`import`), write a line's accepted changes into a Git repository as commits (`export`), push them to a Git remote (`mirror`), or accept commits made in Git onto the line as root (`sync`). Ledger never force-pushes and never merges: a sync after both sides moved reports `diverged`. |
+| `ledger git …` | Import another ref's history (`import`), write a line's accepted changes into a Git repository as commits (`export`), push them to a Git remote (`mirror`), with `--proposals` also exporting each open proposal as a branch for review, or accept commits made in Git onto the line as root (`sync`). Ledger never force-pushes and never merges: a sync after both sides moved reports `diverged`. |
 | `ledger session …` | Create, end, or recover a signing session. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
 | `ledger intent …` | Create, inspect, or close an intent; `intent criteriaStatus` reports each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |
@@ -60,7 +60,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 | `ledger system status` | Report the daemon's view of every subject and any pending session recovery. |
 | `ledger daemon` | Run the per-repository daemon in the foreground; `ledger daemon stop` stops it. |
 | `ledger export --out FILE` | Write a portable bundle of records, the store objects they bind and the operation logs they pin, without the daemon or SQLite. |
-| `ledger verify [--bundle FILE]` | Report integrity and trust separately for a bundle or this repository's records; `--trust`, `--trust-file`, `--strict`. |
+| `ledger verify [--bundle FILE]` | Report integrity and trust separately for a bundle or this repository's records; `--trust`, `--trust-file`, `--strict`. `--git-commit SHA` also resolves a commit Ledger exported, such as a proposal branch's head, to the manifest and evidence it names. |
 | `ledger import FILE` | Stage, verify, and import a bundle from this repository. Trusts nothing and advances no line. |
 | `ledger status` | List lifecycle subjects with their derived state and any conflict, read directly from the index. |
 | `ledger recover` | Finish interrupted operations, quarantine corrupt record files, index complete groups, and bring the records head log up to date. |

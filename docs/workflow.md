@@ -164,6 +164,21 @@ Git is a place Ledger reads history from and writes accepted changes to; it is n
 
 `ledger git mirror --remote NAME [--line main] [--repo PATH]` exports the line into `refs/ledger/lines/LINE` of the bridged repository (or `--repo`) and runs an ordinary `git push` of it to `refs/heads/LINE` on that repository's remote. The push uses your Git configuration, so credential helpers work, with hooks disabled. It never force-pushes: a remote branch that moved is reported as `ref_moved` and left alone.
 
+`--proposals` on `ledger git export` or `ledger git mirror` also writes each open proposal as a branch for review on a Git host:
+
+- Each workspace that is proposed or selected becomes a branch `refs/heads/ledger/<intent>/<workspace>`. Its one commit has the latest manifest's tree, on top of the line commit for the manifest's base tree.
+- The commit is authored and committed by the author session, at the time of its proposal. Its message is the plan, or the intent's description, followed by `Ledger-Manifest`, `Ledger-Intent` and `Ledger-Workspace` trailers. The same records always give the same commit, and root signs an export `bridge_mapping` naming the manifest.
+- A re-proposal replaces the branch only while the branch still holds a commit Ledger exported for that workspace. Otherwise the branch is listed under `refused` with `ref_moved` and left alone. Mirroring pushes with `--force-with-lease` against the commit it last mirrored, so a re-proposal updates the pull request but never overwrites someone else's push.
+- A proposal from Phase 1, or one whose base is no longer on the line, is listed under `skipped`.
+
+A reviewer with a bundle from `ledger export` and the branch's head commit runs `ledger verify --bundle FILE --git-commit SHA`. The report's `git_commit` part names the manifest and checks three things:
+
+- `commit_id`: the export mapping's fields hash to the commit id.
+- `trailer`: the message names the manifest.
+- `tree`: the Git tree id computed from the manifest's native tree in the bundle is the commit's tree.
+
+None of these rests on who signed the mapping, and the manifest's evidence is in the same report. With `--strict`, the command fails unless all three hold and the manifest verifies.
+
 `ledger git sync [--line main] [--from PATH] [--ref REF]` brings the line up to commits made in Git. It exports the line, fetches `REF` (default `refs/heads/LINE`) from the bridged repository (or `--from`), and compares the two:
 
 - If `REF` continues the exported line along first parents, sync imports each new commit and accepts it with a root-signed `foreign_change` and a `line_advance` that names it. The change has participant `bridge`, carries no intent, capability or evidence, and satisfies no criterion. Running sync is the root's acceptance of what was committed in Git.

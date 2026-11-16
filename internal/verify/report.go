@@ -159,6 +159,8 @@ type Report struct {
 	Pending       []string         `json:"pending"`
 	Unattached    []string         `json:"unattached"`
 	Size          Size             `json:"size"`
+	// GitCommit is the binding of the Git commit verify was asked about.
+	GitCommit *CommitReport `json:"git_commit,omitzero"`
 }
 
 func bindingState(v string) string {
