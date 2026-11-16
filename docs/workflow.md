@@ -35,6 +35,8 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 | `intent close` | root or owning session | Close as `completed`, `abandoned`, or `superseded` (with `replacement_id`). |
 | `workspace fork` | session | Clone a copy-on-write workspace at `base_tree` (default: the head of line `main`) for a leaf intent. |
 | `workspace status` | anyone | Return the latest observed write set relative to the base. |
+| `workspace log` | anyone | Return the latest `limit` (default 50, at most 500) operation log entries, each with the files and symbols it changed. See Checkpoints and undo. |
+| `workspace restore` | bound session | Write the tree of an earlier log `entry` back into an open workspace as a new `restore` entry. See Checkpoints and undo. |
 | `evidence resolve` | anyone | Return the frozen binding (manifest, tree, base tree, pinned check definitions) for `{change_id}` or `{manifest}`. A change id resolves once; use the returned manifest afterwards. |
 | `evidence run` | root or an unrelated session | Run one pinned check against `{manifest, check_definition, keep_worktree?}` in a fresh checkout of the manifest's tree and publish a signed attestation. See Evidence runs. |
 | `evidence judge` | root or an unrelated session | Record a signed judgment `{manifest, criterion_id, result, reason?}` for a judgment criterion. The reviewer kind comes from the signing session, never the input. |
@@ -73,6 +75,12 @@ Each open workspace is observed through a stat cache under `.ledger/runtime/`, a
 After a restart the daemon re-observes current files, so edits made while it was stopped are detected; edits made and reverted while it was stopped cannot be.
 
 `ledger daemon` runs in the foreground with `--idle` (default `10m`), `--poll` (default `10s`), and `--no-watch` for polling only. An auto-started daemon logs to `.ledger/runtime/ledgerd.log` and exits after the idle period when no workspace is open and no client is connected.
+
+## Checkpoints and undo
+
+Every observed tree is already a checkpoint: there is nothing to commit. `ledger workspace log '{"workspace_id":"…"}'` returns the newest entries of the workspace's operation log in order, each with its hash, kind (`snapshot`, `write`, `restore`, `propose`, `rework`), tree, trigger and session, the files that differ from the entry before it (`A`, `D`, `M` or `T`, as Git reports them) and the symbols those changes wrote. The entries and trees are exact; symbol deltas are advisory, like all symbol analysis. `total` counts every entry. The log outlives the workspace, so it can be read after close.
+
+`ledger workspace restore --session SESSION '{"workspace_id":"…","entry":"…"}'` returns an open workspace to the exact tree of one of its entries. The current state is recorded first and the restore is appended as a new entry naming its `source`, so later entries, and the edits they hold, stay in the log and can be restored in turn. Ignored files, such as dependency trees and build output, are left alone. Ledger writes the restored files on the session's behalf, so every path the restore would change must be within the workspace's capability (`scope_violation` lists the paths otherwise, and nothing changes); a restore that changes a dependency manifest first gives the workspace private dependency trees. A proposed workspace must be reworked before it can be restored. Like `workspace write`, a restore is unsigned runtime state: retrying an operation id returns its first result, and files that change during the restore fail it with `concurrent_edit` after recording them.
 
 ## Proposals
 

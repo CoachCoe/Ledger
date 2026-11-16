@@ -15,6 +15,65 @@ import (
 	"github.com/CoachCoe/Ledger/internal/capability"
 )
 
+// editJournal is the retry identity of one runtime edit (workspace.write or
+// workspace.restore) across an interrupted application. It holds only the
+// request digest and the unsigned result, never keys or source text, and is
+// deliberately outside portable record history.
+type editJournal struct {
+	file    string
+	Digest  string         `json:"digest"`
+	Applied bool           `json:"applied"`
+	Result  map[string]any `json:"result"`
+}
+
+// openEdit loads the journal of r's operation id. A completed edit is
+// returned with Applied set; reusing the id for other input is refused.
+// Callers hold mu.
+func (s *Service) openEdit(r api.Request) (*editJournal, error) {
+	digest, err := r.Digest()
+	if err != nil {
+		return nil, err
+	}
+	j := &editJournal{file: filepath.Join(s.runtimeDir(), "edits", r.OperationID+".json")}
+	raw, err := os.ReadFile(j.file)
+	if os.IsNotExist(err) {
+		j.Digest = digest
+		return j, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, j); err != nil {
+		return nil, err
+	}
+	if j.Digest != digest {
+		return nil, apierr.New("operation_conflict", "edit operation id has different input")
+	}
+	return j, nil
+}
+
+// begin records that the edit may have started.
+func (j *editJournal) begin() error {
+	if err := atomicfile.MakeDir(filepath.Dir(j.file), 0700); err != nil {
+		return err
+	}
+	return j.save()
+}
+
+// finish records the edit's result for retries.
+func (j *editJournal) finish(result map[string]any) error {
+	j.Result, j.Applied = result, true
+	return j.save()
+}
+
+func (j *editJournal) save() error {
+	b, err := canon.Marshal(j)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(j.file, b, 0600)
+}
+
 func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
 	in, err := decode[struct {
 		WorkspaceID  string  `json:"workspace_id"`
@@ -27,29 +86,12 @@ func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	digest, err := r.Digest()
+	journal, err := s.openEdit(r)
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(s.runtimeDir(), "edits")
-	file := filepath.Join(dir, r.OperationID+".json")
-	var journal struct {
-		Digest  string         `json:"digest"`
-		Applied bool           `json:"applied"`
-		Result  map[string]any `json:"result"`
-	}
-	if raw, e := os.ReadFile(file); e == nil {
-		if err := json.Unmarshal(raw, &journal); err != nil {
-			return nil, err
-		}
-		if journal.Digest != digest {
-			return nil, apierr.New("operation_conflict", "edit operation id has different input")
-		}
-		if journal.Applied {
-			return journal.Result, nil
-		}
-	} else if !os.IsNotExist(e) {
-		return nil, e
+	if journal.Applied {
+		return journal.Result, nil
 	}
 	if r.SessionID == "" || s.signers[r.SessionID] == nil {
 		return nil, apierr.New("unauthorized", "editing requires the bound local session")
@@ -76,21 +118,8 @@ func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
 	observation.Lock()
 	defer observation.Unlock()
 	writer := s.Provider
-	// Runtime journals preserve retry identity across interrupted replacement.
-	// They contain only request digests and unsigned observations, never keys or
-	// source text, and are deliberately outside portable record history.
-	if err := atomicfile.MakeDir(dir, 0700); err != nil {
+	if err := journal.begin(); err != nil {
 		return nil, err
-	}
-	if journal.Digest == "" {
-		journal.Digest = digest
-		b, err := canon.Marshal(journal)
-		if err != nil {
-			return nil, err
-		}
-		if err := atomicfile.Write(file, b, 0600); err != nil {
-			return nil, err
-		}
 	}
 	fault := func(stage string) error {
 		if s.writeFault != nil {
@@ -111,13 +140,7 @@ func (s *Service) writeText(ctx context.Context, r api.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	journal.Result = result.(map[string]any)
-	journal.Applied = true
-	b, err := canon.Marshal(journal)
-	if err != nil {
-		return nil, err
-	}
-	if err := atomicfile.Write(file, b, 0600); err != nil {
+	if err := journal.finish(result.(map[string]any)); err != nil {
 		return nil, err
 	}
 	if err := fault("done"); err != nil {

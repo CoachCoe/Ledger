@@ -47,7 +47,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 | `ledger session …` | Create, end, or recover a signing session. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
 | `ledger intent …` | Create, inspect, or close an intent; `intent criteriaStatus` reports each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |
-| `ledger workspace …` | Fork, inspect, write regular text files, propose, rework, or close a workspace, or detach its shared dependency trees. |
+| `ledger workspace …` | Fork, inspect, write regular text files, restore an earlier operation log entry, propose, rework, or close a workspace, read its operation log, or detach its shared dependency trees. |
 | `ledger coordination …` | Inspect advisory symbols, poll and acknowledge notifications, and create, list, or release advisory leases. |
 | `ledger evidence …` | Resolve a proposal's frozen binding, run a pinned check in a fresh copy-on-write checkout of its tree, record a judgment, or ask whether evidence is independent. |
 | `ledger selection record` | Sign a selection decision with recomputed criterion statuses. Selection is not acceptance and never merges. |

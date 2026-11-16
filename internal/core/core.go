@@ -272,6 +272,8 @@ func (s *Service) Handle(ctx context.Context, r api.Request) (any, error) {
 		return s.nearby(ctx, r)
 	case op == "workspace.write":
 		return s.writeText(ctx, r)
+	case op == "workspace.restore":
+		return s.restore(ctx, r)
 	case op == "workspace.deps.detach":
 		return s.detachDeps(ctx, r)
 	case op == "coordination.lease" || op == "coordination.release" || op == "coordination.leases" || op == "coordination.status":
@@ -386,6 +388,8 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 		return s.workspaceStatus(ctx, in.WorkspaceID)
 	case "line.status":
 		return s.lineStatus(ctx, r)
+	case "workspace.log":
+		return s.workspaceLog(ctx, r)
 	case "speculation.status":
 		in, err := decode[runRef](r.Input)
 		if err != nil {

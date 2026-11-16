@@ -41,6 +41,20 @@ stdout '"src/billing/refund.ts"'
 stdout '"tools/report.py"'
 ! stdout '"src/billing/invoice.ts"'
 
+# The operation log records each observed tree. Restoring an earlier entry
+# undoes the edits made since as a new entry; nothing in the log is lost.
+exec ledger workspace log {"workspace_id":"$WSP","limit":1}
+jsonvar EDITED result.entries.0.hash
+cp $WORK/repo/src/billing/tax.js $WPATH/src/billing/scratch.js
+exec ledger workspace status --session $SID {"workspace_id":"$WSP"}
+stdout '"src/billing/scratch.js"'
+exec ledger workspace restore --session $SID {"workspace_id":"$WSP","entry":"$EDITED"}
+stdout '"source": "'$EDITED'"'
+! exists $WPATH/src/billing/scratch.js
+exists $WPATH/src/billing/refund.ts
+exec ledger workspace log {"workspace_id":"$WSP"}
+stdout '"kind": "restore"'
+
 # A proposal binds the workspace's tree and the operation log entry that
 # recorded it.
 exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'

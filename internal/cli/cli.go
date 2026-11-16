@@ -34,7 +34,7 @@ func commands() map[string]command {
 		"line":         {"accept a selected manifest onto a line, or show where a line stands", liveCommand("line")},
 		"speculation":  {"start, submit to, evaluate, score, resume, cancel or inspect a speculation run (Ledger runs no agents; nothing is merged)", liveCommand("speculation")},
 		"intent":       {"create, inspect, evaluate criteria of or close an intent", liveCommand("intent")},
-		"workspace":    {"fork, inspect, write to, propose, rework or close a workspace", liveCommand("workspace")},
+		"workspace":    {"fork, inspect, write to, restore, propose, rework or close a workspace, or read its operation log", liveCommand("workspace")},
 		"system":       {"inspect daemon status", liveCommand("system")},
 		"init":         {"initialize Ledger in the current Git repository", cmdInit},
 		"recover":      {"reconcile record files, the records ref, and the index", cmdRecover},

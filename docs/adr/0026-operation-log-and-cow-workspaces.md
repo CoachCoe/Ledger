@@ -31,7 +31,7 @@ freezes its head.**
   `git add -A`, so only changed files are rehashed.
 - **Capture is still not atomic.** Proposal capture keeps the two-pass stable
   snapshot and bounded retry from ADR 0010.
-- **Checkpoints and undo for agents.** `workspace.restore {op}` writes an
+- **Checkpoints and undo for agents.** `workspace.restore {entry}` writes an
   earlier tree back into the workspace as a new `restore` entry; nothing is
   lost. `workspace.log` returns the entries with symbol deltas, so an agent
   can see what it changed and when.

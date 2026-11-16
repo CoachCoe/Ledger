@@ -60,6 +60,8 @@ For an ordinary agent lifecycle:
    current bytes to replace). It supports regular text files only, and returns
    an unsigned runtime observation, not an attestation. A completed same-id
    retry returns its original response; a pending edit needs active authority.
+   workspace.log lists the operation log, and workspace.restore returns the
+   workspace to any earlier entry's tree without losing the entries after it.
 3. workspace.propose freezes code and returns the manifest hash, its tree and
    the operation log entry that recorded it. Do not rewrite the proposal to
    attach later evidence.

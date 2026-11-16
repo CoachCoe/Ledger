@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/workspace.log.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "const": true
+        },
+        "unsigned": {
+          "const": true
+        },
+        "observed_at": {
+          "$ref": "../../v1/common.json#/$defs/timestamp"
+        },
+        "snapshot_digest": {
+          "$ref": "../../v1/common.json#/$defs/hash"
+        },
+        "workspace_id": {
+          "$ref": "../../v1/common.json#/$defs/workspace_id"
+        },
+        "advisory": {
+          "const": true
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "hash": {
+                "$ref": "../../v1/common.json#/$defs/hash"
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "previous": {
+                "anyOf": [
+                  {
+                    "$ref": "../../v1/common.json#/$defs/hash"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "snapshot",
+                  "write",
+                  "restore",
+                  "rebase",
+                  "propose",
+                  "rework"
+                ]
+              },
+              "tree": {
+                "$ref": "../common.json#/$defs/object_id"
+              },
+              "base": {
+                "$ref": "../common.json#/$defs/object_id"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "$ref": "../../v1/common.json#/$defs/hash"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "at": {
+                "$ref": "../../v1/common.json#/$defs/timestamp"
+              },
+              "trigger": {
+                "type": "string",
+                "minLength": 1
+              },
+              "session": {
+                "anyOf": [
+                  {
+                    "$ref": "../../v1/common.json#/$defs/session_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "$ref": "../../v1/common.json#/$defs/path"
+                    },
+                    "status": {
+                      "enum": [
+                        "A",
+                        "D",
+                        "M",
+                        "T"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "status"
+                  ]
+                }
+              },
+              "symbols_written": {
+                "$ref": "../common.json#/$defs/symbols"
+              }
+            },
+            "required": [
+              "hash",
+              "seq",
+              "previous",
+              "kind",
+              "tree",
+              "base",
+              "source",
+              "at",
+              "trigger",
+              "session",
+              "files",
+              "symbols_written"
+            ]
+          }
+        }
+      },
+      "required": [
+        "runtime",
+        "unsigned",
+        "observed_at",
+        "snapshot_digest",
+        "workspace_id",
+        "advisory",
+        "total",
+        "entries"
+      ]
+    }
+  }
+}
