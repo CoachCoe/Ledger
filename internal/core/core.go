@@ -384,6 +384,8 @@ func (s *Service) read(ctx context.Context, r api.Request) (any, error) {
 			return nil, err
 		}
 		return s.workspaceStatus(ctx, in.WorkspaceID)
+	case "line.status":
+		return s.lineStatus(ctx, r)
 	case "speculation.status":
 		in, err := decode[runRef](r.Input)
 		if err != nil {
@@ -420,6 +422,7 @@ var mutations = map[string]mutation{
 	"session.end":         (*Service).endSession,
 	"intent.create":       (*Service).createIntent,
 	"intent.close":        (*Service).closeIntent,
+	"line.advance":        (*Service).advanceLine,
 	"selection.record":    (*Service).recordSelection,
 	"speculation.start":   (*Service).startRun,
 	"speculation.submit":  (*Service).submit,
@@ -523,6 +526,7 @@ type sessionInput struct {
 	Allow              []string `json:"allow"`
 	Deny               []string `json:"deny"`
 	MayAddDependencies *bool    `json:"may_add_dependencies"`
+	MayAdvance         []string `json:"may_advance"`
 	PreviousBinding    string   `json:"previous_binding"`
 }
 
@@ -600,7 +604,7 @@ func (s *Service) newSession(c *invocation, in sessionInput) (map[string]string,
 	for i := range deny {
 		deny[i] = norm.NFC.String(deny[i])
 	}
-	grant := schema.Capability{ID: cid, SessionID: sid, Issuer: schema.Issuer{Kind: "root", Fingerprint: c.signer.ID()}, Allow: allow, Deny: deny, MayAddDependencies: deps, ExpiresAt: expiry, CreatedAt: schema.Timestamp(start)}
+	grant := schema.Capability{ID: cid, SessionID: sid, Issuer: schema.Issuer{Kind: "root", Fingerprint: c.signer.ID()}, Allow: allow, Deny: deny, MayAddDependencies: deps, MayAdvance: in.MayAdvance, ExpiresAt: expiry, CreatedAt: schema.Timestamp(start)}
 	if err := capability.Validate(grant, s.caseSensitive); err != nil {
 		return nil, nil, err
 	}

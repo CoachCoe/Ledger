@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/line.status.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "line": {
+      "$ref": "../common.json#/$defs/line"
+    }
+  },
+  "required": []
+}

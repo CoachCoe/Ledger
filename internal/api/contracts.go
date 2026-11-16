@@ -36,7 +36,7 @@ func loadRequestSchema(version int) (requestSchema, error) {
 // operation id requirement. The schema is embedded, so failing to read it is
 // a build defect.
 var readOnly = func() map[string]bool {
-	doc, err := loadRequestSchema(1)
+	doc, err := loadRequestSchema(Version)
 	if err != nil || len(doc.AllOf) != 1 {
 		panic(fmt.Sprintf("api: embedded request schema: %v", err))
 	}

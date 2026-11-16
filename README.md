@@ -51,6 +51,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 | `ledger coordination …` | Inspect advisory symbols, poll and acknowledge notifications, and create, list, or release advisory leases. |
 | `ledger evidence …` | Resolve a proposal's frozen binding, run a pinned check in a fresh copy-on-write checkout of its tree, record a judgment, or ask whether evidence is independent. |
 | `ledger selection record` | Sign a selection decision with recomputed criterion statuses. Selection is not acceptance and never merges. |
+| `ledger line …` | Accept a selected manifest onto a line with a signed `line_advance`, so new workspaces fork from its tree, or show where a line stands. |
 | `ledger speculation …` | Start a run of several attempts for one intent, submit frozen candidates, evaluate them against the intent's checks and a scorer, and inspect, score, resume, or cancel the run. The selected candidate is not merged. |
 | `ledger history …` | Query portable symbol history, attempts, and selected dependents. |
 | `ledger mcp --session ID` | Serve every versioned core operation as an MCP tool over stdio, acting as that session. There is no root mode over MCP. |

@@ -27,7 +27,7 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 
 | Operation | Caller | Effect |
 |---|---|---|
-| `session create` | root | Sign a session and a whole-repository capability that expires after 24 hours or at `expires_at`. The session key lives only in daemon memory. |
+| `session create` | root | Sign a session and a whole-repository capability that expires after 24 hours or at `expires_at`, and may advance the lines in `may_advance` (default none). The session key lives only in daemon memory. |
 | `session end` | root or the session | End the session. |
 | `session recover` | root | Issue a replacement session for an open or proposed workspace and rebind it. Earlier authorship is preserved. |
 | `intent create` | root or session | Create an intent with at least one criterion, optionally under `parent_id`. |
@@ -41,6 +41,8 @@ Mutations print `{"ok":true,"result":{"operation_id":...,"receipt":...,"result":
 | `evidence isIndependent` | anyone | Report whether the evidence for `{manifest}` was signed by a session other than the author, and its signer kind. |
 | `intent criteriaStatus` | anyone | Report each criterion as `satisfied`, `failed` or `outstanding` for `{manifest, evidence?}`, with the deciding attestations and known contrary evidence. |
 | `selection record` | root or an unrelated session | Sign a selection decision over `{manifest, evidence, competitors?, scoring?}` with recomputed statuses. It is not acceptance. |
+| `line advance` | root or a session with `may_advance` for the line, never the author | Accept a selected manifest onto `line` (default `main`) with a signed `line_advance`. See Acceptance. |
+| `line status` | anyone | Return a line's last advance (`null` before the first) and the tree workspaces fork from. |
 | `workspace propose` | bound session | Capture the workspace as a durable `propose` entry in its operation log and sign a manifest naming that tree, its base tree and the entry. |
 | `workspace rework` | root or bound session | Reopen a proposed workspace for another revision. |
 | `workspace close` | root or bound session | Record the close and the workspace's last tree, then remove the checkout unless it holds ignored files. |
@@ -101,7 +103,14 @@ Enforcement is cooperative: direct disk writes are observed, not prevented, and 
 ## Criteria, judgment and selection
 After evidence runs, `ledger intent criteriaStatus '{"manifest":"…"}'` evaluates every criterion against the evidence for that exact manifest and tree. A check criterion is satisfied only by an independent attestation of its pinned definition; a judgment criterion only by an independent judgment of the stated reviewer kind (`ledger evidence judge`, signed by a root-provisioned `human` session when root calls it). All-pass is `satisfied`, any fail is `failed` (mixed results list the `conflicting` attestations), and nothing applicable is `outstanding`. Failing evidence is never hidden: it is listed under `contrary_evidence` even when an explicit `evidence` set leaves it out. Evidence for another revision is rejected with `cross_revision_evidence`.
 `ledger selection record '{"manifest":"…","evidence":["…"]}'` signs a decision recording the evidence set, recomputed per-criterion statuses, outstanding criteria and contrary evidence. The input has no status members, so a caller cannot claim a criterion is satisfied, and the index re-derives every decision when it is published.
-Selection is not acceptance. A decision is one signed record: it advances no line, merges nothing, and leaves the intent and workspace states unchanged (only a speculation run moves a workspace to `selected`). Acceptance is a separate signed `line_advance` record (ADR 0027), which the API does not yet write.
+Selection is not acceptance. A decision is one signed record: it advances no line, merges nothing, and leaves the intent and workspace states unchanged (only a speculation run moves a workspace to `selected`). Acceptance is a separate signed `line_advance` record (ADR 0027).
+
+## Acceptance
+
+`ledger line advance --session SESSION '{"selection":"…","line":"main"}'` accepts the manifest a selection decision chose onto a line. The caller is root or a session whose capability lists the line in `may_advance`, which only root grants, at `session create` or `session recover`; the manifest's author cannot accept its own change. The advance is refused with `criteria_unsatisfied` unless every criterion is satisfied by the selection's evidence when evaluated again, and also when contrary evidence has been recorded since the selection; contrary evidence the decision already lists was weighed by the selector and does not block. The intent must be open and the selected manifest must still be its workspace's current proposal (`stale_revision`).
+
+A line moves only by fast-forward. Inside the RecordStore lock an advance must name the line's current head as `previous` (`stale_line`) and its manifest must be based on that head's tree (`stale_base`), so a manifest forked before another change was accepted must be reworked on the new head. Nothing is merged. After an advance, `workspace fork` without `base_tree` starts from the accepted tree and records the advance as the workspace's `base_line_advance`. `ledger line status '{"line":"main"}'` shows where a line stands. An advance changes no intent or workspace state: close them as usual.
+
 ## Scoped capabilities and warnings
 
 Session creation and recovery now accept path scopes. Capability issuance, delegation, polling and acknowledgment are available through the CLI and versioned socket API. See [security-model.md](security-model.md) for inputs, matching rules, dependency filenames, recovery semantics and limitations.

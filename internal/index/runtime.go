@@ -276,6 +276,21 @@ func manifestIn(ctx context.Context, q querier, hash string) (schema.ChangeManif
 	return m, schema.Decode(version, schema.KindChangeManifest, []byte(raw), &m)
 }
 
+// Selection returns a committed selection decision by hash.
+func (x *Index) Selection(ctx context.Context, hash string) (schema.SelectionDecision, error) {
+	var d schema.SelectionDecision
+	var raw string
+	var version int
+	err := x.conn().QueryRowContext(ctx, `SELECT payload, version FROM objects WHERE hash=? AND kind='selection_decision'`, hash).Scan(&raw, &version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return d, apierr.New("unknown_selection", "no committed selection decision %s", hash)
+	}
+	if err != nil {
+		return d, err
+	}
+	return d, schema.Decode(version, schema.KindSelectionDecision, []byte(raw), &d)
+}
+
 // CheckDefinition returns a committed check definition record by hash.
 func (x *Index) CheckDefinition(ctx context.Context, hash string) (schema.CheckDefinition, error) {
 	var d schema.CheckDefinition

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ledger.invalid/v2/api/line.advance.output.json",
+  "$ref": "response.json",
+  "properties": {
+    "result": {
+      "$ref": "response.json#/$defs/mutation_result",
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "advance": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "line": {
+              "$ref": "../common.json#/$defs/line"
+            },
+            "previous": {
+              "anyOf": [
+                {
+                  "$ref": "../../v1/common.json#/$defs/hash"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "manifest": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "selection": {
+              "$ref": "../../v1/common.json#/$defs/hash"
+            },
+            "tree": {
+              "$ref": "../common.json#/$defs/object_id"
+            },
+            "intent_id": {
+              "$ref": "../../v1/common.json#/$defs/intent_id"
+            },
+            "workspace_id": {
+              "$ref": "../../v1/common.json#/$defs/workspace_id"
+            }
+          },
+          "required": [
+            "advance",
+            "line",
+            "previous",
+            "manifest",
+            "selection",
+            "tree",
+            "intent_id",
+            "workspace_id"
+          ]
+        }
+      }
+    }
+  }
+}

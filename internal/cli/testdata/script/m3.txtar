@@ -60,6 +60,7 @@ stdout '"code": "schema_invalid"'
 stdout '"code": "unauthorized"'
 exec ledger evidence judge --operation-id op_000000000000000000000judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass","reason":"reviewed"}
 stdout '"reviewer_kind": "human"'
+jsonvar JUDGED result.result.attestation
 exec ledger intent criteriaStatus {"manifest":"$MANIFEST"}
 ! stdout '"status": "outstanding"'
 ! exec ledger intent criteriaStatus {"manifest":"$MANIFEST","evidence":["0000000000000000000000000000000000000000000000000000000000000000"]}
@@ -74,6 +75,25 @@ exec ledger selection record {"manifest":"$MANIFEST","evidence":["$ATT"]}
 stdout '"accepted": false'
 stdout '"outstanding": \['
 stdout '"review"'
+jsonvar PARTIAL result.result.selection
+# Acceptance: a selection with an outstanding criterion cannot advance the
+# line, nor can the author or a session without may_advance. Root accepts a
+# selection whose criteria are all satisfied, and main moves to its tree.
+! exec ledger line advance {"selection":"$PARTIAL"}
+stdout '"code": "criteria_unsatisfied"'
+exec ledger selection record {"manifest":"$MANIFEST","evidence":["$ATT","$JUDGED"]}
+stdout '"outstanding": \[\]'
+jsonvar SELECTED result.result.selection
+! exec ledger line advance --session $SID {"selection":"$SELECTED"}
+stdout '"code": "unauthorized"'
+exec ledger line status
+stdout '"advance": null'
+exec ledger line advance {"selection":"$SELECTED"}
+stdout '"manifest": "'$MANIFEST'"'
+stdout '"previous": null'
+jsonvar ADVANCE result.result.advance
+exec ledger line status {"line":"main"}
+stdout '"advance": "'$ADVANCE'"'
 exec ledger system status
 stdout '"interrupted_runs": \[\]'
 # Export, verify and reindex run directly, without the daemon or SQLite.

@@ -47,6 +47,13 @@
     },
     "previous_binding": {
       "$ref": "../../v1/common.json#/$defs/hash"
+    },
+    "may_advance": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/line"
+      },
+      "uniqueItems": true
     }
   },
   "required": [

@@ -79,7 +79,7 @@ func TestOutputSchemasRemainClosed(t *testing.T) {
 }
 
 func TestReadOnlyOperationsComeFromTheRequestSchema(t *testing.T) {
-	ops, err := Operations(1)
+	ops, err := Operations(Version)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,12 +91,12 @@ func TestReadOnlyOperationsComeFromTheRequestSchema(t *testing.T) {
 			t.Errorf("read-only %s is not an operation", op)
 		}
 	}
-	for _, op := range []string{"system.status", "history.why", "coordination.ack", "speculation.status"} {
+	for _, op := range []string{"system.status", "history.why", "coordination.ack", "speculation.status", "line.status"} {
 		if !ReadOnly(op) {
 			t.Errorf("%s needs no operation id", op)
 		}
 	}
-	for _, op := range []string{"workspace.propose", "speculation.score", "bundle.import", "workspace.write"} {
+	for _, op := range []string{"workspace.propose", "speculation.score", "bundle.import", "workspace.write", "line.advance"} {
 		if ReadOnly(op) {
 			t.Errorf("%s is a mutation", op)
 		}

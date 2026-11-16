@@ -31,6 +31,7 @@ func commands() map[string]command {
 		"session":      {"create, end or recover a signing session", liveCommand("session")},
 		"evidence":     {"resolve a binding, run a check, judge a criterion, query independence", liveCommand("evidence")},
 		"selection":    {"record a selection decision (not acceptance; nothing is merged)", liveCommand("selection")},
+		"line":         {"accept a selected manifest onto a line, or show where a line stands", liveCommand("line")},
 		"speculation":  {"start, submit to, evaluate, score, resume, cancel or inspect a speculation run (Ledger runs no agents; nothing is merged)", liveCommand("speculation")},
 		"intent":       {"create, inspect, evaluate criteria of or close an intent", liveCommand("intent")},
 		"workspace":    {"fork, inspect, write to, propose, rework or close a workspace", liveCommand("workspace")},

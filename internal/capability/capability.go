@@ -3,6 +3,7 @@ package capability
 
 import (
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -89,6 +90,11 @@ func Narrow(parent, child schema.Capability, sensitive bool) error {
 	ce, _ := schema.ParseTimestamp(child.ExpiresAt)
 	if ce.After(pe) || child.MayAddDependencies && !parent.MayAddDependencies {
 		return apierr.New("capability_widening", "delegation extends expiry or dependency authority")
+	}
+	for _, line := range child.MayAdvance {
+		if !slices.Contains(parent.MayAdvance, line) {
+			return apierr.New("capability_widening", "delegation grants may_advance on line %q", line)
+		}
 	}
 	for _, c := range child.Allow {
 		cp, _ := Parse(c, sensitive)

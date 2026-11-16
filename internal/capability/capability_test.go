@@ -47,7 +47,7 @@ func TestNarrowingAndInheritedDenies(t *testing.T) {
 	if err := Authorize(chain, "src/private/a.ts", true, time.Now()); err == nil {
 		t.Fatal("lost parent deny")
 	}
-	for _, mutate := range []func(*schema.Capability){func(c *schema.Capability) { c.Allow = []string{"**"} }, func(c *schema.Capability) { c.ExpiresAt = "2100-01-01T00:00:00Z" }, func(c *schema.Capability) { c.MayAddDependencies = true }} {
+	for _, mutate := range []func(*schema.Capability){func(c *schema.Capability) { c.Allow = []string{"**"} }, func(c *schema.Capability) { c.ExpiresAt = "2100-01-01T00:00:00Z" }, func(c *schema.Capability) { c.MayAddDependencies = true }, func(c *schema.Capability) { c.MayAdvance = []string{"main"} }} {
 		widened := child
 		mutate(&widened)
 		if Narrow(parent, widened, true) == nil {

@@ -68,6 +68,10 @@ For an ordinary agent lifecycle:
    the verifier relationship; the execution isolation field remains "none".
 5. The local root (through the CLI) or another authorized selector calls selection.record with
    the exact manifest and explicit evidence hashes. Selection never merges.
+6. The root, or a session other than the author that root created with
+   `may_advance` for the line, calls line.advance with the selection hash.
+   The line moves by fast-forward only, and later forks start from the
+   accepted tree.
 
 For parallel strategies, the root's `ledger speculation start` returns scoped
 session/workspace handoffs. External agents, each through an adapter bound to

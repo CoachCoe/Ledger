@@ -9,8 +9,10 @@ edit its local configuration. This is not a filesystem sandbox.
 ## Scope and delegation
 
 `session.create` and root-authorized `session.recover` accept `allow`, `deny`,
-`may_add_dependencies`, and `expires_at`. For compatibility, omitted fields mean
-`["**"]`, `[]`, dependency changes allowed, and a 24-hour expiry. Request explicit
+`may_add_dependencies`, `may_advance`, and `expires_at`. For compatibility, omitted fields mean
+`["**"]`, `[]`, dependency changes allowed, no lines, and a 24-hour expiry.
+`may_advance` lists the lines the session may accept changes onto with
+`line.advance`; it is checked against the session's own capability. Request explicit
 narrow authority for an agent:
 
 ```sh
@@ -22,7 +24,7 @@ requires the parent holder. Both take an existing `session_id`, `allow`, `deny`,
 `may_add_dependencies`, and `expires_at`; delegation also takes
 `parent_capability_id`. Use the returned capability id when forking a workspace.
 Session key creation remains root authorized. Delegation never widens parent
-allow patterns, expiry, or dependency authority. Parent denies always apply.
+allow patterns, expiry, dependency authority, or `may_advance` lines. Parent denies always apply.
 Every capability in the chain must remain unexpired at proposal time.
 
 Patterns are exact repository-relative POSIX paths, directory prefixes `dir/**`,
