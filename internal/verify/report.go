@@ -159,6 +159,9 @@ type Report struct {
 	Pending       []string         `json:"pending"`
 	Unattached    []string         `json:"unattached"`
 	Size          Size             `json:"size"`
+	// Git is what checking the bridge mappings against a version 2
+	// bundle's Git part found.
+	Git *GitCheck `json:"git,omitzero"`
 	// GitCommit is the binding of the Git commit verify was asked about.
 	GitCommit *CommitReport `json:"git_commit,omitzero"`
 }
@@ -237,7 +240,7 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 		if cerr != nil {
 			return nil, cerr
 		}
-		if src.Repo == nil {
+		if commit.SHA == "" {
 			commit = mappedCommit(g.objects, c.Committed, h)
 		}
 		mr.Commit = &commit.SHA
@@ -318,6 +321,11 @@ func Verify(ctx context.Context, src *Source, opts Options) (*Report, error) {
 	}
 	for _, r := range rep.Runs {
 		integrity = append(integrity, r.Integrity)
+	}
+	if src.Repo != nil && src.BundleVersion == schema.BundleVersionNative {
+		if rep.Git, err = checkMappings(ctx, src, g.objects, c.Committed, rep); err != nil {
+			return nil, err
+		}
 	}
 	slices.Sort(rep.Missing)
 	rep.Missing = slices.Compact(rep.Missing)

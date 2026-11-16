@@ -2,6 +2,7 @@ package verify
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1" //nolint:gosec // Git object ids of sha1 repositories
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,12 +11,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/CoachCoe/Ledger/internal/apierr"
+	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/store"
 )
 
-// CommitReport resolves a Git commit exported by Ledger, such as the head
-// of a proposal branch under review, to the manifest it names (P2-AC-034).
+// CommitReport resolves a Git commit exported by Ledger, the head of a
+// proposal branch under review or a commit of an exported line, to the
+// manifest it names (P2-AC-034).
 // Each condition is ok, mismatch or unavailable: Commit that an export
 // mapping's fields hash to the commit id, Trailer that its message names
 // the manifest, and Tree that the Git tree id computed from the manifest's
@@ -48,17 +52,21 @@ func ResolveCommit(src *Source, rep *Report, sha string) CommitReport {
 			continue
 		}
 		m, err := decode[schema.BridgeMapping](o)
-		if err != nil || m.GitCommit != sha || m.Direction != "export" || m.Manifest == nil {
+		if err != nil || m.GitCommit != sha || m.Direction != "export" {
 			continue
 		}
-		out.Mapping, out.Manifest = h, *m.Manifest
+		manifest := exportedManifest(c, m)
+		if manifest == "" {
+			continue
+		}
+		out.Mapping, out.Manifest = h, manifest
 		out.CommitID = condition(commitID(m) == sha)
-		if _, ok := trailer(m.Message, *m.Manifest); ok {
+		if _, ok := trailer(m.Message, manifest); ok {
 			out.Trailer = BindingOK
 		} else {
 			out.Trailer = BindingMismatch
 		}
-		mr := manifestReport(rep, *m.Manifest)
+		mr := manifestReport(rep, manifest)
 		if mr == nil {
 			out.Detail = "the manifest is not in the records"
 			return out
@@ -82,6 +90,27 @@ func ResolveCommit(src *Source, rep *Report, sha string) CommitReport {
 	}
 	out.Detail = "no export mapping names this commit"
 	return out
+}
+
+// exportedManifest is the manifest an export mapping's commit carries: the
+// proposal's, or that of the line advance it was written for. A foreign
+// advance or a repository's initial tree names none.
+func exportedManifest(c *Corpus, m schema.BridgeMapping) string {
+	if m.Manifest != nil {
+		return *m.Manifest
+	}
+	if m.LineAdvance == nil {
+		return ""
+	}
+	o, ok := c.Objects[*m.LineAdvance]
+	if !ok || !c.Committed[*m.LineAdvance] || o.Envelope.Kind != schema.KindLineAdvance {
+		return ""
+	}
+	a, err := decode[schema.LineAdvance](o)
+	if err != nil {
+		return ""
+	}
+	return a.Manifest
 }
 
 func condition(ok bool) string {
@@ -155,4 +184,55 @@ func gitObjectID(kind string, data []byte, sha256Format bool) string {
 	h.Write([]byte(kind + " " + strconv.Itoa(len(data)) + "\x00"))
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// GitCheck counts the bridge mappings checked against Git objects: each
+// commit must exist with the tree, parents and message its mapping
+// records, and its tree must be the one computed from the mapping's
+// native tree when the bundle carries that tree.
+type GitCheck struct {
+	Mappings int `json:"mappings"`
+	Commits  int `json:"commits"`
+	Trees    int `json:"trees"`
+}
+
+func checkMappings(ctx context.Context, src *Source, objects map[string]envelope.Object, committed map[string]bool, rep *Report) (*GitCheck, error) {
+	out := &GitCheck{}
+	for _, h := range sortedKeys(objects) {
+		o := objects[h]
+		if o.Envelope.Kind != schema.KindBridgeMapping || !committed[h] {
+			continue
+		}
+		m, err := decode[schema.BridgeMapping](o)
+		if err != nil {
+			continue
+		}
+		out.Mappings++
+		gc, err := src.Repo.ReadCommit(ctx, m.GitCommit)
+		if apierr.HasCode(err, "dependency_unavailable") {
+			rep.Missing = append(rep.Missing, "git:"+m.GitCommit)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if gc.Tree != m.GitTree || !slices.Equal(gc.Parents, m.GitParents) || gc.Message != m.Message || commitID(m) != m.GitCommit {
+			rep.Invalid = append(rep.Invalid, Problem{Hash: h, Code: "mapping_mismatch", Error: "commit " + m.GitCommit + " is not the commit the mapping records"})
+			continue
+		}
+		out.Commits++
+		if src.Objects == nil {
+			continue
+		}
+		tree, err := gitTreeID(src.Objects, m.NativeTree, len(m.GitCommit) == 64)
+		if err != nil {
+			continue
+		}
+		if tree != gc.Tree {
+			rep.Invalid = append(rep.Invalid, Problem{Hash: h, Code: "mapping_mismatch", Error: "native tree " + m.NativeTree + " is not Git tree " + gc.Tree})
+			continue
+		}
+		out.Trees++
+	}
+	return out, nil
 }

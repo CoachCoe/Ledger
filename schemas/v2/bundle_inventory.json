@@ -108,34 +108,76 @@
       }
     },
     "git": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "file",
-        "sha256",
-        "size",
-        "refs",
-        "commits"
-      ],
-      "properties": {
-        "file": {
-          "const": ""
+      "description": "Empty, or with --with-git a Git bundle of every commit the bundle's bridge mappings name, one ref per commit.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "sha256",
+            "size",
+            "refs",
+            "commits"
+          ],
+          "properties": {
+            "file": {
+              "const": ""
+            },
+            "sha256": {
+              "const": ""
+            },
+            "size": {
+              "const": 0
+            },
+            "refs": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "commits": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
         },
-        "sha256": {
-          "const": ""
-        },
-        "size": {
-          "const": 0
-        },
-        "refs": {
-          "type": "array",
-          "maxItems": 0
-        },
-        "commits": {
-          "type": "array",
-          "maxItems": 0
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "sha256",
+            "size",
+            "refs",
+            "commits"
+          ],
+          "properties": {
+            "file": {
+              "const": "git/objects.bundle"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "refs": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^refs/ledger/commits/([0-9a-f]{40}|[0-9a-f]{64})$"
+              }
+            },
+            "commits": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
         }
-      }
+      ]
     },
     "store": {
       "type": "array",

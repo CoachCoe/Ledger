@@ -59,7 +59,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 | `ledger mcp --session ID` | Serve every versioned core operation as an MCP tool over stdio, acting as that session. There is no root mode over MCP. |
 | `ledger system status` | Report the daemon's view of every subject and any pending session recovery. |
 | `ledger daemon` | Run the per-repository daemon in the foreground; `ledger daemon stop` stops it. |
-| `ledger export --out FILE` | Write a portable bundle of records, the store objects they bind and the operation logs they pin, without the daemon or SQLite. |
+| `ledger export --out FILE` | Write a portable bundle of records, the store objects they bind and the operation logs they pin, without the daemon or SQLite. `--with-git` also carries the Git commits the bundle's bridge mappings name, which `ledger verify` then checks every mapping against. |
 | `ledger verify [--bundle FILE]` | Report integrity and trust separately for a bundle or this repository's records; `--trust`, `--trust-file`, `--strict`. `--git-commit SHA` also resolves a commit Ledger exported, such as a proposal branch's head, to the manifest and evidence it names. |
 | `ledger import FILE` | Stage, verify, and import a bundle from this repository. Trusts nothing and advances no line. |
 | `ledger status` | List lifecycle subjects with their derived state and any conflict, read directly from the index. |

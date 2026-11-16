@@ -61,10 +61,10 @@ hardening: global and system config disabled, hooks pointed at `/dev/null`,
 
 ## Scope of the current build
 
-`init --from-git`, `git import`, `git export --line`, `--proposals`,
-`git mirror` and `git sync` work as described above, and P2-AC-030 to
-P2-AC-034 are covered by tests on small fixtures. `export --with-git` is
-not built yet. Details the decision left open:
+Everything above is built: `init --from-git`, `git import`,
+`git export --line`, `--proposals`, `git mirror`, `git sync` and
+`export --with-git`. P2-AC-030 to P2-AC-034 are covered by tests on small
+fixtures. Details the decision left open:
 
 - The staging repository is `.ledger/runtime/bridge/bridge-<format>.git`,
   one per Git object format, and only local repositories can be read.
@@ -94,7 +94,12 @@ not built yet. Details the decision left open:
 - `ledger verify --git-commit SHA` resolves trailers to the manifest
   without the Git objects: it checks that the export mapping hashes to the
   commit id, and that the Git tree id computed from the native tree in the
-  bundle is the commit's tree.
+  bundle is the commit's tree. A line commit resolves through its advance.
+- `export --with-git` carries the mapped commits with their history under
+  `refs/ledger/commits/<sha>`, built through a throwaway repository that
+  borrows the staging repository's objects. Verify then checks every
+  mapping against the real commit, and against the Git tree id computed
+  from the native tree wherever the bundle carries it.
 
 ## Validation
 

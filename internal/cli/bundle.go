@@ -70,19 +70,20 @@ func validated(op string, input map[string]any) error {
 }
 
 func cmdExport(args []string) (any, error) {
-	const usage = "ledger export --out FILE [--manifest HASH]... [--intent ID]... [--allow-partial]"
+	const usage = "ledger export --out FILE [--manifest HASH]... [--intent ID]... [--allow-partial] [--with-git]"
 	var out string
 	var manifests, intents multiFlag
-	var partial bool
+	var partial, withGit bool
 	if err := parseFlags("export", usage, args, func(fl *flag.FlagSet) {
 		fl.StringVar(&out, "out", "", "")
 		fl.Var(&manifests, "manifest", "")
 		fl.Var(&intents, "intent", "")
 		fl.BoolVar(&partial, "allow-partial", false, "")
+		fl.BoolVar(&withGit, "with-git", false, "")
 	}); err != nil {
 		return nil, err
 	}
-	in := map[string]any{"out": out, "manifests": nonNil(manifests), "intents": nonNil(intents), "allow_partial": partial}
+	in := map[string]any{"out": out, "manifests": nonNil(manifests), "intents": nonNil(intents), "allow_partial": partial, "with_git": withGit}
 	if err := validated("bundle.export", in); err != nil {
 		return nil, err
 	}
@@ -93,6 +94,11 @@ func cmdExport(args []string) (any, error) {
 	}
 	opts := verify.ExportOptions{Out: out, Manifests: manifests, Intents: intents, AllowPartial: partial}
 	if repo.Native() {
+		if withGit {
+			if opts.GitRepo, err = bridgeRepo(filepath.Join(repo.Root, record.DirName)); err != nil {
+				return nil, err
+			}
+		}
 		return verify.ExportNative(repo.Root, opts)
 	}
 	return verify.Export(ctx, repo.Git, opts)
@@ -230,4 +236,32 @@ func cmdImport(args []string) (result any, err error) {
 		return nil, err
 	}
 	return map[string]any{"import": rep, "index_digest": digest}, nil
+}
+
+// bridgeRepo is the staging repository that holds the commits this
+// repository's bridge mappings name: that of the bridged repository's
+// object format, or the only one there is.
+func bridgeRepo(ledgerDir string) (string, error) {
+	bc, ok, err := readBridgeConfig(ledgerDir)
+	if err != nil {
+		return "", err
+	}
+	formats := []string{"sha1", "sha256"}
+	if ok {
+		formats = []string{bc.Format}
+	}
+	var found []string
+	for _, f := range formats {
+		p := filepath.Join(stagingDir(ledgerDir), "bridge-"+f+".git")
+		if _, err := os.Stat(p); err == nil {
+			found = append(found, p)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return "", apierr.New("not_bridged", "no Git history has been imported or exported here; --with-git has no commits to carry")
+	}
+	return "", apierr.New("git_format_ambiguous", "both sha1 and sha256 commits are staged; export from a repository with one bridge configuration")
 }

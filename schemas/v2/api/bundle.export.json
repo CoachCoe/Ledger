@@ -19,6 +19,9 @@
     },
     "allow_partial": {
       "type": "boolean"
+    },
+    "with_git": {
+      "type": "boolean"
     }
   },
   "required": [

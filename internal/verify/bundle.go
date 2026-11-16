@@ -131,6 +131,10 @@ type ExportOptions struct {
 	// AllowPartial writes a bundle whose inventory says complete:false when
 	// a dependency is missing, instead of failing export_incomplete.
 	AllowPartial bool
+	// GitRepo, for a version 2 bundle, is the Git repository holding the
+	// commits the exported bridge mappings name; when set, the bundle
+	// carries them as its Git part and a missing one makes it incomplete.
+	GitRepo string
 	// Fault, if set, is called before each export stage; an error stops the
 	// export there, as a crash would.
 	Fault func(stage string) error

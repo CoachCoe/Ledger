@@ -1,0 +1,71 @@
+# ledger export --with-git: a version 2 bundle carries the commits its
+# bridge mappings name, and verify checks every mapping against them, so
+# the bundle can still be checked against a Git host's history.
+mkdir repo
+cd repo
+exec git init -q -b main
+cp $WORK/a.ts a.ts
+exec git add a.ts
+exec git commit -q -m 'first'
+cp $WORK/b.ts b.ts
+exec git add b.ts
+exec git commit -q -m 'second'
+exec ledger init --from-git .
+
+exec ledger session create {"agent_name":"refunds-agent"}
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger intent create '{"description":"Add refunds","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"any"}}]}'
+jsonvar INT result.result.intent_id
+exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+cp $WORK/refund.ts $WPATH/refund.ts
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
+jsonvar MANIFEST result.result.manifest
+exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
+jsonvar JUDGED result.result.attestation
+exec ledger selection record {"manifest":"$MANIFEST","evidence":["$JUDGED"]}
+jsonvar SEL result.result.selection
+exec ledger line advance {"selection":"$SEL"}
+exec git init -q --bare $WORK/out.git
+exec ledger git export --to $WORK/out.git
+jsonvar TIP result.export.tip
+
+# Two imported commits and one exported advance are carried and checked;
+# the trees of the exported commit and of the imported tip it builds on
+# are computed from the native trees in the bundle.
+exec ledger export --out $WORK/with-git.ledger --with-git
+stdout '"commits": 3'
+cd $WORK
+exec ledger verify --bundle with-git.ledger --strict
+stdout '"mappings": 3'
+stdout '"commits": 3'
+stdout '"trees": 2'
+exec ledger verify --bundle with-git.ledger --git-commit $TIP
+stdout '"commit_id": "ok"'
+
+# Without --with-git the bundle carries no Git part and checks none.
+cd $WORK/repo
+exec ledger export --out $WORK/plain.ledger
+stdout '"git_bytes": 0'
+cd $WORK
+exec ledger verify --bundle plain.ledger --strict
+! stdout '"mappings"'
+
+# A commit that is no longer staged makes the bundle incomplete.
+cd $WORK/repo
+exec ledger daemon stop
+rm .ledger/runtime/bridge
+mkdir .ledger/runtime/bridge/bridge-sha1.git
+exec git init -q --bare .ledger/runtime/bridge/bridge-sha1.git
+! exec ledger export --out $WORK/gone.ledger --with-git
+stdout '"code": "export_incomplete"'
+stdout '"git:'$TIP'"'
+
+-- a.ts --
+export const a = 1;
+-- b.ts --
+export const b = 2;
+-- refund.ts --
+export function refund() { return 0 }

@@ -16,6 +16,7 @@ import (
 	"github.com/CoachCoe/Ledger/internal/atomicfile"
 	"github.com/CoachCoe/Ledger/internal/canon"
 	"github.com/CoachCoe/Ledger/internal/envelope"
+	"github.com/CoachCoe/Ledger/internal/gitx"
 	"github.com/CoachCoe/Ledger/internal/oplog"
 	"github.com/CoachCoe/Ledger/internal/schema"
 	"github.com/CoachCoe/Ledger/internal/store"
@@ -302,6 +303,20 @@ func ExportNative(root string, opts ExportOptions) (*ExportReport, error) {
 			}
 		}
 	}
+	var gitFile string
+	var gitRefs []string
+	if opts.GitRepo != "" {
+		tmp, err := os.MkdirTemp(filepath.Join(dir, "runtime"), "export-git-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(tmp)
+		var gone []string
+		if gitFile, gitRefs, gone, err = mappedBundle(context.Background(), opts.GitRepo, tmp, mappedCommits(c)); err != nil {
+			return nil, err
+		}
+		missing = append(missing, gone...)
+	}
 	slices.Sort(missing)
 	missing = slices.Compact(missing)
 	complete := len(missing) == 0
@@ -314,6 +329,16 @@ func ExportNative(root string, opts ExportOptions) (*ExportReport, error) {
 		Git: InvGit{Refs: []string{}, Commits: []InvCommit{}}, Store: []InvStoreObject{}, OpLogs: []InvOpLog{},
 	}
 	var parts []part
+	var gitBytes int64
+	if gitFile != "" {
+		sum, size, err := fileDigest(gitFile)
+		if err != nil {
+			return nil, err
+		}
+		inv.Git = InvGit{File: GitName, SHA256: sum, Size: size, Refs: gitRefs, Commits: []InvCommit{}}
+		gitBytes = size
+		parts = append(parts, part{GitName, func() ([]byte, error) { return os.ReadFile(gitFile) }}) //nolint:gosec // a file Ledger just wrote
+	}
 	var storeBytes int64
 	for _, id := range sortedKeys(reached) {
 		kind, data, err := objects.Get(id)
@@ -350,7 +375,70 @@ func ExportNative(root string, opts ExportOptions) (*ExportReport, error) {
 	}
 	rep.Missing, rep.Manifests = missing, sel.manifests
 	rep.Size.StoreBytes, rep.Size.StoreObjects = storeBytes, len(inv.Store)
+	rep.Size.GitBytes, rep.Size.Commits = gitBytes, len(gitRefs)
 	return rep, nil
+}
+
+// MappedRef is the ref a version 2 bundle's Git part holds a mapped
+// commit under.
+func MappedRef(sha string) string { return "refs/ledger/commits/" + sha }
+
+// mappedCommits lists the Git commits the committed bridge mappings of c
+// name.
+func mappedCommits(c *Corpus) []string {
+	set := map[string]bool{}
+	for h, o := range c.Objects {
+		if o.Envelope.Kind != schema.KindBridgeMapping || !c.Committed[h] {
+			continue
+		}
+		if m, err := decode[schema.BridgeMapping](o); err == nil {
+			set[m.GitCommit] = true
+		}
+	}
+	return sortedKeys(set)
+}
+
+// mappedBundle writes a self-contained Git bundle of shas, read from the
+// repository at repo through a throwaway repository that borrows its
+// objects, so repo itself is not changed. It returns the commits repo
+// does not hold, or that are of another object format, as missing.
+func mappedBundle(ctx context.Context, repo, tmp string, shas []string) (file string, refs, missing []string, err error) {
+	if len(shas) == 0 {
+		return "", nil, nil, nil
+	}
+	objects, err := gitx.Run(ctx, repo, nil, gitEnv, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return "", nil, nil, apierr.New("git_unavailable", "cannot read the Git repository %s: %v", repo, err)
+	}
+	format, err := gitx.Run(ctx, repo, nil, gitEnv, "rev-parse", "--show-object-format")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	bare := filepath.Join(tmp, "export.git")
+	if _, err := gitx.Run(ctx, tmp, nil, gitEnv, "init", "--bare", "-q", "--object-format="+strings.TrimSpace(string(format)), bare); err != nil {
+		return "", nil, nil, err
+	}
+	if err := os.WriteFile(filepath.Join(bare, "objects", "info", "alternates"), append(bytes.TrimSpace(objects), '\n'), 0o600); err != nil {
+		return "", nil, nil, err
+	}
+	for _, sha := range shas {
+		if _, err := gitx.Run(ctx, bare, nil, gitEnv, "cat-file", "-e", sha+"^{commit}"); err != nil {
+			missing = append(missing, "git:"+sha)
+			continue
+		}
+		if _, err := gitx.Run(ctx, bare, nil, gitEnv, "update-ref", MappedRef(sha), sha); err != nil {
+			return "", nil, nil, err
+		}
+		refs = append(refs, MappedRef(sha))
+	}
+	if len(refs) == 0 {
+		return "", nil, missing, nil
+	}
+	file = filepath.Join(tmp, "objects.bundle")
+	if _, err := gitx.Run(ctx, bare, nil, gitEnv, append([]string{"bundle", "create", "-q", file}, refs...)...); err != nil {
+		return "", nil, nil, err
+	}
+	return file, refs, missing, nil
 }
 
 // ImportNative stages and verifies a version 2 bundle and adds it to the
