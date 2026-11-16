@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "kind": "foreign_change",
+  "payload": {
+    "line": "main",
+    "participant": "bridge",
+    "mapping": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "base_tree": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "tree": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "actor": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+    "at": "2026-11-05T12:00:00.000Z"
+  },
+  "signer": "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e",
+  "signature": "pQZldcwqoxtYFyxUxDUcELhDMnHkWaNPxABR5WSUWc6iIu2A_fdj9QESiBy5zk18augTRvNcRNaeL6TG3xhGAg"
+}

@@ -19,7 +19,7 @@ func Decode(version int, kind Kind, raw []byte, v any) error {
 		return apierr.New("record_malformed", "%s payload: %v", kind, err)
 	}
 	if version == 1 || version == 2 && !changedInV2[kind] {
-		if version == 1 && (kind == KindRepository || kind == KindLineAdvance || kind == KindBridgeMapping) {
+		if version == 1 && (kind == KindRepository || kind == KindLineAdvance || kind == KindBridgeMapping || kind == KindForeignChange) {
 			return bad(fmt.Errorf("kind %s needs schema_version 2", kind))
 		}
 		if err := json.Unmarshal(raw, v, strict); err != nil {
@@ -100,6 +100,11 @@ func Decode(version int, kind Kind, raw []byte, v any) error {
 		if out, ok = v.(*BridgeMapping); ok {
 			*out = *w
 		}
+	case *ForeignChange:
+		var out *ForeignChange
+		if out, ok = v.(*ForeignChange); ok {
+			*out = *w
+		}
 	}
 	if !ok {
 		return fmt.Errorf("schema: cannot decode a version %d %s into %T", version, kind, v)
@@ -109,7 +114,7 @@ func Decode(version int, kind Kind, raw []byte, v any) error {
 
 var changedInV2 = map[Kind]bool{
 	KindCapability: true, KindWorkspace: true, KindChangeManifest: true, KindEvidenceAttestation: true,
-	KindSelectionDecision: true, KindSpeculationRun: true, KindRepository: true, KindLineAdvance: true, KindBridgeMapping: true,
+	KindSelectionDecision: true, KindSpeculationRun: true, KindRepository: true, KindLineAdvance: true, KindBridgeMapping: true, KindForeignChange: true,
 }
 
 func symbolsFromV2(in []SymbolV2) []Symbol {

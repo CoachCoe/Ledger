@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/canon"
@@ -169,6 +171,7 @@ func (br *Bridge) ExportLine(ctx context.Context, line string) (ExportReport, er
 	}
 	report.Advances = len(advances)
 	var outs []Out
+	var outAdvance []string // the advance each out was written for, "" for none
 	base, err := br.baseCommit(ctx, repo)
 	if err != nil {
 		return report, err
@@ -177,24 +180,68 @@ func (br *Bridge) ExportLine(ctx context.Context, line string) (ExportReport, er
 	if base == "" {
 		outs = append(outs, Out{Tree: repo.Tree, Author: rootIdent(repo.CreatedAt, br.Root.ID()), Committer: rootIdent(repo.CreatedAt, br.Root.ID()),
 			Message: fmt.Sprintf("Initial tree of %s\n\nLedger-Repository: %s\n", repo.ID, repo.ID)})
+		outAdvance = append(outAdvance, "")
 		parent = ":1"
 	}
+	// chain is the line's commits after base, each a commit id or the mark
+	// of an out; a foreign advance's commit is the imported one itself, and
+	// after names what it must have as its first parent.
+	type link struct{ commit, after string }
+	var chain []link
 	for _, a := range advances {
+		if a.ForeignChange != "" {
+			f, m, err := idx.ForeignImport(ctx, a.ForeignChange)
+			if err != nil {
+				return report, err
+			}
+			chain = append(chain, link{commit: m.GitCommit, after: parent})
+			parent, parentTree = m.GitCommit, f.Tree
+			continue
+		}
 		o, err := br.advanceCommit(ctx, a)
 		if err != nil {
 			return report, err
 		}
 		o.Parent, o.ParentTree = parent, parentTree
 		outs = append(outs, o)
+		outAdvance = append(outAdvance, a.Hash)
 		parent, parentTree = fmt.Sprintf(":%d", len(outs)), o.Tree
+		chain = append(chain, link{commit: parent})
 	}
 	written, err := br.Staging.Export(ctx, br.Objects, outs)
 	if err != nil {
 		return report, err
 	}
+	resolve := func(ref string) string {
+		if n, ok := strings.CutPrefix(ref, ":"); ok {
+			i, _ := strconv.Atoi(n)
+			return written[i-1].SHA
+		}
+		return ref
+	}
+	for _, l := range chain {
+		if l.after == "" {
+			continue
+		}
+		m, err := idx.MappingsForCommit(ctx, l.commit)
+		if err != nil {
+			return report, err
+		}
+		want := resolve(l.after)
+		if !slices.ContainsFunc(m, func(m index.Mapping) bool {
+			return m.Direction == "import" && len(m.GitParents) > 0 && m.GitParents[0] == want
+		}) {
+			return report, apierr.New("bridge_inconsistent", "foreign commit %s does not follow %s on line %s", l.commit, want, line).With("commit", l.commit)
+		}
+	}
 	tip := base
-	if len(written) > 0 {
-		tip = written[len(written)-1].SHA
+	if len(written) > 0 && base == "" {
+		report.Commits = append(report.Commits, written[0].SHA)
+		tip = written[0].SHA
+	}
+	for _, l := range chain {
+		tip = resolve(l.commit)
+		report.Commits = append(report.Commits, tip)
 	}
 	if tip == "" {
 		return report, nil
@@ -207,19 +254,13 @@ func (br *Bridge) ExportLine(ctx context.Context, line string) (ExportReport, er
 		return report, err
 	}
 	mappings := make([]schema.BridgeMapping, 0, len(written))
-	off := len(written) - len(advances)
 	for i, w := range written {
-		report.Commits = append(report.Commits, w.SHA)
 		m := schema.BridgeMapping{NativeTree: outs[i].Tree, GitCommit: w.SHA, GitTree: w.Tree, GitParents: []string{}, Direction: "export",
 			Author: outs[i].Author, Committer: outs[i].Committer, Message: outs[i].Message}
-		switch {
-		case i > 0:
-			m.GitParents = []string{written[i-1].SHA}
-		case base != "":
-			m.GitParents = []string{base}
+		if outs[i].Parent != "" {
+			m.GitParents = []string{resolve(outs[i].Parent)}
 		}
-		if i >= off {
-			h := advances[i-off].Hash
+		if h := outAdvance[i]; h != "" {
 			m.LineAdvance = &h
 		}
 		mappings = append(mappings, m)
@@ -428,3 +469,118 @@ func (s *Staging) ConvertCommits(ctx context.Context, objects *store.Store, src 
 	}
 	return out, nil
 }
+
+// SyncReport describes one sync of a line from a Git ref.
+type SyncReport struct {
+	Line    string   `json:"line"`
+	Ref     string   `json:"ref"`
+	Status  string   `json:"status"` // up_to_date, behind or advanced
+	LineTip string   `json:"line_tip"`
+	GitTip  string   `json:"git_tip"`
+	Commits []string `json:"commits"`
+	Receipt string   `json:"receipt,omitempty"`
+}
+
+// Sync brings line up to the Git ref when the ref has moved on from the
+// line's exported tip along its first parents (ADR 0028). Each new commit
+// is imported and accepted as a root-signed foreign change, so running
+// sync is root's acceptance of what was committed in Git. A ref that does
+// not lead from the line, while the line does not lead to it either,
+// fails with diverged and changes nothing.
+func (br *Bridge) Sync(ctx context.Context, src, ref, line string) (SyncReport, error) {
+	report := SyncReport{Line: line, Ref: ref, Commits: []string{}}
+	head, err := br.Records.Index.LineHead(ctx, line)
+	if err != nil {
+		return report, err
+	}
+	exported, err := br.ExportLine(ctx, line)
+	if err != nil {
+		return report, err
+	}
+	git, err := br.Staging.Fetch(ctx, src, ref)
+	if err != nil {
+		return report, err
+	}
+	report.LineTip, report.GitTip = exported.Tip, git
+	if git == exported.Tip {
+		report.Status = "up_to_date"
+		return report, nil
+	}
+	ahead, err := br.Staging.FirstParents(ctx, git)
+	if err != nil {
+		return report, err
+	}
+	at := slices.Index(ahead, exported.Tip)
+	if at < 0 {
+		behind, err := br.Staging.FirstParents(ctx, exported.Tip)
+		if err != nil {
+			return report, err
+		}
+		if slices.Contains(behind, git) {
+			report.Status = "behind"
+			return report, nil
+		}
+		return report, apierr.New("diverged", "line %s and %s have both moved since they last agreed; nothing was changed", line, ref).
+			With("line_tip", exported.Tip).With("git_tip", git)
+	}
+	fresh, err := br.Staging.ConvertCommits(ctx, br.Objects, src, ahead[at+1:])
+	if err != nil {
+		return report, err
+	}
+	if _, err := br.Publish(ctx, Fetched{Ref: ref, Commits: fresh}); err != nil {
+		return report, err
+	}
+	digest, err := canon.Marshal(map[string]any{"operation": "bridge.sync", "line": line, "ref": ref, "from": exported.Tip, "to": git})
+	if err != nil {
+		return report, err
+	}
+	op := record.Op{ID: schema.NewID(schema.PrefixOperation), Name: "bridge.sync", Digest: canon.Hash(digest), Signer: br.Root}
+	res, err := br.Records.Do(ctx, op, func(idx *index.Index) (any, []envelope.Object, error) {
+		now, err := idx.LineHead(ctx, line)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !samePtr(now.Advance, head.Advance) {
+			return nil, nil, apierr.New("stale_line", "line %s moved during sync; run it again", line).With("line", line)
+		}
+		var members []envelope.Object
+		previous, base := head.Advance, head.Tree
+		at := schema.Timestamp(time.Now())
+		for _, c := range fresh {
+			known, err := idx.MappingsForCommit(ctx, c.SHA)
+			if err != nil {
+				return nil, nil, err
+			}
+			i := slices.IndexFunc(known, func(m index.Mapping) bool { return m.Direction == "import" && m.NativeTree == c.NativeTree })
+			if i < 0 {
+				return nil, nil, apierr.New("bridge_inconsistent", "commit %s has no import mapping", c.SHA)
+			}
+			f, err := envelope.SealVersion(2, schema.KindForeignChange, schema.ForeignChange{Line: line, Participant: "bridge", Mapping: known[i].Hash,
+				BaseTree: base, Tree: c.NativeTree, Actor: br.Root.ID(), At: at}, br.Root)
+			if err != nil {
+				return nil, nil, err
+			}
+			a, err := envelope.SealVersion(2, schema.KindLineAdvance, schema.LineAdvance{Line: line, Previous: previous, ForeignChange: f.Hash,
+				Actor: br.Root.ID(), At: at}, br.Root)
+			if err != nil {
+				return nil, nil, err
+			}
+			members = append(members, f, a)
+			previous, base = &a.Hash, c.NativeTree
+		}
+		return map[string]any{"advances": len(fresh)}, members, nil
+	})
+	if err != nil {
+		return report, err
+	}
+	if _, err := br.Staging.Git(ctx, nil, "update-ref", LineRef(line), git); err != nil {
+		return report, err
+	}
+	for _, c := range fresh {
+		report.Commits = append(report.Commits, c.SHA)
+	}
+	report.Status, report.LineTip, report.Receipt = "advanced", git, res.Receipt
+	return report, nil
+}
+
+func samePtr(a, b *string) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }

@@ -45,7 +45,7 @@ Commands print one JSON document: `{"ok":true,"result":...}`, or `{"ok":false,"e
 |---|---|
 | `ledger init` | Create a native repository in the current directory: import its files into `.ledger/store/`, create the root key in `~/.config/ledger/keys/` if needed, and sign its public key and the repository record. Inside a Git working tree it also keeps `.ledger/` out of Git. Safe to repeat. `--from-git PATH [--ref REF]` instead takes the first tree from a Git repository's ref and maps its first-parent history. |
 | `ledger migrate` | Convert this Phase 1 repository into a native one with the same root key: map HEAD's history and every commit a v1 record names, close the Phase 1 workspaces still open or proposed, and make HEAD's tree the head of `main`. |
-| `ledger git …` | Import another ref's history (`import`), write a line's accepted changes into a Git repository as commits (`export`), or push them to a Git remote (`mirror`). Ledger never force-pushes. |
+| `ledger git …` | Import another ref's history (`import`), write a line's accepted changes into a Git repository as commits (`export`), push them to a Git remote (`mirror`), or accept commits made in Git onto the line as root (`sync`). Ledger never force-pushes and never merges: a sync after both sides moved reports `diverged`. |
 | `ledger session …` | Create, end, or recover a signing session. |
 | `ledger capability …` | Issue root authority or delegate narrower authority to an authenticated session. |
 | `ledger intent …` | Create, inspect, or close an intent; `intent criteriaStatus` reports each criterion as satisfied, failed, or outstanding for an exact revision, with contrary evidence. |

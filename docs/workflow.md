@@ -164,6 +164,15 @@ Git is a place Ledger reads history from and writes accepted changes to; it is n
 
 `ledger git mirror --remote NAME [--line main] [--repo PATH]` exports the line into `refs/ledger/lines/LINE` of the bridged repository (or `--repo`) and runs an ordinary `git push` of it to `refs/heads/LINE` on that repository's remote. The push uses your Git configuration, so credential helpers work, with hooks disabled. It never force-pushes: a remote branch that moved is reported as `ref_moved` and left alone.
 
+`ledger git sync [--line main] [--from PATH] [--ref REF]` brings the line up to commits made in Git. It exports the line, fetches `REF` (default `refs/heads/LINE`) from the bridged repository (or `--from`), and compares the two:
+
+- If `REF` continues the exported line along first parents, sync imports each new commit and accepts it with a root-signed `foreign_change` and a `line_advance` that names it. The change has participant `bridge`, carries no intent, capability or evidence, and satisfies no criterion. Running sync is the root's acceptance of what was committed in Git.
+- Exporting afterwards reuses those Git commits rather than writing new ones, so a mirror after a sync pushes nothing new.
+- Status `up_to_date` means the two agree, and `behind` means Git has not caught up with the line yet; `ledger git mirror` pushes it.
+- If both have moved, sync fails with `diverged`, names both tips and changes nothing. Ledger never merges them.
+
+To take commits from a remote, run `git fetch` in the bridged repository first and pass the remote-tracking ref, for example `--ref refs/remotes/origin/main`.
+
 ## Migrating a Phase 1 repository
 
 `ledger migrate`, run in a Phase 1 repository with its root key, converts it in place (ADR 0027). It writes v2 records beside the v1 ones and rewrites or re-signs none of them:

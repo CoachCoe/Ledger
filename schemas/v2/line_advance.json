@@ -7,8 +7,6 @@
   "required": [
     "line",
     "previous",
-    "manifest",
-    "selection",
     "actor",
     "at"
   ],
@@ -37,6 +35,41 @@
     },
     "at": {
       "$ref": "../v1/common.json#/$defs/timestamp"
+    },
+    "foreign_change": {
+      "$ref": "../v1/common.json#/$defs/hash"
     }
-  }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "manifest",
+        "selection"
+      ],
+      "not": {
+        "required": [
+          "foreign_change"
+        ]
+      }
+    },
+    {
+      "required": [
+        "foreign_change"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "manifest"
+            ]
+          },
+          {
+            "required": [
+              "selection"
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

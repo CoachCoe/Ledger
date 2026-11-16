@@ -12,7 +12,9 @@ edit its local configuration. This is not a filesystem sandbox.
 `may_add_dependencies`, `may_advance`, and `expires_at`. For compatibility, omitted fields mean
 `["**"]`, `[]`, dependency changes allowed, no lines, and a 24-hour expiry.
 `may_advance` lists the lines the session may accept changes onto with
-`line.advance`; it is checked against the session's own capability. Request explicit
+`line.advance`; it is checked against the session's own capability. A line also moves when
+root runs `ledger git sync`, which accepts commits made in Git as `foreign_change` records; no
+session can sign one or accept one, so pushing to Git grants an agent nothing. Request explicit
 narrow authority for an agent:
 
 ```sh

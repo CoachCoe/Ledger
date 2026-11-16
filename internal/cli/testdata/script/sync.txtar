@@ -1,0 +1,104 @@
+# ledger git sync (P2-AC-033): a commit made in Git is accepted onto the
+# line as one root-signed foreign change, the export reuses that commit,
+# and a sync after both sides moved reports diverged and changes nothing.
+mkdir repo
+cd repo
+exec git init -q -b main
+cp $WORK/a.ts a.ts
+exec git add a.ts
+exec git commit -q -m 'first'
+exec ledger init --from-git .
+jsonvar FIRST result.git.tip
+exec ledger git sync
+stdout '"status": "up_to_date"'
+
+# A commit in Git moves the line by one foreign change.
+cp $WORK/b.ts b.ts
+exec git add b.ts
+exec git commit -q -m 'second, in Git'
+exec git rev-parse HEAD
+cp stdout $WORK/second
+exec ledger git sync
+stdout '"status": "advanced"'
+jsonvar SECOND result.git_tip
+stdout '"commits": \[\s+"'$SECOND'"\s+\]'
+exec ledger git sync
+stdout '"status": "up_to_date"'
+exec ledger daemon stop
+
+# Exporting the line gives back the Git commit itself, with no new commit
+# and no export mapping for it.
+exec git init -q --bare $WORK/out.git
+exec ledger git export --to $WORK/out.git
+stdout '"tip": "'$SECOND'"'
+stdout '"mapped": 0'
+exec git -C $WORK/out.git rev-parse main~1
+stdout $FIRST
+
+# A change accepted in Ledger puts the line ahead of Git: sync has nothing
+# to take.
+exec ledger session create {"agent_name":"refunds-agent"}
+jsonvar SID result.result.session_id
+jsonvar CAP result.result.capability_id
+exec ledger intent create '{"description":"Add refunds","criteria":[{"id":"review","statement":"review","verification":{"kind":"judgment","reviewer":"any"}}]}'
+jsonvar INT result.result.intent_id
+exec ledger workspace fork --session $SID {"intent_id":"$INT","capability_id":"$CAP"}
+jsonvar WSP result.result.workspace_id
+jsonvar WPATH result.result.path
+exists $WPATH/b.ts
+cp $WORK/refund.ts $WPATH/refund.ts
+exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Add refunds"}'
+jsonvar MANIFEST result.result.manifest
+exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
+jsonvar JUDGED result.result.attestation
+exec ledger selection record {"manifest":"$MANIFEST","evidence":["$JUDGED"]}
+jsonvar SEL result.result.selection
+exec ledger line advance {"selection":"$SEL"}
+exec ledger line status
+jsonvar AHEAD result.tree
+exec ledger daemon stop
+exec ledger git sync
+stdout '"status": "behind"'
+
+# Both sides moved: nothing changes.
+cp $WORK/c.ts c.ts
+exec git add c.ts
+exec git commit -q -m 'third, in Git'
+! exec ledger git sync
+stdout '"code": "diverged"'
+stdout '"git_tip"'
+exec ledger line status
+stdout '"tree": "'$AHEAD'"'
+
+# Work that continues from the exported line in another clone syncs back.
+exec ledger git export --to $WORK/out.git
+jsonvar EXPORTED result.export.tip
+cd $WORK
+exec git clone -q -b main out.git clone
+cd clone
+cp $WORK/c.ts c.ts
+exec git add c.ts
+exec git commit -q -m 'fourth, after the export'
+exec git rev-parse HEAD
+cp stdout $WORK/fourth
+cd $WORK/repo
+exec ledger git sync --from $WORK/clone
+stdout '"status": "advanced"'
+jsonvar FOURTH result.git_tip
+exec ledger git export --to $WORK/out.git
+stdout '"tip": "'$FOURTH'"'
+exec git -C $WORK/out.git rev-parse main~1
+stdout $EXPORTED
+
+# The foreign changes verify offline with every other record.
+exec ledger verify --strict
+stdout '"integrity": "verified"'
+
+-- a.ts --
+export const a = 1;
+-- b.ts --
+export const b = 2;
+-- c.ts --
+export const c = 3;
+-- refund.ts --
+export function refund() { return 0 }

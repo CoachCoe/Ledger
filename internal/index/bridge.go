@@ -2,6 +2,8 @@ package index
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/schema"
@@ -23,6 +25,31 @@ func (x *Index) MappingsForCommit(ctx context.Context, sha string) ([]Mapping, e
 // order.
 func (x *Index) MappingsForTree(ctx context.Context, tree string) ([]Mapping, error) {
 	return x.mappings(ctx, `json_extract(payload, '$.native_tree') = ?`, tree)
+}
+
+// ForeignImport returns a committed foreign change and the import mapping
+// it names.
+func (x *Index) ForeignImport(ctx context.Context, hash string) (schema.ForeignChange, Mapping, error) {
+	var f schema.ForeignChange
+	var raw string
+	err := x.conn().QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash = ? AND kind = 'foreign_change'`, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return f, Mapping{}, apierr.New("unknown_entity", "no foreign change %s", hash)
+	}
+	if err != nil {
+		return f, Mapping{}, err
+	}
+	if err := schema.Decode(2, schema.KindForeignChange, []byte(raw), &f); err != nil {
+		return f, Mapping{}, err
+	}
+	m, err := x.mappings(ctx, `hash = ?`, f.Mapping)
+	if err != nil {
+		return f, Mapping{}, err
+	}
+	if len(m) != 1 {
+		return f, Mapping{}, apierr.New("unknown_entity", "no bridge mapping %s", f.Mapping)
+	}
+	return f, m[0], nil
 }
 
 func (x *Index) mappings(ctx context.Context, where string, arg string) ([]Mapping, error) {
@@ -80,12 +107,12 @@ func (v *validator) checkMapping(p *schema.BridgeMapping, signer string) error {
 		if err := v.object(*p.LineAdvance, schema.KindLineAdvance, &a); err != nil {
 			return err
 		}
-		m, err := manifestIn(v.ctx, v.q, a.Manifest)
+		tree, err := v.advanceTree(a)
 		if err != nil {
 			return err
 		}
-		if m.Tree != p.NativeTree {
-			return apierr.New("invalid_mapping", "line advance %s accepted tree %s, not %s", *p.LineAdvance, m.Tree, p.NativeTree)
+		if tree != p.NativeTree {
+			return apierr.New("invalid_mapping", "line advance %s accepted tree %s, not %s", *p.LineAdvance, tree, p.NativeTree)
 		}
 		return nil
 	}
@@ -120,4 +147,24 @@ func (x *Index) Phase1Commits(ctx context.Context) ([]string, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// checkForeignChange admits a foreign change signed by root, its actor,
+// whose import mapping holds its tree. Whether its base is the line's head
+// is checked when an advance accepts it.
+func (v *validator) checkForeignChange(p *schema.ForeignChange, signer string) error {
+	if isSession(signer) {
+		return unauthorized("only root records a foreign change")
+	}
+	if p.Actor != signer {
+		return unauthorized("foreign change actor %s is not its signer %s", p.Actor, signer)
+	}
+	var m schema.BridgeMapping
+	if err := v.object(p.Mapping, schema.KindBridgeMapping, &m); err != nil {
+		return err
+	}
+	if m.Direction != "import" || m.NativeTree != p.Tree {
+		return apierr.New("invalid_foreign_change", "mapping %s does not import tree %s", p.Mapping, p.Tree)
+	}
+	return nil
 }

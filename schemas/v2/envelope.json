@@ -33,7 +33,8 @@
         "operation_receipt",
         "repository",
         "line_advance",
-        "bridge_mapping"
+        "bridge_mapping",
+        "foreign_change"
       ]
     },
     "payload": {

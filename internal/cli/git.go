@@ -67,7 +67,7 @@ func gitSource(ctx context.Context, p string) (string, string, error) {
 
 func cmdGit(args []string) (any, error) {
 	if len(args) == 0 {
-		return nil, apierr.New("usage", "ledger git import|export|mirror ...")
+		return nil, apierr.New("usage", "ledger git import|export|mirror|sync ...")
 	}
 	switch args[0] {
 	case "import":
@@ -76,6 +76,8 @@ func cmdGit(args []string) (any, error) {
 		return cmdGitExport(args[1:])
 	case "mirror":
 		return cmdGitMirror(args[1:])
+	case "sync":
+		return cmdGitSync(args[1:])
 	}
 	return nil, apierr.New("usage", "unknown git operation %q", args[0])
 }
@@ -265,5 +267,40 @@ func cmdGitMirror(args []string) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"export": report, "repository": repo, "remote": remote, "ref": "refs/heads/" + line}, nil
+	})
+}
+
+// cmdGitSync accepts commits made in Git onto a line: ledger git sync
+// [--line LINE] [--from PATH] [--ref REF]. REF defaults to refs/heads/LINE
+// of the repository this one was imported from; to take a remote's
+// commits, fetch them there first and name the remote-tracking ref.
+func cmdGitSync(args []string) (any, error) {
+	var line, from, ref string
+	if err := parseFlags("git sync", "ledger git sync [--line LINE] [--from PATH] [--ref REF]", args, func(fl *flag.FlagSet) {
+		fl.StringVar(&line, "line", "main", "line to bring up to the Git ref")
+		fl.StringVar(&from, "from", "", "Git repository (default: the one this repository was imported from)")
+		fl.StringVar(&ref, "ref", "", "Git ref to take commits from (default refs/heads/LINE)")
+	}); err != nil {
+		return nil, err
+	}
+	if ref == "" {
+		ref = "refs/heads/" + line
+	}
+	src, format := "", ""
+	if from != "" {
+		var err error
+		if src, format, err = gitSource(context.Background(), from); err != nil {
+			return nil, err
+		}
+	}
+	return withBridge(format, func(ctx context.Context, br *bridge.Bridge, ledgerDir string) (any, error) {
+		if src == "" {
+			bc, _, err := readBridgeConfig(ledgerDir)
+			if err != nil {
+				return nil, err
+			}
+			src = bc.Source
+		}
+		return br.Sync(ctx, src, ref, line)
 	})
 }

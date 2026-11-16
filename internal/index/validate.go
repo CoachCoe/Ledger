@@ -183,6 +183,12 @@ func (v *validator) check(o envelope.Object) error {
 			return err
 		}
 		return v.checkMapping(&p, signer)
+	case schema.KindForeignChange:
+		var p schema.ForeignChange
+		if err := o.Decode(&p); err != nil {
+			return err
+		}
+		return v.checkForeignChange(&p, signer)
 	}
 	return nil
 }

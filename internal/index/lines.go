@@ -2,7 +2,9 @@ package index
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"slices"
 
 	"github.com/CoachCoe/Ledger/internal/apierr"
@@ -130,11 +132,42 @@ func lineHead(ctx context.Context, q querier, line string) (LineHead, error) {
 		return LineHead{Tree: r.Tree}, nil
 	}
 	head := advances[len(advances)-1]
-	m, err := manifestIn(ctx, q, head.Manifest)
+	tree, err := acceptedTree(ctx, q, head.LineAdvance)
 	if err != nil {
 		return LineHead{}, err
 	}
-	return LineHead{Advance: &head.Hash, Tree: m.Tree}, nil
+	return LineHead{Advance: &head.Hash, Tree: tree}, nil
+}
+
+// acceptedTree is the tree a committed advance accepted: its manifest's,
+// or its foreign change's.
+func acceptedTree(ctx context.Context, q querier, a schema.LineAdvance) (string, error) {
+	if a.ForeignChange != "" {
+		var raw string
+		err := q.QueryRowContext(ctx, `SELECT payload FROM objects WHERE hash=? AND kind='foreign_change'`, a.ForeignChange).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", apierr.New("unknown_entity", "no foreign change %s", a.ForeignChange)
+		}
+		if err != nil {
+			return "", err
+		}
+		var f schema.ForeignChange
+		return f.Tree, schema.Decode(2, schema.KindForeignChange, []byte(raw), &f)
+	}
+	m, err := manifestIn(ctx, q, a.Manifest)
+	return m.Tree, err
+}
+
+// advanceTree is acceptedTree for an advance that may be in the group
+// being validated.
+func (v *validator) advanceTree(a schema.LineAdvance) (string, error) {
+	if a.ForeignChange != "" {
+		var f schema.ForeignChange
+		err := v.object(a.ForeignChange, schema.KindForeignChange, &f)
+		return f.Tree, err
+	}
+	m, err := manifestIn(v.ctx, v.q, a.Manifest)
+	return m.Tree, err
 }
 
 func (v *validator) checkRepository(p *schema.Repository, signer string) error {
@@ -184,25 +217,52 @@ func (v *validator) checkLineAdvance(hash string, p *schema.LineAdvance, signer 
 		}
 		return apierr.New("stale_line", "line %s has moved; its head is %s", p.Line, want).With("line", p.Line).With("head", want)
 	}
-	m, err := manifestIn(v.ctx, v.q, p.Manifest)
+	tree, err := v.advanced(p, signer, head)
 	if err != nil {
 		return err
-	}
-	if m.BaseTree != head.Tree {
-		return apierr.New("stale_base", "manifest %s is based on %s, not the head of line %s", p.Manifest, m.BaseTree, p.Line).With("line", p.Line)
-	}
-	var s schema.SelectionDecision
-	if err := v.object(p.Selection, schema.KindSelectionDecision, &s); err != nil {
-		return err
-	}
-	if s.Manifest != p.Manifest {
-		return apierr.New("invalid_advance", "selection %s does not select manifest %s", p.Selection, p.Manifest)
 	}
 	if v.lines == nil {
 		v.lines = map[string]LineHead{}
 	}
-	v.lines[p.Line] = LineHead{Advance: &hash, Tree: m.Tree}
+	v.lines[p.Line] = LineHead{Advance: &hash, Tree: tree}
 	return nil
+}
+
+// advanced checks what an advance accepts against the line's head and
+// returns the tree it moves the line to: a selected manifest based on the
+// head, or, for root only, a foreign change on top of it.
+func (v *validator) advanced(p *schema.LineAdvance, signer string, head LineHead) (string, error) {
+	if p.ForeignChange != "" {
+		if isSession(signer) {
+			return "", unauthorized("only root accepts a foreign change")
+		}
+		var f schema.ForeignChange
+		if err := v.object(p.ForeignChange, schema.KindForeignChange, &f); err != nil {
+			return "", err
+		}
+		if f.Line != p.Line {
+			return "", apierr.New("invalid_advance", "foreign change %s is for line %s, not %s", p.ForeignChange, f.Line, p.Line)
+		}
+		if f.BaseTree != head.Tree {
+			return "", apierr.New("stale_base", "foreign change %s is based on %s, not the head of line %s", p.ForeignChange, f.BaseTree, p.Line).With("line", p.Line)
+		}
+		return f.Tree, nil
+	}
+	m, err := manifestIn(v.ctx, v.q, p.Manifest)
+	if err != nil {
+		return "", err
+	}
+	if m.BaseTree != head.Tree {
+		return "", apierr.New("stale_base", "manifest %s is based on %s, not the head of line %s", p.Manifest, m.BaseTree, p.Line).With("line", p.Line)
+	}
+	var s schema.SelectionDecision
+	if err := v.object(p.Selection, schema.KindSelectionDecision, &s); err != nil {
+		return "", err
+	}
+	if s.Manifest != p.Manifest {
+		return "", apierr.New("invalid_advance", "selection %s does not select manifest %s", p.Selection, p.Manifest)
+	}
+	return m.Tree, nil
 }
 
 // workspaceLine checks that a workspace forked from a line advance is based
@@ -215,12 +275,12 @@ func (v *validator) workspaceLine(p *schema.Workspace) error {
 	if err := v.object(*p.BaseLineAdvance, schema.KindLineAdvance, &a); err != nil {
 		return err
 	}
-	m, err := manifestIn(v.ctx, v.q, a.Manifest)
+	tree, err := v.advanceTree(a)
 	if err != nil {
 		return err
 	}
-	if m.Tree != p.BaseTree {
-		return apierr.New("binding_mismatch", "line advance %s accepted %s, not base %s", *p.BaseLineAdvance, m.Tree, p.BaseTree)
+	if tree != p.BaseTree {
+		return apierr.New("binding_mismatch", "line advance %s accepted %s, not base %s", *p.BaseLineAdvance, tree, p.BaseTree)
 	}
 	return nil
 }

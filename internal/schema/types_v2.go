@@ -137,13 +137,30 @@ type BridgeMapping struct {
 	Manifest    *string  `json:"manifest"`
 }
 
-// LineAdvance accepts a selected manifest onto a line. Previous is the
+// LineAdvance accepts a change onto a line. Previous is the
 // line's head advance, or nil for the first.
 type LineAdvance struct {
-	Line      string  `json:"line"`
-	Previous  *string `json:"previous"`
-	Manifest  string  `json:"manifest"`
-	Selection string  `json:"selection"`
-	Actor     string  `json:"actor"`
-	At        string  `json:"at"`
+	Line     string  `json:"line"`
+	Previous *string `json:"previous"`
+	// An advance accepts either a selected manifest or, signed by root,
+	// a foreign change; the other fields are absent.
+	Manifest      string `json:"manifest,omitempty"`
+	Selection     string `json:"selection,omitempty"`
+	ForeignChange string `json:"foreign_change,omitempty"`
+	Actor         string `json:"actor"`
+	At            string `json:"at"`
+}
+
+// ForeignChange is a change that arrived through the Git bridge rather
+// than as a proposal: the tree of an imported commit on top of the tree
+// the line had. It is signed by root, claims no capability and satisfies
+// no criterion (ADR 0027).
+type ForeignChange struct {
+	Line        string `json:"line"`
+	Participant string `json:"participant"`
+	Mapping     string `json:"mapping"`
+	BaseTree    string `json:"base_tree"`
+	Tree        string `json:"tree"`
+	Actor       string `json:"actor"`
+	At          string `json:"at"`
 }
