@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/CoachCoe/Ledger/internal/api"
 	"github.com/CoachCoe/Ledger/internal/apierr"
 	"github.com/CoachCoe/Ledger/internal/envelope"
 	"github.com/CoachCoe/Ledger/internal/identity"
@@ -65,7 +66,7 @@ func validated(op string, input map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return schema.ValidateAPI(op, raw)
+	return schema.ValidateAPIVersion(api.Version, op, raw)
 }
 
 func cmdExport(args []string) (any, error) {
@@ -105,8 +106,8 @@ func nonNil(m multiFlag) []string {
 }
 
 func cmdVerify(args []string) (any, error) {
-	const usage = "ledger verify [--bundle FILE] [--trust FINGERPRINT]... [--trust-file PATH] [--strict]"
-	var bundle, trustFile string
+	const usage = "ledger verify [--bundle FILE] [--git-commit SHA] [--trust FINGERPRINT]... [--trust-file PATH] [--strict]"
+	var bundle, trustFile, gitCommit string
 	var trust multiFlag
 	var strict bool
 	if err := parseFlags("verify", usage, args, func(fl *flag.FlagSet) {
@@ -114,10 +115,14 @@ func cmdVerify(args []string) (any, error) {
 		fl.Var(&trust, "trust", "")
 		fl.StringVar(&trustFile, "trust-file", "", "")
 		fl.BoolVar(&strict, "strict", false, "")
+		fl.StringVar(&gitCommit, "git-commit", "", "")
 	}); err != nil {
 		return nil, err
 	}
 	in := map[string]any{"trust": nonNil(trust), "strict": strict}
+	if gitCommit != "" {
+		in["git_commit"] = gitCommit
+	}
 	if bundle != "" {
 		in["bundle"] = bundle
 	}
@@ -154,8 +159,15 @@ func cmdVerify(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if gitCommit != "" {
+		c := verify.ResolveCommit(src, rep, gitCommit)
+		rep.GitCommit = &c
+	}
 	if strict && rep.Integrity != verify.Verified {
 		return nil, apierr.New("verification_failed", "integrity is %s", rep.Integrity).With("report", rep)
+	}
+	if strict && rep.GitCommit != nil && !rep.GitCommit.OK() {
+		return nil, apierr.New("verification_failed", "commit %s is not bound to a verified manifest", gitCommit).With("report", rep)
 	}
 	return rep, nil
 }
