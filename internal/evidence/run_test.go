@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -340,7 +341,8 @@ func TestEvidenceProcessFailure(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
 		go func() {
 			for range 200 {
-				if _, err := os.Stat(pidFile); err == nil {
+				// The shell creates the file before echo writes the pid.
+				if b, err := os.ReadFile(pidFile); err == nil && bytes.HasSuffix(b, []byte("\n")) {
 					break
 				}
 				time.Sleep(25 * time.Millisecond)
