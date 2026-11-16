@@ -60,6 +60,7 @@ exec ledger workspace fork --session $SID {"intent_id":"int_0ka7netf1jco8i2v8io9
 jsonvar WSP result.result.workspace_id
 jsonvar WPATH result.result.path
 cp $WORK/tax.ts $WPATH/src/tax.ts
+cp $WORK/refund.ts $WPATH/src/refund.ts
 exec ledger workspace propose --session $SID '{"workspace_id":"'$WSP'","plan":"Draft taxes"}'
 jsonvar MANIFEST result.result.manifest
 exec ledger evidence judge {"manifest":"$MANIFEST","criterion_id":"review","result":"pass"}
@@ -67,6 +68,14 @@ jsonvar JUDGED result.result.attestation
 exec ledger selection record {"manifest":"$MANIFEST","evidence":["$JUDGED"]}
 jsonvar SEL result.result.selection
 exec ledger line advance {"selection":"$SEL"}
+
+# history.why answers across the v1 and the v2 records (P2-AC-024): the
+# Phase 1 proposal and the new one both wrote refund().
+exec ledger history why {"symbol":{"path":"src/refund.ts","language":"typescript","name":"refund","kind":"function","disambiguator":null}}
+stdout '"hash": "73c4c218a18c4726ae95a9492ba3ea581dabe8284fb387e6ef8dd598d5cf2c8b"'
+stdout '"hash": "'$MANIFEST'"'
+stdout '"description": "Add refunds"'
+stdout '"description": "Draft taxes"'
 exec ledger daemon stop
 exec ledger git export --line main --to . --ref refs/heads/ledger/main
 exec git rev-parse ledger/main~1
@@ -78,3 +87,5 @@ stdout '"integrity": "verified"'
 
 -- tax.ts --
 export const tax = 0
+-- refund.ts --
+export function refund() { return 0 }

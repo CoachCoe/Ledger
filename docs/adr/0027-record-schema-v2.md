@@ -81,8 +81,8 @@ workspaces that are still open or proposed, by root, because a Git worktree
 has no operation log to continue from; and after migration the verifier
 checks a v1 manifest's commit binding against the commit rebuilt from its
 import mapping, using the mapping only when its fields hash to the commit
-id. Running `history.why` across v1 and v2 records (P2-AC-024) is not
-covered yet.
+id. `history.why` answers across the v1 and v2 records of a migrated
+repository (P2-AC-024), with no change to the query.
 
 ## Alternatives considered
 
